@@ -14,6 +14,9 @@ importers:
       '@agentx/db':
         specifier: workspace:*
         version: link:packages/db
+      '@agentx/sdk':
+        specifier: workspace:*
+        version: link:packages/sdk
       '@agentx/shared':
         specifier: workspace:*
         version: link:packages/shared
@@ -129,6 +132,15 @@ importers:
       drizzle-kit:
         specifier: ^0.28.0
         version: 0.28.1
+
+  packages/sdk:
+    dependencies:
+      '@agentx/shared':
+        specifier: workspace:*
+        version: link:../shared
+      viem:
+        specifier: ^2.21.0
+        version: 2.56.8(typescript@5.9.3)(zod@3.25.76)
 
   packages/shared:
     dependencies:

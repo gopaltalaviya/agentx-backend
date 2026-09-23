@@ -53,6 +53,23 @@ export function registerErrorHandler(app: FastifyInstance): void {
         });
     }
 
+    // Postgres 23505. Registering a wallet that already has an agent is a
+    // conflict the caller can act on, not an internal fault — returning 500
+    // told them to retry something that can never succeed.
+    if ((err as {code?: string}).code === '23505') {
+      return reply
+        .status(409)
+        .type('application/problem+json')
+        .send({
+          type: 'https://agentx.dev/errors/already-exists',
+          title: 'Already registered',
+          status: 409,
+          code: 'ALREADY_EXISTS',
+          detail: 'an agent already exists for that wallet on this chain',
+          traceId,
+        });
+    }
+
     if ((err as {statusCode?: number}).statusCode === 429) {
       return reply.status(429).type('application/problem+json').send({
         type: 'https://agentx.dev/errors/rate-limited',

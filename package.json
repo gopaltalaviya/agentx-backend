@@ -17,7 +17,8 @@
     "db:seed": "pnpm --filter @agentx/db seed",
     "dev": "pnpm -r --parallel dev",
     "verify:indexer": "node scripts/verify-indexer.mjs",
-    "verify:keystore": "node scripts/verify-keystore.mjs"
+    "verify:keystore": "node scripts/verify-keystore.mjs",
+    "e2e": "node scripts/e2e.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
@@ -28,6 +29,7 @@
     "vitest": "^2.1.9",
     "@agentx/config": "workspace:*",
     "@agentx/db": "workspace:*",
-    "@agentx/shared": "workspace:*"
+    "@agentx/shared": "workspace:*",
+    "@agentx/sdk": "workspace:*"
   }
 }

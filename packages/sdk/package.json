@@ -1,0 +1,14 @@
+{
+  "name": "@agentx/sdk",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "scripts": { "build": "tsc -b" },
+  "dependencies": {
+    "@agentx/shared": "workspace:*",
+    "viem": "^2.21.0"
+  }
+}

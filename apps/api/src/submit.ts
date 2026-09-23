@@ -78,8 +78,12 @@ function encodeCall(
 ): Hex {
   const chainJobId = ctx.job?.chainJobId ? BigInt(ctx.job.chainJobId) : 0n;
   const specHash = (ctx.payload?.['specHash'] as Hex) ?? ('0x' + '0'.repeat(64) as Hex);
-  const workerAgentId = BigInt(String(ctx.payload?.['workerAgentId'] ?? 0));
-  const clientAgentId = BigInt(ctx.agentId);
+
+  // ERC-8004 ids supplied by the caller. NEVER ctx.agentId — that is the
+  // database's serial, and the contract would resolve it to a different
+  // agent's wallet without erroring.
+  const workerAgentId = BigInt(String(ctx.payload?.['workerChainAgentId'] ?? 0));
+  const clientAgentId = BigInt(String(ctx.payload?.['clientChainAgentId'] ?? 0));
 
   switch (kind) {
     case 'directPay':

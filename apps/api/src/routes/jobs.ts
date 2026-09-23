@@ -61,6 +61,20 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
     if (!worker) {
       throw new AgentxError(ErrorCode.AGENT_NOT_HIREABLE, `no agent ${workerAgentId} on chain ${chainId}`);
     }
+
+    const clientRow = await db.query.agents.findFirst({where: eq(agents.id, caller.agentId)});
+
+    // The contract addresses agents by their ERC-8004 id; the database uses
+    // its own serial. Sending one where the other is expected targets a
+    // different agent entirely — the transaction still succeeds, and pays
+    // the wrong wallet. Refuse until both sides are known.
+    if (!clientRow?.chainAgentId || !worker.chainAgentId) {
+      throw new AgentxError(
+        ErrorCode.AGENT_NOT_HIREABLE,
+        'an agent is not yet registered on-chain (no ERC-8004 id) — retry once the indexer has seen it',
+        2,
+      );
+    }
     if (!worker.active) {
       throw new AgentxError(ErrorCode.AGENT_NOT_HIREABLE, `agent ${workerAgentId} is not accepting work`);
     }
@@ -80,10 +94,16 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
     const path =
       body.path === 'auto' ? (price <= fastPathMax ? 'direct' : 'escrow') : body.path;
 
-    const specJson = canonicalize(body.spec);
-    const specHash = await sha3(specJson);
-
-    const [job] = await db
+    // Insert first so the job has an id, then commit to a hash that includes
+    // it.
+    //
+    // The hash of a spec alone is NOT unique: two jobs asking the same
+    // question produce the same hash, and the indexer — which links a job to
+    // its on-chain event by this hash — would match an unrelated earlier
+    // payment. Scoping the commitment to the job makes it identify THIS job,
+    // which is what it was always meant to do. A client can still verify it:
+    // keccak256(canonicalJson + ':' + jobId), both of which are in the receipt.
+    const [inserted] = await db
       .insert(jobs)
       .values({
         chainId,
@@ -92,9 +112,16 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
         path,
         amount: price.toString(),
         spec: body.spec,
-        specHash,
+        specHash: '',
         traceId: request.id,
       })
+      .returning();
+
+    const specHash = await sha3(`${canonicalize(body.spec)}:${inserted!.id}`);
+    const [job] = await db
+      .update(jobs)
+      .set({specHash})
+      .where(eq(jobs.id, inserted!.id))
       .returning();
 
     const result = await submit({
@@ -104,7 +131,13 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
       job: {id: job!.id, chainJobId: null},
       spend: price,
       idempotencyKey,
-      payload: {workerAgentId, amount: price.toString(), specHash},
+      payload: {
+        // ERC-8004 ids, never the database's.
+        clientChainAgentId: clientRow.chainAgentId,
+        workerChainAgentId: worker.chainAgentId,
+        amount: price.toString(),
+        specHash,
+      },
     });
 
     if (result.chainJobId) {
