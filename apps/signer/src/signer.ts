@@ -165,7 +165,7 @@ export class SignerService {
     // Read the caps from the chain, not from our cache. The cache exists for
     // fast rejection; the contract is the authority, and a stale cache that
     // lets a call through only to have it revert is the worse failure.
-    const [perTaskCap, dailyRemaining] = await Promise.all([
+    const [perTaskCap, dailyRemaining, dayStart] = await Promise.all([
       this.pub
         .readContract({
           address: agent.walletAddress as Hex,
@@ -182,6 +182,14 @@ export class SignerService {
         })
         .then((v) => v as bigint)
         .catch(() => null),
+      this.pub
+        .readContract({
+          address: agent.walletAddress as Hex,
+          abi: accountAbi,
+          functionName: 'dayStart',
+        })
+        .then((v) => v as bigint)
+        .catch(() => null),
     ]);
 
     if (perTaskCap !== null && req.spend > perTaskCap) {
@@ -195,7 +203,7 @@ export class SignerService {
       throw new AgentxError(
         ErrorCode.BUDGET_EXCEEDED,
         `spend ${chain.formatToken(req.spend)} exceeds today's remaining budget of ${chain.formatToken(dailyRemaining)}`,
-        this.secondsUntilMidnightUtc(),
+        this.secondsUntilReset(dayStart),
       );
     }
   }
@@ -218,9 +226,19 @@ export class SignerService {
     }
   }
 
-  private secondsUntilMidnightUtc(): number {
-    const now = new Date();
-    const next = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
-    return Math.ceil((next - now.getTime()) / 1000);
+  /**
+   * When the daily cap actually refills.
+   *
+   * `AgentAccount` rolls a 24h window from the first spend — it is NOT a UTC
+   * midnight reset. A `Retry-After` from the wrong clock tells a caller to
+   * come back at a time the cap has not lifted, which is worse than no hint
+   * at all: it turns one refusal into two.
+   */
+  private secondsUntilReset(dayStart: bigint | null): number {
+    if (dayStart === null || dayStart === 0n) return DAY_SECONDS;
+    const elapsed = Math.floor(Date.now() / 1000) - Number(dayStart);
+    return Math.max(0, DAY_SECONDS - elapsed);
   }
 }
+
+const DAY_SECONDS = 24 * 60 * 60;
