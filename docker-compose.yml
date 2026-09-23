@@ -5,7 +5,9 @@ services:
       POSTGRES_USER: agentx
       POSTGRES_PASSWORD: agentx
       POSTGRES_DB: agentx
-    ports: ['5432:5432']
+    # 5442 on the host: 5432 is shadowed by another local Postgres on this
+    # machine, and connecting to the wrong database is worse than not connecting.
+    ports: ['5442:5432']
     volumes: ['agentx-pg:/var/lib/postgresql/data']
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U agentx']
@@ -14,7 +16,8 @@ services:
 
   redis:
     image: redis:7-alpine
-    ports: ['6379:6379']
+    # 6381 on the host: 6379 and 6380 are taken by other local projects.
+    ports: ['6381:6379']
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
       interval: 5s
