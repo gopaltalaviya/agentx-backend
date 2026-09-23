@@ -1,13 +1,32 @@
 {
   "files": [],
   "references": [
-    { "path": "packages/shared" },
-    { "path": "packages/config" },
-    { "path": "packages/db" },
-    { "path": "packages/sdk" },
-    { "path": "packages/agent-core" },
-    { "path": "apps/indexer" },
-    { "path": "apps/signer" },
-    { "path": "apps/api" }
+    {
+      "path": "packages/shared"
+    },
+    {
+      "path": "packages/config"
+    },
+    {
+      "path": "packages/db"
+    },
+    {
+      "path": "packages/sdk"
+    },
+    {
+      "path": "packages/agent-core"
+    },
+    {
+      "path": "apps/indexer"
+    },
+    {
+      "path": "apps/signer"
+    },
+    {
+      "path": "apps/api"
+    },
+    {
+      "path": "apps/mcp"
+    }
   ]
 }

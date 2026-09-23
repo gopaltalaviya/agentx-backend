@@ -1,0 +1,20 @@
+{
+  "name": "@agentx/mcp",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/main.js",
+  "bin": {
+    "agentx-mcp": "./dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@agentx/sdk": "workspace:*",
+    "@agentx/shared": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^3.23.8"
+  }
+}

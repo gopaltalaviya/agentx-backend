@@ -6,6 +6,8 @@ import {registerErrorHandler} from './errors.js';
 import {EventBus} from './events.js';
 import {registerAgentRoutes} from './routes/agents.js';
 import {registerJobRoutes, type JobRouteDeps} from './routes/jobs.js';
+import {registerMetaRoutes} from './routes/meta.js';
+import type {BudgetReader} from './chain-reads.js';
 
 export interface AppDeps {
   db: Db;
@@ -13,6 +15,8 @@ export interface AppDeps {
   defaultChainId: number;
   submit: JobRouteDeps['submit'];
   bus?: EventBus;
+  /** Omitted, /v1/budget answers from the cached policy and says so. */
+  readBudget?: BudgetReader;
   logger?: boolean;
 }
 
@@ -65,6 +69,12 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     defaultChainId: deps.defaultChainId,
     bus,
     submit: deps.submit,
+  });
+  await registerMetaRoutes(app, {
+    db: deps.db,
+    chains: deps.chains,
+    defaultChainId: deps.defaultChainId,
+    ...(deps.readBudget ? {readBudget: deps.readBudget} : {}),
   });
 
   return app;

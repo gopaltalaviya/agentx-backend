@@ -71,6 +71,63 @@ export interface JobDetail extends Omit<JobReceipt, 'txHash' | 'explorerUrl'> {
   events: {kind: string; txHash: string | null; explorerUrl: string | null; occurredAt: string}[];
 }
 
+export interface NetworkInfo {
+  chainId: number;
+  name: string;
+  shortName: string;
+  testnet: boolean;
+  nativeCurrency: {name: string; symbol: string; decimals: number};
+  paymentToken: {symbol: string; decimals: number; address: string | null};
+  contracts: Record<string, string>;
+  erc8004: Record<string, string>;
+  explorerBaseUrl: string | null;
+  faucetUrls: string[];
+  confirmations: number;
+  windows: {accept: number; work: number; review: number};
+  fastPathMax: BaseUnits;
+  fastPathMaxDisplay: string;
+  protocolFeeBps: number;
+  enabledChains: number[];
+}
+
+export interface Budget {
+  agentId: string;
+  chainId: number;
+  network: string;
+  testnet: boolean;
+  /** 'chain' is authoritative; 'cache' may be stale. */
+  source: 'chain' | 'cache';
+  perTaskCap: BaseUnits;
+  perTaskCapDisplay: string;
+  dailyCap: BaseUnits;
+  dailyCapDisplay: string;
+  dailyRemaining: BaseUnits;
+  dailyRemainingDisplay: string;
+  /** The tighter of the two caps: the most one hire can cost right now. */
+  maxSingleSpend: BaseUnits;
+  maxSingleSpendDisplay: string;
+  allowlistOnly: boolean;
+  tokenBalance: BaseUnits | null;
+  tokenSymbol: string;
+  walletAddress: string | null;
+  resetsInSeconds: number;
+}
+
+/**
+ * What a state-changing action returns.
+ *
+ * Typed rather than `unknown` so a caller can log the explorer URL without
+ * casting — the link is the thing that makes an on-chain action believable to
+ * whoever is watching.
+ */
+export interface ActionReceipt {
+  jobId: string;
+  chainId: number;
+  state: JobState | 'settled';
+  txHash: string;
+  explorerUrl: string;
+}
+
 export interface DiscoverQuery {
   capability?: Capability;
   maxPrice?: BaseUnits;
@@ -112,6 +169,22 @@ export class AgentxClient {
     return this.request<AgentSummary>('GET', `/v1/agents/${agentId}`, {auth: false});
   }
 
+  /** Which chain, and whether its money is real. Needs no credentials. */
+  async network(): Promise<NetworkInfo> {
+    const q = this.chainId ? `?chainId=${this.chainId}` : '';
+    return this.request<NetworkInfo>('GET', `/v1/network${q}`, {auth: false});
+  }
+
+  /**
+   * What this agent may still spend.
+   *
+   * Call it BEFORE planning a spend, not after a 402. An agent that learns its
+   * cap by being refused is an agent that retries into a rate limit.
+   */
+  async budget(): Promise<Budget> {
+    return this.request<Budget>('GET', '/v1/budget', {});
+  }
+
   // ── hiring ─────────────────────────────────────────────────────────────
 
   /**
@@ -144,26 +217,29 @@ export class AgentxClient {
     return this.request<JobDetail>('GET', `/v1/jobs/${jobId}`, {auth: false});
   }
 
-  accept(jobId: string) {
-    return this.request('POST', `/v1/jobs/${jobId}/accept`, {});
+  accept(jobId: string): Promise<ActionReceipt> {
+    return this.request<ActionReceipt>('POST', `/v1/jobs/${jobId}/accept`, {});
   }
 
-  submitResult(jobId: string, result: {output: Record<string, unknown>; producedAt?: string}) {
-    return this.request('POST', `/v1/jobs/${jobId}/result`, {
+  submitResult(
+    jobId: string,
+    result: {output: Record<string, unknown>; producedAt?: string},
+  ): Promise<ActionReceipt> {
+    return this.request<ActionReceipt>('POST', `/v1/jobs/${jobId}/result`, {
       body: {output: result.output, producedAt: result.producedAt ?? new Date().toISOString()},
     });
   }
 
-  approve(jobId: string) {
-    return this.request('POST', `/v1/jobs/${jobId}/approve`, {});
+  approve(jobId: string): Promise<ActionReceipt> {
+    return this.request<ActionReceipt>('POST', `/v1/jobs/${jobId}/approve`, {});
   }
 
-  dispute(jobId: string, reason: string) {
-    return this.request('POST', `/v1/jobs/${jobId}/dispute`, {body: {reason}});
+  dispute(jobId: string, reason: string): Promise<ActionReceipt> {
+    return this.request<ActionReceipt>('POST', `/v1/jobs/${jobId}/dispute`, {body: {reason}});
   }
 
-  cancel(jobId: string) {
-    return this.request('POST', `/v1/jobs/${jobId}/cancel`, {});
+  cancel(jobId: string): Promise<ActionReceipt> {
+    return this.request<ActionReceipt>('POST', `/v1/jobs/${jobId}/cancel`, {});
   }
 
   /**

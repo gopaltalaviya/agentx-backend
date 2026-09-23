@@ -3,6 +3,7 @@ import {loadConfig} from '@agentx/config';
 import {createDb} from '@agentx/db';
 import {buildApp} from './app.js';
 import {makeSignerSubmit} from './submit.js';
+import {makeBudgetReader} from './chain-reads.js';
 
 const logger = pino({level: process.env['LOG_LEVEL'] ?? 'info'});
 
@@ -13,6 +14,7 @@ const app = await buildApp({
   db,
   chains: config.chains as Record<number, never>,
   defaultChainId: config.defaultChainId,
+  readBudget: makeBudgetReader(config),
   submit: makeSignerSubmit({
     signerUrl: process.env['SIGNER_URL'] ?? 'http://127.0.0.1:7070',
     config,
