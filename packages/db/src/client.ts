@@ -20,3 +20,14 @@ export function createDb(url: string, opts: {max?: number} = {}) {
   });
   return drizzle(client, {schema});
 }
+
+/**
+ * Close the underlying pool.
+ *
+ * postgres.js keeps the event loop alive, so a script that forgets this
+ * completes its work and then hangs forever — which looks identical to a
+ * deadlock and wastes an afternoon.
+ */
+export async function closeDb(db: Db): Promise<void> {
+  await (db.$client as unknown as {end: () => Promise<void>}).end();
+}

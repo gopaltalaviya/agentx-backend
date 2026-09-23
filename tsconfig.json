@@ -2,6 +2,8 @@
   "files": [],
   "references": [
     { "path": "packages/shared" },
-    { "path": "packages/config" }
+    { "path": "packages/config" },
+    { "path": "packages/db" },
+    { "path": "apps/indexer" }
   ]
 }

@@ -15,12 +15,18 @@
     "config:check": "node packages/config/bin/check.mjs",
     "db:migrate": "pnpm --filter @agentx/db migrate",
     "db:seed": "pnpm --filter @agentx/db seed",
-    "dev": "pnpm -r --parallel dev"
+    "dev": "pnpm -r --parallel dev",
+    "verify:indexer": "node scripts/verify-indexer.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
+    "postgres": "^3.4.5",
     "prettier": "^3.3.3",
     "typescript": "^5.6.3",
-    "vitest": "^2.1.9"
+    "viem": "^2.21.0",
+    "vitest": "^2.1.9",
+    "@agentx/config": "workspace:*",
+    "@agentx/db": "workspace:*",
+    "@agentx/shared": "workspace:*"
   }
 }
