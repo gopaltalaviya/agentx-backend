@@ -267,6 +267,18 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
     if (job.state !== from) {
       throw new AgentxError(ErrorCode.INVALID_STATE, `job is "${job.state}", this action needs "${from}"`);
     }
+
+    // Every transition addresses the job by its ON-CHAIN id, which is assigned
+    // when the contract runs and observed by the indexer a moment later.
+    // Acting before then would encode id 0 and revert — so say plainly that
+    // it is not ready yet, rather than emitting a doomed transaction.
+    if (!job.chainJobId) {
+      throw new AgentxError(
+        ErrorCode.INVALID_STATE,
+        'the job is not confirmed on-chain yet — retry in a moment',
+        2,
+      );
+    }
     check(job, caller, request.body);
 
     const idempotencyKey =

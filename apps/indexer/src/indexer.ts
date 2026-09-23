@@ -1,5 +1,5 @@
 import {createPublicClient, http, type Abi, type Log, type PublicClient} from 'viem';
-import {and, eq, sql} from 'drizzle-orm';
+import {and, eq, isNull, sql} from 'drizzle-orm';
 import type {ChainConfig} from '@agentx/config';
 import {type Db, indexerCursor, jobEvents, jobs, agents, agentStats, payments} from '@agentx/db';
 
@@ -21,7 +21,6 @@ import {type Db, indexerCursor, jobEvents, jobs, agents, agentStats, payments} f
  * why the UI can never show a payment that did not happen.
  */
 
-const MAX_RANGE = 2_000n;
 
 export interface IndexerDeps {
   db: Db;
@@ -43,11 +42,16 @@ export class Indexer {
    * indexes anything at all, because the safe head sits below block zero.
    */
   private readonly reorgDepth: bigint;
+  private readonly maxRange: bigint;
 
   constructor(private readonly deps: IndexerDeps) {
     this.client = createPublicClient({transport: http(deps.chain.rpcUrl)});
     this.log = deps.logger ?? {info: () => {}, warn: () => {}};
     this.reorgDepth = BigInt(deps.chain.confirmations);
+    // Public RPCs cap eth_getLogs. Monad's rejects anything over 100 blocks,
+    // which a 2000-block default discovers only in production, as an error
+    // rather than as a slow query.
+    this.maxRange = BigInt(deps.chain.maxLogRange);
   }
 
   /** Process one batch. Returns the block it advanced to. */
@@ -70,7 +74,7 @@ export class Indexer {
 
     if (from > safeHead) return from - 1n;
 
-    const to = from + MAX_RANGE - 1n > safeHead ? safeHead : from + MAX_RANGE - 1n;
+    const to = from + this.maxRange - 1n > safeHead ? safeHead : from + this.maxRange - 1n;
     const escrow = chain.contracts['TaskEscrow'];
     if (!escrow) throw new Error(`chain ${chain.chainId}: no TaskEscrow address in the deployment`);
 
@@ -112,14 +116,38 @@ export class Indexer {
 
     const {kind, chainJobId, payload} = decoded;
 
-    const job = await db.query.jobs.findFirst({
+    let job = await db.query.jobs.findFirst({
       where: and(eq(jobs.chainId, chain.chainId), eq(jobs.chainJobId, chainJobId)),
     });
 
-    // A job the API did not create (someone hit the contract directly). Record
-    // the event anyway — the chain is the source of truth, not our API.
+    // No chainJobId yet.
+    //
+    // The API cannot know it: the signer returns as soon as the transaction is
+    // BROADCAST, and the id is only assigned when the contract runs. Waiting
+    // for a receipt would make every hire cost a block of latency.
+    //
+    // So the first event a job ever emits carries its specHash, and that is
+    // what links the two. Matching on the hash of the work — rather than on an
+    // id neither side knew in advance — is also self-healing: it works no
+    // matter which of the two writes landed first.
+    if (!job && payload['specHash']) {
+      job = await db.query.jobs.findFirst({
+        where: and(
+          eq(jobs.chainId, chain.chainId),
+          eq(jobs.specHash, String(payload['specHash'])),
+          isNull(jobs.chainJobId),
+        ),
+      });
+      if (job) {
+        await db.update(jobs).set({chainJobId}).where(eq(jobs.id, job.id));
+        this.log.info({jobId: job.id, chainJobId}, 'linked job to its on-chain id');
+      }
+    }
+
+    // A job the API did not create — someone called the contract directly.
+    // The chain is the source of truth, so this is expected, not an error.
     if (!job) {
-      this.log.warn({chainId: chain.chainId, chainJobId, kind}, 'event for an unknown job');
+      this.log.warn({chainId: chain.chainId, chainJobId, kind}, 'event for a job this API did not create');
       return;
     }
 

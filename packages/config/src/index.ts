@@ -36,6 +36,8 @@ const NetworkSchema = z.object({
   blockExplorerUrls: z.array(z.string().url()),
   faucetUrls: z.array(z.string().url()).default([]),
   confirmations: z.number().int().positive(),
+  maxLogRange: z.number().int().positive().default(100),
+  maxLogRangeNote: z.string().optional(),
   paymentToken: z.object({
     symbol: z.string(),
     decimals: z.literal(6),
@@ -84,6 +86,8 @@ export interface ChainConfig {
   readonly testnet: boolean;
   readonly rpcUrl: string;
   readonly confirmations: number;
+  /** Largest eth_getLogs span this RPC will serve. */
+  readonly maxLogRange: number;
   readonly network: Network;
   readonly params: Readonly<Record<keyof Params, bigint | number>>;
   readonly contracts: Readonly<Record<string, string>>;
@@ -238,6 +242,7 @@ export function loadConfig(opts: LoadOptions = {}): AgentxConfig {
       testnet: net.data.testnet,
       rpcUrl,
       confirmations: net.data.confirmations,
+      maxLogRange: net.data.maxLogRange,
       network: Object.freeze(net.data),
       params: Object.freeze({
         minStake: BigInt(params.data.minStake),

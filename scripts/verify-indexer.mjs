@@ -17,10 +17,13 @@ import {loadConfig, loadAbis} from '@agentx/config';
 import {createDb, closeDb} from '@agentx/db';
 import {Indexer} from '../apps/indexer/dist/indexer.js';
 
-const RPC = 'http://127.0.0.1:8545';
+const CHAIN_ID = Number(process.env.VERIFY_CHAIN_ID ?? 31337);
 const DB_URL = process.env.DATABASE_URL ?? 'postgres://agentx:agentx@127.0.0.1:5442/agentx';
 // anvil account 0 — a published test key, worthless by design.
-const DEPLOYER = privateKeyToAccount('0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80');
+// anvil account 0 locally; the real DEPLOYER key on a testnet run.
+const DEPLOYER = privateKeyToAccount(
+  process.env.DEPLOYER_PRIVATE_KEY ?? '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
+);
 
 const ok = (m) => console.log(`  ✓ ${m}`);
 const fail = (m) => {
@@ -30,10 +33,12 @@ const fail = (m) => {
 
 const config = loadConfig();
 const abis = loadAbis();
-const chain = config.chain(31337);
+const chain = config.chain(CHAIN_ID);
 
-const pub = createPublicClient({chain: foundry, transport: http(RPC)});
-const wallet = createWalletClient({account: DEPLOYER, chain: foundry, transport: http(RPC)});
+const RPC = chain.rpcUrl;
+const viemChain = {...foundry, id: CHAIN_ID};
+const pub = createPublicClient({chain: viemChain, transport: http(RPC)});
+const wallet = createWalletClient({account: DEPLOYER, chain: viemChain, transport: http(RPC)});
 
 const addr = (n) => {
   const a = chain.contracts[n] ?? chain.erc8004[n];
@@ -98,12 +103,19 @@ ok(`directPay settled as job ${expectedJobId} in block ${receipt.blockNumber}`);
 // The indexer deliberately trails the head by `confirmations`, so the block
 // holding the settlement is not yet safe to index. Mine past it rather than
 // racing the chain — a flaky test is worse than no test.
-await fetch(RPC, {
-  method: 'POST',
-  headers: {'content-type': 'application/json'},
-  body: JSON.stringify({jsonrpc: '2.0', id: 1, method: 'anvil_mine', params: ['0x5']}),
-});
-ok(`mined past the settlement (trailing ${chain.confirmations} confirmation(s))`);
+// Wait past the indexer's confirmation trail. anvil mines on demand; a real
+// network needs real blocks, so poll rather than assume.
+if (CHAIN_ID === 31337) {
+  await fetch(RPC, {
+    method: 'POST',
+    headers: {'content-type': 'application/json'},
+    body: JSON.stringify({jsonrpc: '2.0', id: 1, method: 'anvil_mine', params: ['0x5']}),
+  });
+} else {
+  const target = receipt.blockNumber + BigInt(chain.confirmations) + 1n;
+  while ((await pub.getBlockNumber()) < target) await new Promise((r) => setTimeout(r, 1000));
+}
+ok(`advanced past the settlement (trailing ${chain.confirmations} confirmation(s))`);
 
 // ── 3. the API row the indexer will project onto ─────────────────────────
 const sql = postgres(DB_URL, {max: 1, onnotice: () => {}});
@@ -112,28 +124,42 @@ await sql`DELETE FROM indexer_cursor`; // replay from the deployment block, so t
 
 const [clientRow] = await sql`
   INSERT INTO agents (chain_id, chain_agent_id, owner_address, wallet_address, name, price_per_task)
-  VALUES (31337, ${clientAgentId}, ${DEPLOYER.address}, ${DEPLOYER.address}, 'ClientBot', 20000)
+  VALUES (${CHAIN_ID}, ${clientAgentId}, ${DEPLOYER.address}, ${DEPLOYER.address}, 'ClientBot', 20000)
   RETURNING id`;
 const [workerRow] = await sql`
   INSERT INTO agents (chain_id, chain_agent_id, owner_address, wallet_address, name, price_per_task)
-  VALUES (31337, ${workerAgentId}, ${DEPLOYER.address}, ${'0x000000000000000000000000000000000000dEaD'}, 'WorkerBot', 20000)
+  VALUES (${CHAIN_ID}, ${workerAgentId}, ${DEPLOYER.address}, ${'0x000000000000000000000000000000000000dEaD'}, 'WorkerBot', 20000)
   RETURNING id`;
 
+// chain_job_id is deliberately NULL: this is exactly what the API writes,
+// because the signer returns on broadcast and the id does not exist yet.
+// The indexer must link the two by specHash on its own.
 await sql`
-  INSERT INTO jobs (chain_id, chain_job_id, client_agent_id, worker_agent_id, path, amount, spec, spec_hash)
-  VALUES (31337, ${expectedJobId}, ${clientRow.id}, ${workerRow.id}, 'direct', 20000, '{}', ${specHash})`;
+  INSERT INTO jobs (chain_id, client_agent_id, worker_agent_id, path, amount, spec, spec_hash)
+  VALUES (${CHAIN_ID}, ${clientRow.id}, ${workerRow.id}, 'direct', 20000, '{}', ${specHash})`;
 
 // ── 4. run the indexer ───────────────────────────────────────────────────
 const db = createDb(DB_URL);
 const indexer = new Indexer({db, chain, abis});
-await indexer.tick();
-ok('indexer tick completed');
+
+// Catch up. With a 100-block range on a live chain, reaching a settlement a
+// few hundred blocks past the deployment takes several ticks — which is the
+// indexer working as designed, not a failure.
+let ticks = 0;
+for (; ticks < 200; ticks++) {
+  const at = await indexer.tick();
+  if (at >= receipt.blockNumber) break;
+}
+ok(`indexer caught up in ${ticks + 1} tick(s) (range ${chain.maxLogRange}/tick)`);
 
 // ── 5. assert on the rows ────────────────────────────────────────────────
 const events = await sql`SELECT kind, tx_hash, log_index FROM job_events ORDER BY id`;
 events.length > 0 ? ok(`job_events written: ${events.map((e) => e.kind).join(', ')}`) : fail('no job_events written');
 
-const [job] = await sql`SELECT state FROM jobs WHERE chain_job_id = ${expectedJobId}`;
+const [job] = await sql`SELECT state, chain_job_id FROM jobs WHERE spec_hash = ${specHash}`;
+job?.chain_job_id === String(expectedJobId)
+  ? ok(`indexer linked the job to on-chain id ${expectedJobId} via specHash`)
+  : fail(`chain_job_id is ${job?.chain_job_id}, expected ${expectedJobId} — the linkage is broken`);
 job?.state === 'settled' ? ok(`job projected to state "${job.state}"`) : fail(`job state is "${job?.state}", expected settled`);
 
 const [stats] = await sql`SELECT completed, failed, score FROM agent_stats WHERE agent_id = ${workerRow.id}`;
