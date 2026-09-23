@@ -1,4 +1,5 @@
 import type {FastifyInstance, FastifyReply, FastifyRequest} from 'fastify';
+import {ZodError} from 'zod';
 import {AgentxError, ErrorCode, ERROR_STATUS} from '@agentx/shared';
 
 /**
@@ -19,7 +20,25 @@ export function registerErrorHandler(app: FastifyInstance): void {
       return reply.status(problem.status).type('application/problem+json').send({...problem, traceId});
     }
 
-    // Fastify's schema validation, surfaced in the same shape as everything else.
+    // A malformed request is the caller's fault, not ours. Zod throws a
+    // ZodError from .parse(), which is NOT Fastify's `validation` field — so
+    // without this branch every bad body returned an opaque 500 and an agent
+    // could not tell "I sent nonsense" from "the server broke".
+    if (err instanceof ZodError) {
+      return reply
+        .status(422)
+        .type('application/problem+json')
+        .send({
+          type: 'https://agentx.dev/errors/schema-mismatch',
+          title: 'Request failed validation',
+          status: 422,
+          code: ErrorCode.SCHEMA_MISMATCH,
+          detail: err.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; '),
+          traceId,
+        });
+    }
+
+    // Fastify's own schema validation, surfaced in the same shape.
     if ((err as {validation?: unknown}).validation) {
       return reply
         .status(422)

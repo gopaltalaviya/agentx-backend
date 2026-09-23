@@ -283,13 +283,26 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
       payload: (request.body ?? {}) as Record<string, unknown>,
     });
 
+    // Advance the state optimistically, once the transaction is accepted for
+    // broadcast.
+    //
+    // The indexer is authoritative and will rewrite this from the chain's own
+    // events. But it trails the head by `confirmations`, and a worker that
+    // accepts a job and immediately submits its result cannot be made to wait
+    // several blocks for our database to catch up — it would get a 409 for
+    // doing exactly the right thing.
+    //
+    // So: the API writes what it believes, the indexer corrects it, and if
+    // they ever disagree the chain wins.
+    const patch: Record<string, unknown> = {state: to};
     if (kind === 'submitResult') {
       const body = request.body as {result?: unknown};
-      await db
-        .update(jobs)
-        .set({result: (body.result ?? body) as object, resultHash: await sha3(canonicalize(body.result ?? body))})
-        .where(eq(jobs.id, job.id));
+      patch['result'] = (body.result ?? body) as object;
+      patch['resultHash'] = await sha3(canonicalize(body.result ?? body));
     }
+    if (to === 'settled') patch['settledAt'] = new Date();
+
+    await db.update(jobs).set(patch).where(eq(jobs.id, job.id));
 
     await recordEvent(db, bus, job.id, job.chainId, `job.${to}`, {
       jobId: String(job.id),
