@@ -8,6 +8,8 @@ import {GroqBrain} from './providers/groq.js';
 import {OllamaBrain} from './providers/ollama.js';
 
 export * from './brain.js';
+export * from './prompts.js';
+export * from './judge.js';
 export {CachedBrain, RecordingBrain, FallbackBrain};
 export {ClaudeBrain, GeminiBrain, GroqBrain, OllamaBrain};
 
