@@ -39,6 +39,42 @@ importers:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@22.20.4)
 
+  apps/agents/execution-bot:
+    dependencies:
+      '@agentx/agent-core':
+        specifier: workspace:*
+        version: link:../../../packages/agent-core
+      '@agentx/sdk':
+        specifier: workspace:*
+        version: link:../../../packages/sdk
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
+
+  apps/agents/research-bot:
+    dependencies:
+      '@agentx/agent-core':
+        specifier: workspace:*
+        version: link:../../../packages/agent-core
+      '@agentx/sdk':
+        specifier: workspace:*
+        version: link:../../../packages/sdk
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
+
+  apps/agents/trading-bot:
+    dependencies:
+      '@agentx/agent-core':
+        specifier: workspace:*
+        version: link:../../../packages/agent-core
+      '@agentx/sdk':
+        specifier: workspace:*
+        version: link:../../../packages/sdk
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
+
   apps/api:
     dependencies:
       '@agentx/config':
@@ -131,6 +167,9 @@ importers:
 
   packages/agent-core:
     dependencies:
+      '@agentx/sdk':
+        specifier: workspace:*
+        version: link:../sdk
       '@agentx/shared':
         specifier: workspace:*
         version: link:../shared

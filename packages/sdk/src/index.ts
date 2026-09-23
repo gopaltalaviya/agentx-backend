@@ -128,6 +128,24 @@ export interface ActionReceipt {
   explorerUrl: string;
 }
 
+/** A row from `GET /v1/jobs` — enough to decide, not the full detail. */
+export interface JobSummary {
+  jobId: string;
+  chainJobId: string | null;
+  chainId: number;
+  state: JobState;
+  path: 'direct' | 'escrow';
+  amount: BaseUnits;
+  amountDisplay: string;
+  spec: JobSpec;
+  specHash: string;
+  /** Which side the caller is on. */
+  role: 'worker' | 'client';
+  clientAgentId: string;
+  workerAgentId: string;
+  createdAt: string;
+}
+
 export interface DiscoverQuery {
   capability?: Capability;
   maxPrice?: BaseUnits;
@@ -211,6 +229,21 @@ export class AgentxClient {
         path: args.path ?? 'auto',
       },
     });
+  }
+
+  /**
+   * The caller's jobs.
+   *
+   * How a worker learns it was hired. Oldest first, because the job closest to
+   * its accept deadline is the one that matters.
+   */
+  async listJobs(
+    q: {role?: 'worker' | 'client'; state?: JobState; limit?: number} = {},
+  ): Promise<JobSummary[]> {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(q)) if (v !== undefined) params.set(k, String(v));
+    const {jobs} = await this.request<{jobs: JobSummary[]}>('GET', `/v1/jobs?${params}`, {});
+    return jobs;
   }
 
   getJob(jobId: string): Promise<JobDetail> {

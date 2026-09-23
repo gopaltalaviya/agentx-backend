@@ -27,6 +27,15 @@
     },
     {
       "path": "apps/mcp"
+    },
+    {
+      "path": "apps/agents/research-bot"
+    },
+    {
+      "path": "apps/agents/trading-bot"
+    },
+    {
+      "path": "apps/agents/execution-bot"
     }
   ]
 }

@@ -1,11 +1,26 @@
 import type {FastifyInstance, FastifyRequest} from 'fastify';
-import {and, asc, desc, eq} from 'drizzle-orm';
+import {and, asc, desc, eq, or} from 'drizzle-orm';
 import {z} from 'zod';
 import {agents, agentStats, jobEvents, jobs, type Db} from '@agentx/db';
-import {AgentxError, BaseUnits, ErrorCode, HireRequest, JobResult, canonicalize} from '@agentx/shared';
+import {
+  AgentxError,
+  BaseUnits,
+  ErrorCode,
+  HireRequest,
+  JobResult,
+  JobState,
+  canonicalize,
+} from '@agentx/shared';
 import type {ChainConfig} from '@agentx/config';
 import {authenticate, resolveChainId, type Caller} from '../auth.js';
 import {streamJobEvents, type EventBus} from '../events.js';
+
+/** Query for `GET /v1/jobs`. Coerced, because query strings are strings. */
+const JobListQuery = z.object({
+  role: z.enum(['worker', 'client']).optional(),
+  state: JobState.optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+});
 
 export interface JobRouteDeps {
   db: Db;
@@ -162,6 +177,67 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
       txHash: result.txHash,
       explorerUrl: chain.explorerTx(result.txHash),
     });
+  });
+
+  /**
+   * The caller's jobs.
+   *
+   * A worker has no other way to learn it was hired: the hire happens on the
+   * client's side, and `/v1/jobs/:id/events` needs an id the worker does not
+   * have yet. Without this a worker can only be told out of band, which is
+   * not a marketplace.
+   *
+   * Polling rather than a push: a worker that drops its connection must still
+   * pick the job up, and a missed offer expires on-chain into a refund the
+   * client did not want.
+   */
+  app.get('/v1/jobs', async (request) => {
+    const caller = await authenticate(db, request);
+    const query = JobListQuery.parse(request.query ?? {});
+
+    const side =
+      query.role === 'worker'
+        ? eq(jobs.workerAgentId, caller.agentId)
+        : query.role === 'client'
+          ? eq(jobs.clientAgentId, caller.agentId)
+          : // Default to both: an orchestrator is a client AND is itself
+            // hireable, and having to ask twice invites asking once.
+            or(eq(jobs.workerAgentId, caller.agentId), eq(jobs.clientAgentId, caller.agentId));
+
+    const rows = await db
+      .select()
+      .from(jobs)
+      .where(
+        query.state ? and(side, eq(jobs.state, query.state), eq(jobs.chainId, caller.chainId))
+                    : and(side, eq(jobs.chainId, caller.chainId)),
+      )
+      // Oldest first: a worker should take the job closest to its accept
+      // deadline, not the one that just arrived.
+      .orderBy(asc(jobs.id))
+      .limit(query.limit);
+
+    return {
+      count: rows.length,
+      jobs: rows.map((job) => {
+        const chain = chains[job.chainId]!;
+        return {
+          jobId: String(job.id),
+          chainJobId: job.chainJobId,
+          chainId: job.chainId,
+          state: job.state,
+          path: job.path,
+          amount: job.amount,
+          amountDisplay: chain.formatToken(BigInt(job.amount)),
+          spec: job.spec,
+          specHash: job.specHash,
+          /** Which side the caller is on, so an agent need not infer it. */
+          role: job.workerAgentId === caller.agentId ? ('worker' as const) : ('client' as const),
+          clientAgentId: String(job.clientAgentId),
+          workerAgentId: String(job.workerAgentId),
+          createdAt: job.createdAt,
+        };
+      }),
+    };
   });
 
   app.get('/v1/jobs/:id', async (request) => {
