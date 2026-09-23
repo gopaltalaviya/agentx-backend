@@ -95,12 +95,18 @@ importers:
 
   apps/api:
     dependencies:
+      '@agentx/agent-core':
+        specifier: workspace:*
+        version: link:../../packages/agent-core
       '@agentx/config':
         specifier: workspace:*
         version: link:../../packages/config
       '@agentx/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@agentx/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
       '@agentx/shared':
         specifier: workspace:*
         version: link:../../packages/shared

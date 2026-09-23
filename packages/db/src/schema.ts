@@ -288,3 +288,59 @@ export const indexerCursor = pgTable(
   },
   (t) => [primaryKey({columns: [t.chainId, t.contract]})],
 );
+
+// ─────────────────────────── runs ───────────────────────────
+
+export const runState = pgEnum('run_state', ['running', 'done', 'failed']);
+
+/**
+ * One orchestrator run: a goal in, an answer and a trail of payments out.
+ *
+ * Persisted rather than held in memory because the live demo page IS the
+ * submission video. A run that vanishes when the page is refreshed cannot be
+ * re-watched, re-recorded, or shown to a judge who arrived late — and a
+ * finished run is exactly the artefact worth keeping.
+ */
+export const runs = pgTable(
+  'runs',
+  {
+    id: bigserial('id', {mode: 'number'}).primaryKey(),
+    chainId: bigint('chain_id', {mode: 'number'}).notNull(),
+    /** The orchestrator agent that owns the spending caps this run ran under. */
+    agentId: bigint('agent_id', {mode: 'number'})
+      .notNull()
+      .references(() => agents.id, {onDelete: 'cascade'}),
+    goal: text('goal').notNull(),
+    state: runState('state').notNull().default('running'),
+    answer: text('answer'),
+    /** Final per-step outcomes, as the orchestrator reported them. */
+    steps: jsonb('steps').notNull().default([]),
+    spent: baseUnits('spent').notNull().default('0'),
+    /** Why a run ended as `failed`. Null on every other state. */
+    error: text('error'),
+    startedAt: timestamp('started_at', {withTimezone: true}).notNull().defaultNow(),
+    finishedAt: timestamp('finished_at', {withTimezone: true}),
+  },
+  (t) => [index('runs_agent_idx').on(t.agentId, t.id)],
+);
+
+/**
+ * Append-only trace of a run.
+ *
+ * No `tx_hash` uniqueness here, unlike `job_events`: these are produced by the
+ * orchestrator rather than replayed from the chain, so there is nothing to
+ * deduplicate and every line is meant to be kept in order.
+ */
+export const runEvents = pgTable(
+  'run_events',
+  {
+    id: bigserial('id', {mode: 'number'}).primaryKey(),
+    runId: bigint('run_id', {mode: 'number'})
+      .notNull()
+      .references(() => runs.id, {onDelete: 'cascade'}),
+    kind: text('kind').notNull(),
+    payload: jsonb('payload').notNull().default({}),
+    occurredAt: timestamp('occurred_at', {withTimezone: true}).notNull().defaultNow(),
+  },
+  (t) => [index('run_events_run_idx').on(t.runId, t.id)],
+);

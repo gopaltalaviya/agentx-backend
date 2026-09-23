@@ -8,6 +8,13 @@
       "when": 1790141897646,
       "tag": "0000_gifted_shaman",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790177967880,
+      "tag": "0001_sudden_morlocks",
+      "breakpoints": true
     }
   ]
 }

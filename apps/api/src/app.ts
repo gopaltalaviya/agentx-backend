@@ -7,6 +7,8 @@ import {EventBus} from './events.js';
 import {registerAgentRoutes} from './routes/agents.js';
 import {registerJobRoutes, type JobRouteDeps} from './routes/jobs.js';
 import {registerMetaRoutes} from './routes/meta.js';
+import {registerRunRoutes} from './routes/runs.js';
+import {RunService, type RunExecutor} from './runs.js';
 import type {BudgetReader} from './chain-reads.js';
 
 export interface AppDeps {
@@ -17,6 +19,8 @@ export interface AppDeps {
   bus?: EventBus;
   /** Omitted, /v1/budget answers from the cached policy and says so. */
   readBudget?: BudgetReader;
+  /** Omitted, the API serves everything except starting a run. */
+  runExecutor?: RunExecutor;
   logger?: boolean;
 }
 
@@ -34,6 +38,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
 
   const bus = deps.bus ?? new EventBus();
+  // A second bus, not a shared namespace: job 7 and run 7 are unrelated, and
+  // one map keyed by number would deliver each other's events.
+  const runBus = new EventBus();
 
   await app.register(rateLimit, {
     max: 600,
@@ -59,7 +66,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       escrow: c.contracts['TaskEscrow'] ?? null,
     })),
     defaultChainId: deps.defaultChainId,
-    subscribers: bus.subscriberCount,
+    subscribers: bus.subscriberCount + runBus.subscriberCount,
+    /** Whether this deployment can start an orchestrator run at all. */
+    orchestrator: Boolean(deps.runExecutor),
   }));
 
   await registerAgentRoutes(app, {db: deps.db, chains: deps.chains, defaultChainId: deps.defaultChainId});
@@ -75,6 +84,22 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     chains: deps.chains,
     defaultChainId: deps.defaultChainId,
     ...(deps.readBudget ? {readBudget: deps.readBudget} : {}),
+  });
+
+  await registerRunRoutes(app, {
+    db: deps.db,
+    chains: deps.chains,
+    runBus,
+    ...(deps.runExecutor
+      ? {
+          runs: new RunService({
+            db: deps.db,
+            bus: runBus,
+            execute: deps.runExecutor,
+            log: (err, msg) => app.log.error({err}, msg),
+          }),
+        }
+      : {}),
   });
 
   return app;

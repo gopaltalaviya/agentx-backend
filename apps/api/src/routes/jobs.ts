@@ -13,7 +13,7 @@ import {
 } from '@agentx/shared';
 import type {ChainConfig} from '@agentx/config';
 import {authenticate, resolveChainId, type Caller} from '../auth.js';
-import {streamJobEvents, type EventBus} from '../events.js';
+import {streamEvents, type EventBus} from '../events.js';
 
 /** Query for `GET /v1/jobs`. Coerced, because query strings are strings. */
 const JobListQuery = z.object({
@@ -334,7 +334,7 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
       .where(eq(jobEvents.jobId, job.id))
       .orderBy(asc(jobEvents.id));
 
-    streamJobEvents(
+    streamEvents(
       reply,
       bus,
       job.id,
