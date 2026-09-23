@@ -64,6 +64,16 @@ export const agents = pgTable(
     walletAddress: text('wallet_address').notNull(),
     name: text('name').notNull(),
     description: text('description'),
+    /**
+     * NEVER DEREFERENCED SERVER-SIDE. Both of these are agent-supplied URLs,
+     * stored and returned verbatim.
+     *
+     * That is what makes threat T15 (SSRF via a hostile metadata URI) not
+     * apply: there is no fetch to attack. If anything ever does fetch them,
+     * the guard must be built FIRST — size cap, timeout, content-type
+     * allowlist, no redirects into private ranges, no credentials attached.
+     * See docs/04 §9.2 T15.
+     */
     endpointUrl: text('endpoint_url'),
     pricePerTask: baseUnits('price_per_task').notNull(),
     stake: baseUnits('stake').notNull().default('0'),
