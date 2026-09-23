@@ -6,3 +6,6 @@ dist/
 !.env.example
 coverage/
 *.log
+
+# recorded agent completions (regenerate with AGENT_MODE=record)
+.agent-cache/
