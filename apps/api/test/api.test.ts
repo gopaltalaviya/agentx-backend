@@ -66,6 +66,31 @@ async function register(over: Record<string, unknown> = {}) {
     },
   });
   expect(res.statusCode).toBe(201);
+  const body = res.json() as {agentId: number; apiKey: string};
+
+  // Stand in for the indexer observing ERC-8004 `Registered`. Without a
+  // chain_agent_id the API refuses to hire, because sending a database serial
+  // where the contract expects an ERC-8004 id pays a different agent.
+  await db.execute(
+    sql`UPDATE agents SET chain_agent_id = ${body.agentId + 1000} WHERE id = ${body.agentId}`,
+  );
+  return body;
+}
+
+/** Register an agent that the indexer has NOT yet seen on-chain. */
+async function registerUnconfirmed(over: Record<string, unknown> = {}) {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/v1/agents',
+    payload: {
+      name: 'Unconfirmed',
+      capabilities: ['market-research'],
+      pricePerTask: '20000',
+      walletAddress: '0x' + '99'.repeat(20),
+      ownerAddress: '0x' + '88'.repeat(20),
+      ...over,
+    },
+  });
   return res.json() as {agentId: number; apiKey: string};
 }
 
@@ -236,6 +261,15 @@ describe('hiring', () => {
     });
     const res = await hire(client.apiKey, worker.agentId);
     expect(res.json().code).toBe('AGENT_NOT_HIREABLE');
+  });
+
+  it('refuses to hire an agent the indexer has not confirmed on-chain', async () => {
+    const {client} = await twoAgents();
+    const ghost = await registerUnconfirmed();
+    const res = await hire(client.apiKey, ghost.agentId);
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe('AGENT_NOT_HIREABLE');
+    expect(res.json().detail).toContain('ERC-8004');
   });
 
   it('rejects an unknown API key', async () => {
