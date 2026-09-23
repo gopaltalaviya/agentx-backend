@@ -8,6 +8,9 @@ importers:
 
   .:
     devDependencies:
+      '@agentx/agent-core':
+        specifier: workspace:*
+        version: link:packages/agent-core
       '@agentx/config':
         specifier: workspace:*
         version: link:packages/config
@@ -38,8 +41,23 @@ importers:
       vitest:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@22.20.4)
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
 
   apps/agents/execution-bot:
+    dependencies:
+      '@agentx/agent-core':
+        specifier: workspace:*
+        version: link:../../../packages/agent-core
+      '@agentx/sdk':
+        specifier: workspace:*
+        version: link:../../../packages/sdk
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
+
+  apps/agents/orchestrator:
     dependencies:
       '@agentx/agent-core':
         specifier: workspace:*

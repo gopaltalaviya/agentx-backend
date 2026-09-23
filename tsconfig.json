@@ -36,6 +36,9 @@
     },
     {
       "path": "apps/agents/execution-bot"
+    },
+    {
+      "path": "apps/agents/orchestrator"
     }
   ]
 }

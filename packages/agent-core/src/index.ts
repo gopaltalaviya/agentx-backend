@@ -6,6 +6,7 @@ export * from './brain.js';
 export * from './prompts.js';
 export * from './judge.js';
 export * from './worker.js';
+export * from './orchestrator.js';
 export * from './factory.js';
 export {CachedBrain, RecordingBrain, FallbackBrain};
 export * from './run.js';

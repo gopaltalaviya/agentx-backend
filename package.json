@@ -18,7 +18,8 @@
     "dev": "pnpm -r --parallel dev",
     "verify:indexer": "node scripts/verify-indexer.mjs",
     "verify:keystore": "node scripts/verify-keystore.mjs",
-    "e2e": "node scripts/e2e.mjs"
+    "e2e": "node scripts/e2e.mjs",
+    "demo": "node scripts/demo.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
@@ -30,6 +31,8 @@
     "@agentx/config": "workspace:*",
     "@agentx/db": "workspace:*",
     "@agentx/shared": "workspace:*",
-    "@agentx/sdk": "workspace:*"
+    "@agentx/sdk": "workspace:*",
+    "@agentx/agent-core": "workspace:*",
+    "zod": "^3.23.8"
   }
 }

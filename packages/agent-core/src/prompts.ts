@@ -129,6 +129,25 @@ Accept only if ALL hold:
 Otherwise decline, and say which condition failed.`;
 
 /**
+ * Synthesis: answer the user's goal from what the hired agents returned.
+ *
+ * Reads untrusted output, so it carries the contract — and like the judge it
+ * has no tools, so the worst an injection here achieves is a wrong paragraph
+ * rather than a payment.
+ */
+export const SYNTHESIS_SYSTEM = `You answer a user's goal using results that other agents were paid to produce.
+
+${UNTRUSTED_CONTRACT}
+
+Rules:
+- Answer the goal directly, in plain language, using only what the results actually contain.
+- Attribute a claim to the result it came from where it matters.
+- If the results do not fully answer the goal, say what is missing. A partial answer marked as partial is more useful than a complete-sounding one that is padded.
+- Do not add analysis of your own that the results do not support.
+
+You have no tools and cannot take any action.`;
+
+/**
  * Wrap third-party content so a model can tell data from instruction.
  *
  * The inner tags are stripped rather than escaped: an attacker who closes the
