@@ -46,7 +46,30 @@ export async function registerMetaRoutes(app: FastifyInstance, deps: MetaRouteDe
         address: chain.network.paymentToken.address,
       },
       contracts: chain.contracts,
-      erc8004: chain.erc8004,
+      erc8004: {
+        ...chain.erc8004,
+        /**
+         * Which registry ABI this chain has.
+         *
+         * The reference implementation takes `register(uri, wallet)`; the
+         * canonical registry takes `register(uri)` and resolves the payout
+         * wallet separately. A client that guesses wrong sends a transaction
+         * that reverts, and on mainnet it pays for the privilege — so the
+         * network states it rather than leaving it to be inferred from a
+         * chain id.
+         */
+        referenceImplementation: chain.network.erc8004.deployWithProtocol,
+      },
+      /**
+       * The PUBLIC endpoints from networks.json — deliberately not
+       * `chain.rpcUrl`, which `RPC_URL_<chainId>` may have replaced with a
+       * keyed private endpoint. Publishing the resolved value would hand that
+       * key to every browser that loads the page.
+       *
+       * A browser needs these to add the chain to a wallet: Monad is in no
+       * wallet's default list.
+       */
+      rpcUrls: chain.network.rpcUrls,
       explorerBaseUrl: chain.network.blockExplorerUrls[0] ?? null,
       faucetUrls: chain.network.faucetUrls,
       confirmations: chain.confirmations,

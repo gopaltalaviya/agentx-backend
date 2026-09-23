@@ -101,6 +101,45 @@ describe('GET /v1/network', () => {
     expect(body.fastPathMaxDisplay).toMatch(/\d/);
   });
 
+  /**
+   * A client that guesses the registry ABI sends a transaction that reverts,
+   * and on mainnet it pays for the privilege.
+   */
+  it('states which ERC-8004 registry ABI the chain has', async () => {
+    const body = (await app.inject({method: 'GET', url: '/v1/network'})).json();
+    expect(typeof body.erc8004.referenceImplementation).toBe('boolean');
+  });
+
+  /**
+   * A private RPC endpoint carries its credential in the URL. Publishing the
+   * resolved endpoint would hand it to every browser that loads the page.
+   */
+  it('publishes the public RPC list, never an env-configured private endpoint', async () => {
+    const configured = loadConfig({
+      contractsRoot: fileURLToPath(new URL('../../../../agentx-contracts', import.meta.url)),
+      env: {
+        ENABLED_CHAIN_IDS: '31337',
+        DEFAULT_CHAIN_ID: '31337',
+        RPC_URL_31337: 'https://paid-provider.example/v2/SECRET-KEY',
+      },
+    });
+    const withPrivateRpc = await buildApp({
+      db,
+      chains: configured.chains as Record<number, never>,
+      defaultChainId: 31337,
+      bus: new EventBus(),
+      submit: async () => ({txHash: '0x', chainJobId: '1'}),
+    });
+
+    try {
+      const body = (await withPrivateRpc.inject({method: 'GET', url: '/v1/network'})).json();
+      expect(JSON.stringify(body)).not.toContain('SECRET-KEY');
+      expect(body.rpcUrls).toEqual(['http://127.0.0.1:8545']);
+    } finally {
+      await withPrivateRpc.close();
+    }
+  });
+
   it('falls back to the default chain rather than erroring on an unknown one', async () => {
     const body = (await app.inject({method: 'GET', url: '/v1/network?chainId=99999'})).json();
     expect(body.chainId).toBe(31337);
