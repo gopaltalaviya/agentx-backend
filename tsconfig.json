@@ -5,6 +5,7 @@
     { "path": "packages/config" },
     { "path": "packages/db" },
     { "path": "apps/indexer" },
-    { "path": "apps/signer" }
+    { "path": "apps/signer" },
+    { "path": "apps/api" }
   ]
 }

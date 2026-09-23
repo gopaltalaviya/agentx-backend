@@ -12,7 +12,7 @@ import {dirname, join} from 'node:path';
 import postgres from 'postgres';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const url = process.env.DATABASE_URL ?? 'postgres://agentx:agentx@localhost:5442/agentx';
+const url = process.env.DATABASE_URL ?? 'postgres://agentx:agentx@127.0.0.1:5442/agentx';
 const sql = postgres(url, {max: 1});
 
 await sql`CREATE TABLE IF NOT EXISTS _migrations (

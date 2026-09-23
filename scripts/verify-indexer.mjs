@@ -18,7 +18,7 @@ import {createDb, closeDb} from '@agentx/db';
 import {Indexer} from '../apps/indexer/dist/indexer.js';
 
 const RPC = 'http://127.0.0.1:8545';
-const DB_URL = process.env.DATABASE_URL ?? 'postgres://agentx:agentx@localhost:5442/agentx';
+const DB_URL = process.env.DATABASE_URL ?? 'postgres://agentx:agentx@127.0.0.1:5442/agentx';
 // anvil account 0 — a published test key, worthless by design.
 const DEPLOYER = privateKeyToAccount('0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80');
 
