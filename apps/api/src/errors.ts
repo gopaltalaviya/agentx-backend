@@ -53,19 +53,32 @@ export function registerErrorHandler(app: FastifyInstance): void {
         });
     }
 
-    // Postgres 23505. Registering a wallet that already has an agent is a
-    // conflict the caller can act on, not an internal fault — returning 500
-    // told them to retry something that can never succeed.
+    // Postgres 23505. A uniqueness conflict is something the caller can act
+    // on, not an internal fault — returning 500 told them to retry something
+    // that can never succeed.
+    //
+    // The message names the constraint that actually fired. It used to say
+    // "an agent already exists for that wallet" for EVERY unique violation,
+    // which during an incident points whoever is reading at the wrong table:
+    // a duplicate on-chain job id reported as a duplicate wallet costs real
+    // minutes.
     if ((err as {code?: string}).code === '23505') {
+      const constraint =
+        (err as {constraint_name?: string; constraint?: string}).constraint_name ??
+        (err as {constraint?: string}).constraint ??
+        '';
+
+      const detail = CONFLICT_DETAIL[constraint] ?? `a uniqueness constraint was violated${constraint ? ` (${constraint})` : ''}`;
+
       return reply
         .status(409)
         .type('application/problem+json')
         .send({
           type: 'https://agentx.dev/errors/already-exists',
-          title: 'Already registered',
+          title: 'Already exists',
           status: 409,
           code: 'ALREADY_EXISTS',
-          detail: 'an agent already exists for that wallet on this chain',
+          detail,
           traceId,
         });
     }
@@ -123,3 +136,17 @@ function titleFor(code: string): string {
 }
 
 export {ERROR_STATUS};
+
+/**
+ * Plain-language detail per unique constraint.
+ *
+ * Anything missing falls back to naming the constraint, which is still far
+ * better than confidently describing the wrong one.
+ */
+const CONFLICT_DETAIL: Record<string, string> = {
+  agents_chain_wallet_uk: 'an agent already exists for that wallet on this chain',
+  agents_chain_agent_uk: 'an agent already exists for that ERC-8004 id on this chain',
+  jobs_chain_job_uk: 'a job already exists for that on-chain job id',
+  signer_idempotency_uk: 'that Idempotency-Key has already been used',
+  api_keys_hash_uk: 'that API key already exists',
+};

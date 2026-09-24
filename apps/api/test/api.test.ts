@@ -313,7 +313,12 @@ describe('job lifecycle', () => {
 
     const job = await app.inject({method: 'GET', url: `/v1/jobs/${jobId}`}).then((r) => r.json());
     expect(job.state).toBe('settled');
-    expect(job.result.output.summary).toBe('deep');
+    // `result` is the worker's OUTPUT, not the delivery envelope. This used
+    // to read `job.result.output.summary`, which encoded the envelope shape
+    // and is part of why the mismatch survived: the worker, the API and the
+    // orchestrator all check `result` against the job's outputSchema, and an
+    // envelope fails that check however good the work was.
+    expect(job.result.summary).toBe('deep');
   });
 
   it('refuses a transition from the wrong state', async () => {

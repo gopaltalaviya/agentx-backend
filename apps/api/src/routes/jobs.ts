@@ -412,6 +412,24 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
     const idempotencyKey =
       (request.headers['idempotency-key'] as string | undefined) ?? `${kind}:${job.id}:${job.state}`;
 
+    // Computed BEFORE the transaction, because the chain commits to it.
+    //
+    // `result` means the worker's OUTPUT everywhere it is read — the worker
+    // checks its own output against the job's outputSchema, and so do the API
+    // and the orchestrator. Storing the delivery envelope under the same name
+    // made those checks disagree about what they were looking at: a perfectly
+    // good delivery would be read as `{output, producedAt}`, fail the
+    // required-field check, and be disputed.
+    //
+    // The hash covers the output alone for the same reason, and because
+    // including `producedAt` would give the same content a different
+    // commitment on every delivery.
+    const delivered =
+      kind === 'submitResult'
+        ? ((request.body as {output: Record<string, unknown>}).output ?? {})
+        : undefined;
+    const resultHash = delivered ? await sha3(canonicalize(delivered)) : undefined;
+
     const result = await submit({
       agentId: caller.agentId,
       chainId: job.chainId,
@@ -420,7 +438,14 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
       // Only the hire moves money; the rest are state changes.
       spend: 0n,
       idempotencyKey,
-      payload: (request.body ?? {}) as Record<string, unknown>,
+      payload: {
+        ...((request.body ?? {}) as Record<string, unknown>),
+        // Without this the encoder falls back to the SPEC hash, so the chain
+        // would commit to what was ASKED FOR rather than to what was
+        // delivered — and T4's "the result hash is committed on-chain before
+        // release" would not be true.
+        ...(resultHash ? {resultHash} : {}),
+      },
     });
 
     // Advance the state optimistically, once the transaction is accepted for
@@ -435,10 +460,9 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
     // So: the API writes what it believes, the indexer corrects it, and if
     // they ever disagree the chain wins.
     const patch: Record<string, unknown> = {state: to};
-    if (kind === 'submitResult') {
-      const body = request.body as {result?: unknown};
-      patch['result'] = (body.result ?? body) as object;
-      patch['resultHash'] = await sha3(canonicalize(body.result ?? body));
+    if (delivered && resultHash) {
+      patch['result'] = delivered;
+      patch['resultHash'] = resultHash;
     }
     if (to === 'settled') patch['settledAt'] = new Date();
 

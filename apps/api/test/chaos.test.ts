@@ -3,7 +3,7 @@ import {fileURLToPath} from 'node:url';
 import type {FastifyInstance} from 'fastify';
 import {loadConfig} from '@agentx/config';
 import {sql} from 'drizzle-orm';
-import {AgentxError, ErrorCode} from '@agentx/shared';
+import {AgentxError, ErrorCode, validateShape} from '@agentx/shared';
 import {createDb, closeDb, type Db} from '@agentx/db';
 import {buildApp, EventBus} from '../src/app.js';
 
@@ -23,6 +23,9 @@ let db: Db;
 /** Swapped per test to make the signer misbehave. */
 let submitBehaviour: (() => void) | null = null;
 let submitted: string[] = [];
+/** The payload the API handed the signer, so the on-chain args can be asserted. */
+let lastPayload: Record<string, unknown> | null = null;
+let chainJobSeq = 0;
 
 const config = loadConfig({
   contractsRoot: fileURLToPath(new URL('../../../../agentx-contracts', import.meta.url)),
@@ -39,7 +42,11 @@ beforeAll(async () => {
     submit: async (args) => {
       submitBehaviour?.();
       submitted.push(args.kind);
-      return {txHash: `0x${'ab'.repeat(32)}`, chainJobId: '1'};
+      lastPayload = args.payload ?? null;
+      // A DISTINCT id per job, as the chain would assign. Returning a
+      // constant made the second hire in any test collide on
+      // jobs_chain_job_uk — a mock that cannot happen in production.
+      return {txHash: `0x${'ab'.repeat(32)}`, chainJobId: String(++chainJobSeq)};
     },
   });
 });
@@ -52,6 +59,7 @@ afterAll(async () => {
 beforeEach(async () => {
   submitBehaviour = null;
   submitted = [];
+  lastPayload = null;
   await db.execute(
     sql`TRUNCATE agents, jobs, job_events, agent_stats, agent_capabilities, api_keys, payments, runs, run_events RESTART IDENTITY CASCADE`,
   );
@@ -104,7 +112,7 @@ async function hiredJob(outputSchema?: Record<string, unknown>) {
       },
     },
   });
-  expect(hire.statusCode).toBe(201);
+  expect(hire.statusCode, `hire failed: ${hire.body}`).toBe(201);
   const jobId = hire.json().jobId as string;
 
   const accepted = await app.inject({
@@ -196,6 +204,97 @@ describe('a malformed result is refused at the boundary', () => {
       payload: {output: 'not an object', producedAt: 'not a date'},
     });
     expect(res.statusCode).toBe(422);
+  });
+});
+
+describe('what a delivered result actually is', () => {
+  /**
+   * `result` means the worker's OUTPUT everywhere it is read: the worker
+   * checks its own output against the job's outputSchema, the API checks the
+   * same thing on submission, and the orchestrator checks it again before
+   * paying. Storing the delivery envelope under that name made those checks
+   * disagree — a perfect delivery came back as `{output, producedAt}`, failed
+   * the required-field check, and was disputed.
+   *
+   * That is the demo's main path, so this is the shape the whole run depends
+   * on.
+   */
+  it('returns the output itself, not the delivery envelope', async () => {
+    const {jobId, worker} = await hiredJob({type: 'object', required: ['summary']});
+
+    await app.inject({
+      method: 'POST',
+      url: `/v1/jobs/${jobId}/result`,
+      headers: auth(worker.apiKey),
+      payload: {output: {summary: 'depth is healthy', confidence: 0.8}, producedAt: new Date().toISOString()},
+    });
+
+    const job = (await app.inject({method: 'GET', url: `/v1/jobs/${jobId}`})).json();
+    expect(job.result).toEqual({summary: 'depth is healthy', confidence: 0.8});
+    expect(job.result.output).toBeUndefined();
+    expect(job.result.producedAt).toBeUndefined();
+  });
+
+  /** The same check the orchestrator runs before it pays. */
+  it('produces a result that satisfies the schema the job asked for', async () => {
+    const {jobId, worker} = await hiredJob({type: 'object', required: ['summary', 'confidence']});
+
+    await app.inject({
+      method: 'POST',
+      url: `/v1/jobs/${jobId}/result`,
+      headers: auth(worker.apiKey),
+      payload: {output: {summary: 'x'.repeat(20), confidence: 0.9}, producedAt: new Date().toISOString()},
+    });
+
+    const job = (await app.inject({method: 'GET', url: `/v1/jobs/${jobId}`})).json();
+    expect(validateShape(job.result, job.spec.outputSchema)).toEqual({ok: true});
+  });
+
+  /**
+   * The hash is what the chain commits to. Including `producedAt` would give
+   * the same content a different commitment on every delivery.
+   */
+  it('commits to a hash of the output alone, stable across deliveries', async () => {
+    const first = await hiredJob({type: 'object', required: ['summary']});
+    await app.inject({
+      method: 'POST',
+      url: `/v1/jobs/${first.jobId}/result`,
+      headers: auth(first.worker.apiKey),
+      payload: {output: {summary: 'identical'}, producedAt: '2026-01-01T00:00:00.000Z'},
+    });
+
+    const second = await hiredJob({type: 'object', required: ['summary']});
+    await app.inject({
+      method: 'POST',
+      url: `/v1/jobs/${second.jobId}/result`,
+      headers: auth(second.worker.apiKey),
+      payload: {output: {summary: 'identical'}, producedAt: '2026-06-30T12:34:56.000Z'},
+    });
+
+    const a = (await app.inject({method: 'GET', url: `/v1/jobs/${first.jobId}`})).json();
+    const b = (await app.inject({method: 'GET', url: `/v1/jobs/${second.jobId}`})).json();
+    expect(a.resultHash).toBe(b.resultHash);
+  });
+
+  /**
+   * T4's mitigation is "the result hash is committed on-chain before release".
+   * The encoder falls back to the SPEC hash when none is supplied, which would
+   * have committed to what was asked for rather than to what was delivered.
+   */
+  it('sends the result hash to the chain, not the spec hash', async () => {
+    const {jobId, worker} = await hiredJob({type: 'object', required: ['summary']});
+    lastPayload = null;
+
+    await app.inject({
+      method: 'POST',
+      url: `/v1/jobs/${jobId}/result`,
+      headers: auth(worker.apiKey),
+      payload: {output: {summary: 'delivered'}, producedAt: new Date().toISOString()},
+    });
+
+    const job = (await app.inject({method: 'GET', url: `/v1/jobs/${jobId}`})).json();
+    expect(lastPayload?.['resultHash']).toBe(job.resultHash);
+    expect(lastPayload?.['resultHash']).not.toBe(job.specHash);
   });
 });
 
