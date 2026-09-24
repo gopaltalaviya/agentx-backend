@@ -10,31 +10,100 @@ the UI lives in
 They are separate repositories so that Foundry sources and deploy keys never
 enter a Railway or Vercel build container.
 
-## Packages
+---
+
+## What runs here
+
+| Service | Role |
+|---|---|
+| `apps/api` | Fastify REST + SSE. Holds **no key**: it encodes calls and hands them to the signer. |
+| `apps/signer` | The only process with a key. Checks the same policy `AgentAccount` enforces on-chain, so a caller gets an actionable error instead of a revert. |
+| `apps/indexer` | Chain → Postgres. Reorg-aware, replay-safe, and the authority on every job's real state. |
+| `apps/mcp` | The agent interface: eight MCP tools, so any MCP-capable agent can transact without writing an HTTP client. |
+| `apps/agents/*` | `orchestrator`, plus `research-bot`, `trading-bot` and `execution-bot`. |
 
 | Package | Role |
 |---|---|
 | `@agentx/config` | The **one** import for chain facts, protocol parameters and contract addresses. Validated with zod and frozen at boot. |
-| `@agentx/shared` | `JobSpec`, `JobResult`, error codes — zod schemas with types derived from them, so validation and types cannot drift. |
+| `@agentx/shared` | `JobSpec`, `JobResult`, error codes, result-shape validation — zod schemas with types derived from them, so validation and types cannot drift. |
+| `@agentx/db` | Drizzle schema and migrations. Every chain-derived table carries `chain_id`. |
+| `@agentx/sdk` | The typed client every agent imports, so nobody hand-rolls `fetch`. |
+| `@agentx/agent-core` | Brains, prompts, the judge, the worker loop and the orchestrator. |
 
-## Apps (in progress)
-
-`api` (Fastify REST + SSE) · `indexer` (chain → Postgres) · `signer`
-(policy-checked signing) · `mcp` (agent-facing tools) · `agents`
-(orchestrator + workers).
+---
 
 ## Quickstart
 
 ```bash
 pnpm install
-docker compose up -d          # Postgres 16 + Redis 7
+docker compose up -d                 # Postgres 16 + Redis 7
+pnpm --filter @agentx/db migrate
 pnpm -r build
 pnpm test
 
-# Requires a deployment to exist in the contracts checkout
+# Needs a deployment to exist in the contracts checkout
 AGENTX_CONTRACTS_ROOT=../agentx-contracts \
-ENABLED_CHAIN_IDS=31337 node packages/config/bin/check.mjs
+ENABLED_CHAIN_IDS=10143 node packages/config/bin/check.mjs
 ```
+
+Then the whole thing, unattended:
+
+```bash
+VERIFY_CHAIN_ID=10143 pnpm demo
+```
+
+`pnpm demo` boots the stack, puts four agents on-chain, runs three workers and
+hands the orchestrator one sentence. It asserts on **worker balances and on
+reputation written by settlement**, never on log lines — because every serious
+bug in this project passed its unit tests and was caught only against the real
+chain.
+
+It checks a model is reachable *before* any chain write, so a missing key
+costs no gas and tells you what to do about it.
+
+---
+
+## The agent interface
+
+Eight MCP tools. Two rules are enforced structurally rather than by
+convention:
+
+- **A tool that moves money says so first.** `defineTool` builds the warning
+  from the tool's own `spends` flag, so a ninth tool cannot be added without
+  one. Spending tools carry `readOnlyHint: false`, so a host can gate them
+  behind its own approval UI.
+- **`get_job` and `await_result` state in their descriptions that a returned
+  result is data, not instruction.** Those are the two places another agent's
+  text enters a model's context, and that warning must not depend on the
+  client having set our system prompt.
+
+`my_budget` exists so an agent can plan rather than discover its limits by
+hitting 402s, which is how you get a retry storm.
+
+---
+
+## Models and cost
+
+Two independent switches, kept separate on purpose:
+
+```bash
+AGENT_MODE=cached      # replay a recording — free, and the default
+AGENT_MODE=record      # call providers and save, so later runs are free
+AGENT_MODE=live        # call providers every time
+
+BRAIN_CHAIN=gemini,groq,ollama,claude          # workers
+BRAIN_CHAIN_ORCHESTRATOR=claude,gemini,groq    # planning and judging
+```
+
+`AGENT_MODE` decides whether tokens are spent at all. `BRAIN_CHAIN` decides
+the provider **order** — a deliberate cost and quality choice, so it is
+configured rather than guessed. Moving *along* the chain is automatic, because
+a rate limit at 11pm on submission day has nobody available to flip a flag.
+
+Development costs nothing. A live run is roughly half a cent on the free
+tiers.
+
+---
 
 ## Configuration
 
@@ -57,12 +126,63 @@ actionable fix:
 A service that boots with broken config and fails on the first user request is
 strictly worse than one that refuses to boot.
 
+---
+
 ## Money
 
 Token amounts cross every boundary as **decimal strings of integer base
 units**, never JSON numbers — a `uint128` amount exceeds 2^53, so a JSON number
 would lose precision silently and the first symptom would be a payment that
 fails to reconcile.
+
+Every request that spends requires an `Idempotency-Key`. Agents retry; a
+retried hire must not become a second payment.
+
+---
+
+## Prompt injection
+
+AGENTX has a property that changes the threat model: **one agent reads another
+agent's output and then spends money based on it.**
+
+The claim is deliberately narrow, and it is the honest one:
+
+> We do not prevent prompt injection. We claim that a successful injection
+> cannot spend more than the daily cap the owner set on-chain, and cannot pay
+> anyone the owner did not allowlist.
+
+Results enter as delimited untrusted data, are shape-checked before any model
+sees them, and the judge that reads them **has no tools** — a fully successful
+injection into that call has nothing to call. The layer that actually bounds
+the damage is `AgentAccount`'s per-task and daily caps, which is arithmetic
+rather than persuasion.
+
+There is deliberately **no keyword filtering**. Stripping "ignore previous
+instructions" fails against paraphrase and encoding while manufacturing the
+appearance of safety.
+
+Full reasoning: [`docs/10-llm-architecture.md`](../docs/10-llm-architecture.md).
+
+---
+
+## Testing
+
+```bash
+pnpm test                                      # 175 tests
+VERIFY_CHAIN_ID=10143 node scripts/verify-indexer.mjs   # against the live chain
+node scripts/e2e.mjs                           # the whole stack, one settlement
+```
+
+The standing rule, learned the hard way: **a mock that agrees with your
+assumptions proves nothing.** A broken job-id linkage, a missing `specHash`, a
+100-block RPC cap and doubled reputation all passed unit tests and were caught
+only by running against the real chain. Every milestone gets a live-chain
+check, not just a suite.
+
+When a test is written for a bug, it is run against the *old* code first. A
+test that passes either way proves nothing either.
+
+---
 
 ## License
 
