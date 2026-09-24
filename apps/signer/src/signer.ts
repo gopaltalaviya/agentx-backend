@@ -118,30 +118,71 @@ export class SignerService {
         .onConflictDoNothing()
         .returning();
 
-      if (!claimed) {
-        // Another request took this key between step 1 and here.
+      let slot = claimed;
+
+      if (!slot) {
         const now = await db.query.signerTxs.findFirst({
           where: eq(signerTxs.idempotencyKey, req.idempotencyKey),
         });
         if (now?.txHash) return {txHash: now.txHash as Hex, nonce: now.nonce, replayed: true};
+
+        // A previous attempt claimed the key and then failed to broadcast —
+        // the wallet was out of gas, or the RPC was down.
+        //
+        // Without this the key is burned forever: the row exists, has no
+        // hash, and every retry is refused as "in flight". Topping the wallet
+        // up would not help, which is the opposite of the recovery the chaos
+        // checklist asks for.
+        //
+        // The retry REUSES THE STORED NONCE. If the original somehow did
+        // reach the mempool after all, two transactions with one nonce means
+        // only one can ever be mined — so recovering cannot double-spend.
+        if (now && now.status === 'failed') {
+          const [reclaimed] = await db
+            .update(signerTxs)
+            .set({status: 'pending'})
+            .where(eq(signerTxs.id, now.id))
+            .returning();
+          slot = reclaimed;
+          this.log.warn({agentId: req.agentId, nonce: now.nonce}, 'retrying a failed broadcast');
+        }
+      }
+
+      if (!slot) {
+        // Another request holds this key right now.
         throw new AgentxError(ErrorCode.IDEMPOTENCY_CONFLICT, 'a request with this key is in flight');
       }
 
       const wallet = createWalletClient({account, transport: http(chain.rpcUrl)});
-      const txHash = await wallet.sendTransaction({
-        to: req.target,
-        data: req.data,
-        nonce,
-        chain: null,
-      });
+
+      let txHash: Hex;
+      try {
+        txHash = await wallet.sendTransaction({
+          to: req.target,
+          data: req.data,
+          // The slot's nonce, which on a retry is the original one.
+          nonce: slot.nonce,
+          chain: null,
+        });
+      } catch (err) {
+        // Record the failure rather than leaving the row 'pending' forever,
+        // so the key can be retried once whatever broke is fixed.
+        await db
+          .update(signerTxs)
+          .set({status: 'failed'})
+          .where(eq(signerTxs.id, slot.id))
+          .catch(() => undefined);
+
+        throw asActionableError(err, chain.network.nativeCurrency.symbol, account.address);
+      }
 
       await db
         .update(signerTxs)
         .set({txHash, status: 'broadcast'})
-        .where(eq(signerTxs.id, claimed.id));
+        .where(eq(signerTxs.id, slot.id));
 
-      this.log.info({agentId: req.agentId, nonce, txHash}, 'signed and broadcast');
-      return {txHash, nonce, replayed: false};
+      this.log.info({agentId: req.agentId, nonce: slot.nonce, txHash}, 'signed and broadcast');
+      return {txHash, nonce: slot.nonce, replayed: false};
     });
   }
 
@@ -242,3 +283,33 @@ export class SignerService {
 }
 
 const DAY_SECONDS = 24 * 60 * 60;
+
+/**
+ * Turn a broadcast failure into something the operator can act on.
+ *
+ * "execution reverted" and a 900-character viem stack are the same thing to
+ * whoever is watching a demo fail: unreadable. The two that actually happen —
+ * an empty gas wallet and an unreachable RPC — get a sentence each, naming
+ * the address to fund, because at that moment the useful output is an
+ * address and not a stack trace.
+ */
+function asActionableError(err: unknown, gasSymbol: string, from: string): AgentxError {
+  const message = err instanceof Error ? err.message : String(err);
+
+  if (/insufficient funds|exceeds the balance|gas required exceeds/i.test(message)) {
+    return new AgentxError(
+      ErrorCode.INSUFFICIENT_FUNDS,
+      `the agent wallet ${from} has no ${gasSymbol} left for gas — top it up and retry the same request`,
+    );
+  }
+
+  if (/fetch failed|ECONNREFUSED|ETIMEDOUT|socket hang up|503|502|504/i.test(message)) {
+    return new AgentxError(
+      ErrorCode.CHAIN_NOT_ENABLED,
+      `the RPC endpoint is unreachable — the transaction was NOT broadcast, so retrying the same request is safe (${message})`,
+      5,
+    );
+  }
+
+  return new AgentxError(ErrorCode.INVALID_STATE, `broadcast failed: ${message}`);
+}

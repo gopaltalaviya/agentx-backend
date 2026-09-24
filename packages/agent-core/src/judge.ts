@@ -79,27 +79,9 @@ export class Judge {
 }
 
 /**
- * The structural half of acceptance, run BEFORE the judge.
+ * Re-exported so callers in this package keep one import.
  *
- * Cheap, deterministic, and it keeps malformed content out of a model
- * context entirely. A result that is not even the right shape never needs an
- * opinion.
+ * The implementation lives in `@agentx/shared` because the API and the worker
+ * ask the same question, and three copies of a validation rule drift.
  */
-export function validateShape(
-  result: unknown,
-  outputSchema: Record<string, unknown> | undefined,
-): {ok: true} | {ok: false; reason: string} {
-  if (result === null || typeof result !== 'object') {
-    return {ok: false, reason: 'result is not an object'};
-  }
-  if (!outputSchema) return {ok: true};
-
-  const required = Array.isArray(outputSchema['required']) ? outputSchema['required'] : [];
-  const missing = (required as string[]).filter(
-    (key) => (result as Record<string, unknown>)[key] === undefined,
-  );
-
-  return missing.length === 0
-    ? {ok: true}
-    : {ok: false, reason: `missing required field(s): ${missing.join(', ')}`};
-}
+export {validateShape} from '@agentx/shared';

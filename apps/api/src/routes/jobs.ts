@@ -8,8 +8,10 @@ import {
   ErrorCode,
   HireRequest,
   JobResult,
+  type JobSpec,
   JobState,
   canonicalize,
+  validateShape,
 } from '@agentx/shared';
 import type {ChainConfig} from '@agentx/config';
 import {authenticate, resolveChainId, type Caller} from '../auth.js';
@@ -285,9 +287,17 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
   /**
    * Worker submits a result.
    *
-   * Validated against the spec's outputSchema BEFORE it is stored, so a
-   * malformed result is rejected at the boundary rather than reaching a model
-   * that might act on it (docs/04 §7.3).
+   * Checked twice before anything is stored or signed: the envelope, then the
+   * output against the spec's own `outputSchema`.
+   *
+   * The second check is the one that matters, and it is checked HERE rather
+   * than left to the client. Without it a worker can deliver an object with
+   * none of the fields the client asked for, the API stores it, an on-chain
+   * `submitResult` is sent for it, and the client discovers the problem only
+   * by paying gas to dispute — while the worker learns it failed via a
+   * permanent reputation hit instead of a 422 it could have acted on. The
+   * transaction is not sent, because this runs before the transition submits
+   * anything (docs/04 §7.3).
    */
   app.post('/v1/jobs/:id/result', async (request) =>
     transition(request, 'submitResult', 'accepted', 'submitted', (job, caller, body) => {
@@ -297,6 +307,15 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
       const parsed = JobResult.safeParse(body);
       if (!parsed.success) {
         throw new AgentxError(ErrorCode.SCHEMA_MISMATCH, parsed.error.issues.map((i) => i.message).join('; '));
+      }
+
+      const spec = job.spec as JobSpec;
+      const shape = validateShape(parsed.data.output, spec.outputSchema);
+      if (!shape.ok) {
+        throw new AgentxError(
+          ErrorCode.SCHEMA_MISMATCH,
+          `${shape.reason} — the job asked for ${JSON.stringify(spec.outputSchema?.['required'] ?? [])}`,
+        );
       }
     }),
   );
