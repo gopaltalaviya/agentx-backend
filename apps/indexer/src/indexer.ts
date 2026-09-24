@@ -22,6 +22,15 @@ import {type Db, indexerCursor, jobEvents, jobs, agents, agentStats, payments} f
  */
 
 
+/**
+ * A handle that is either the pool or an open transaction.
+ *
+ * Written out rather than taking `Db` everywhere, so that a method which MUST
+ * run inside the caller's transaction cannot silently be handed the pool and
+ * commit on its own.
+ */
+type Tx = Db | Parameters<Parameters<Db['transaction']>[0]>[0];
+
 export interface IndexerDeps {
   db: Db;
   chain: ChainConfig;
@@ -114,6 +123,15 @@ export class Indexer {
     const decoded = await this.decode(entry);
     if (!decoded) return;
 
+    // A log with no block is a pending one. We only ever query a range below
+    // the safe head, so this should not happen — and if it ever does, an
+    // unmined event has no place in a record of settled payments.
+    if (entry.blockNumber === null) {
+      this.log.warn({kind: decoded.kind}, 'skipping a pending log with no block number');
+      return;
+    }
+    const blockNumber = entry.blockNumber;
+
     const {kind, chainJobId, payload} = decoded;
 
     let job = await db.query.jobs.findFirst({
@@ -151,21 +169,41 @@ export class Indexer {
       return;
     }
 
-    await db
-      .insert(jobEvents)
-      .values({
-        chainId: chain.chainId,
-        jobId: job.id,
-        kind,
-        payload,
-        txHash: entry.transactionHash,
-        blockNumber: Number(entry.blockNumber),
-        logIndex: entry.logIndex,
-      })
-      // The whole point of the unique key: a replay is a no-op, not an error.
-      .onConflictDoNothing();
+    // Recording the event and applying it are ONE transaction, and the
+    // insert's own uniqueness decides whether the rest runs.
+    //
+    // This is what makes a replay safe. Replays are ordinary: the cursor is
+    // written after a batch is processed, so a restart mid-batch re-reads it,
+    // and every reorg deliberately rewinds 2x the confirmation depth. The
+    // event and payment rows were already idempotent, but the reputation bump
+    // is `completed + 1` — so before this, each replay credited the worker
+    // again, with no payment behind it. That inflates the exact number this
+    // project claims only a settled payment can write.
+    //
+    // One transaction also closes the narrower window: a crash between
+    // recording an event and applying it would otherwise leave the event
+    // stored and its effect skipped forever on replay.
+    const jobRow = job;
+    await db.transaction(async (tx) => {
+      const [recorded] = await tx
+        .insert(jobEvents)
+        .values({
+          chainId: chain.chainId,
+          jobId: jobRow.id,
+          kind,
+          payload,
+          txHash: entry.transactionHash,
+          blockNumber: Number(blockNumber),
+          logIndex: entry.logIndex,
+        })
+        .onConflictDoNothing()
+        .returning({id: jobEvents.id});
 
-    await this.applyStateChange(job.id, kind, payload);
+      // Already seen. Its effects are already in the projection.
+      if (!recorded) return;
+
+      await this.applyStateChange(tx, jobRow.id, kind, payload, blockNumber);
+    });
   }
 
   private async decode(
@@ -207,8 +245,13 @@ export class Indexer {
   }
 
   /** Project the event onto the job row and the reputation counters. */
-  private async applyStateChange(jobId: number, kind: string, payload: Record<string, unknown>): Promise<void> {
-    const {db} = this.deps;
+  private async applyStateChange(
+    db: Tx,
+    jobId: number,
+    kind: string,
+    payload: Record<string, unknown>,
+    blockNumber: bigint,
+  ): Promise<void> {
 
     const stateOf: Record<string, 'accepted' | 'submitted' | 'settled' | 'refunded' | 'disputed'> = {
       accepted: 'accepted',
@@ -248,12 +291,14 @@ export class Indexer {
           amount: job.amount,
           fee: String(payload['fee'] ?? '0'),
           txHash: String(payload['txHash'] ?? ''),
-          blockNumber: 0,
+          // The real block, not 0. A payment row that claims block zero is a
+          // payment nobody can find again on the chain it came from.
+          blockNumber: Number(blockNumber),
           confirmedAt: new Date(),
         })
         .onConflictDoNothing();
 
-      await this.bumpReputation(job.workerAgentId, true, job.amount);
+      await this.bumpReputation(db, job.workerAgentId, true, job.amount);
     }
 
     if (kind === 'refunded') {
@@ -261,7 +306,7 @@ export class Indexer {
       // Only an accepted-then-undelivered job counts as a failure. A job
       // nobody ever accepted is not the worker's fault.
       if (job && payload['reason'] !== undefined) {
-        await this.bumpReputation(job.workerAgentId, false, '0');
+        await this.bumpReputation(db, job.workerAgentId, false, '0');
       }
     }
   }
@@ -271,8 +316,12 @@ export class Indexer {
    * volume-damped, so a fresh agent is 50 (unknown) rather than 0 or 100, and
    * one lucky job cannot outrank a proven record.
    */
-  private async bumpReputation(agentId: number, success: boolean, amount: string): Promise<void> {
-    const {db} = this.deps;
+  private async bumpReputation(
+    db: Tx,
+    agentId: number,
+    success: boolean,
+    amount: string,
+  ): Promise<void> {
     await db
       .insert(agentStats)
       .values({
