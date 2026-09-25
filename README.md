@@ -161,14 +161,14 @@ There is deliberately **no keyword filtering**. Stripping "ignore previous
 instructions" fails against paraphrase and encoding while manufacturing the
 appearance of safety.
 
-Full reasoning: [`docs/10-llm-architecture.md`](../docs/10-llm-architecture.md).
+Full reasoning: [`docs/10-llm-architecture.md`](docs/10-llm-architecture.md).
 
 ---
 
 ## Testing
 
 ```bash
-pnpm test                                      # 175 tests
+pnpm test                                      # 179 tests
 VERIFY_CHAIN_ID=10143 node scripts/verify-indexer.mjs   # against the live chain
 node scripts/e2e.mjs                           # the whole stack, one settlement
 ```
@@ -181,6 +181,21 @@ check, not just a suite.
 
 When a test is written for a bug, it is run against the *old* code first. A
 test that passes either way proves nothing either.
+
+---
+
+## Specification
+
+The full design lives in [`docs/`](docs/) — start with
+[00 — Overview](docs/00-overview.md), then
+[04 — How It All Works](docs/04-how-it-works.md) for contract interfaces, the
+API, the agent workflow and the threat model, and
+[10 — LLM Architecture](docs/10-llm-architecture.md) for the agent-to-agent
+injection problem.
+
+[`PROGRESS.md`](PROGRESS.md) is the running build log: current state, what is
+outstanding, every decision with its reasoning, and every defect found during
+hardening with how it was caught.
 
 ---
 
