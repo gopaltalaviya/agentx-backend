@@ -578,6 +578,68 @@ Append-only. Never rewrite a decision — supersede it with a new row.
 
 Newest first. One entry per working session, however short.
 
+### Session 19 — 2026-09-25 (full recheck · CI · doc 06 audit)
+
+**Shipped** — backend `f58dca1`, `ebb208f` · interface CI. 179 tests green.
+
+**The full recheck.** Repos clean and matching their remotes, 120 + 179 tests
+green, interface builds, secret scans clean, config integrity OK, all seven
+contracts confirmed to have code on-chain, `MAX_SESSION_KEY_TTL` reading 86400
+live, `PROGRESS.md` addresses matching `deployments.json`, board sums matching
+the header, doc links resolving, the interface↔API contract holding against a
+live API, and `pnpm demo` correctly refusing to spend without a model.
+
+**🔴 The live-chain check was lying in three ways.** `verify-indexer.mjs`:
+
+- Its `specHash` was a **constant**, so every run ever made emitted the same
+  hash on-chain and the indexer legitimately linked a fresh row to an older
+  run's payment. It reported "the linkage is broken" when the linkage was
+  fine. Same defect the API fixed by scoping its hash to a job id.
+- It replayed from the deployment block, now ~500k blocks behind head. With
+  Monad's 100-block cap that is thousands of round trips, so it never reached
+  the settlement it had just made. Cursor now seeded just behind it: 1 tick.
+- **Worst: the catch-up line printed `✓` unconditionally.** A run that never
+  caught up still reported success, then failed three assertions with a
+  misleading cause. A check that can report success while failing is worse
+  than no check.
+
+Now genuinely green on live testnet: linked to on-chain job 7, settled,
+reputation counted once, replay a no-op, reorg rewind clean.
+
+My own verification tooling also lied twice in one session — the on-chain
+code check reported all seven contracts missing because `cast` was eating the
+loop's stdin and Python had written CRLF into the address list.
+
+**Doc 06 audit — almost every convention it described was fiction**
+
+| Claimed | Reality |
+|---|---|
+| `packages/` has shared + db | five: config, shared, db, sdk, agent-core |
+| `railway.json`, `CHANGELOG.md`, ESLint config | none of them exist |
+| `pnpm --filter api start` | matches nothing; the package is `@agentx/api` |
+| `mcp` is a Railway service | it speaks stdio; hosting it needs a transport it lacks |
+| branches + PRs required on main | 27 direct commits, no branches, no PRs |
+| CI in every repo | only contracts had any |
+
+`pnpm lint` was declared but no ESLint config or dependency ever existed, so
+it failed on every invocation. Removed rather than left as a script that lies.
+
+**Added CI** to backend and interface. The backend suite needs Postgres *and*
+the contracts checkout — 6 of 13 test files read chain config from there — so
+the cross-repo checkout is `continue-on-error` and the suite **skips rather
+than fails** while that repo is private. A red badge meaning "the token is not
+set yet" teaches everyone to ignore the badge, which is exactly the failure the
+secret scanner had.
+
+**Not verified:** the workflows have been pushed but never watched running —
+no `gh` CLI here. YAML parses and the jobs are well-formed; that is all that
+can be said from this machine.
+
+**Next**
+
+- You: the model key. Also worth a look: do the new CI runs pass on GitHub?
+- Me: docs 05 and 08 drift audit, then the deck.
+
 ### Session 18 — 2026-09-25 (full status documentation pass)
 
 No code changed. This session brought the file itself back into line with
