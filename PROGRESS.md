@@ -590,12 +590,24 @@ reality, which it had drifted out of.
   work is in flight. Every command in it was run and verified before it was
   written down.
 
-**🔴 Found while writing it: the memory is not backed up.** `docs/`,
-`PLAN.md`, `PROGRESS.md` and `README.md` are in **no repository** — ten
-specification documents and the entire task plan exist in one folder, on one
-machine, named `temp`. The code is safe on GitHub; the plan is not. Logged as
-**B9**. A side effect already visible: the backend README links
-`../docs/10-llm-architecture.md`, which is a broken link on GitHub today.
+**🔴 Found while writing it: the memory was not backed up — now fixed.**
+`docs/`, `PLAN.md`, `PROGRESS.md` and `README.md` were in **no repository**.
+Ten specification documents and the entire task plan existed in one folder, on
+one machine, named `temp`. The code was safe on GitHub; the thinking behind it
+was one `rm` away — and the notes are the part that cannot be reconstructed
+from the code.
+
+Your call: move them into `agentx-backend` (commit `45cce2e`). They go public
+with it by Oct 13, which the submission requires anyway, and a judge reading
+the threat model or the defect log is a good outcome rather than a risk. No
+fourth repository was created.
+
+Moving rather than copying, because two copies of a source of truth drift —
+which is the exact failure this project keeps finding. The root README became
+`docs/00-overview.md`; a five-line signpost is all that remains at the old
+level. Every cross-document link was rewritten and checked: **0 broken**. It
+also fixed a real one — this repo's README linked `../docs/10-llm-architecture.md`,
+which was broken on GitHub because the repo contained no `docs/`.
 
 **Where things stand**
 
