@@ -135,6 +135,18 @@ NEXT_PUBLIC_API_URL=http://127.0.0.1:8080 pnpm check:contract
 Secrets for deploying live in `agentx-contracts/.env` (exists).
 `agentx-backend/.env` **does not exist yet** and is what blocks `pnpm demo`.
 
+### Live-chain checks need the deployer key
+
+```bash
+cd agentx-backend
+set -a; . ../agentx-contracts/.env; set +a      # <- without this it silently
+DATABASE_URL=postgres://agentx:agentx@127.0.0.1:5442/agentx VERIFY_CHAIN_ID=10143 AGENTX_CONTRACTS_ROOT=../agentx-contracts node scripts/verify-indexer.mjs                  #    uses the Anvil account
+```
+
+Without the env loaded the script falls back to the well-known Anvil key
+`0xf39F…2266`, which has no funds on Monad, and fails on the first write with
+a confusing revert.
+
 ### Environment gotchas — each of these cost real time
 
 | Trap | What to do |

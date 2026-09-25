@@ -169,7 +169,10 @@ Full reasoning: [`docs/10-llm-architecture.md`](docs/10-llm-architecture.md).
 
 ```bash
 pnpm test                                      # 179 tests
-VERIFY_CHAIN_ID=10143 node scripts/verify-indexer.mjs   # against the live chain
+# Against the live chain. Needs the deployer key: without it the script
+# falls back to the default Anvil account and fails on the first write.
+set -a; . ../agentx-contracts/.env; set +a
+VERIFY_CHAIN_ID=10143 node scripts/verify-indexer.mjs
 node scripts/e2e.mjs                           # the whole stack, one settlement
 ```
 

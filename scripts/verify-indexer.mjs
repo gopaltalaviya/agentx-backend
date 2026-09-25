@@ -86,7 +86,17 @@ hireable ? ok('worker is bonded and hireable') : fail('worker should be hireable
 
 // ── 2. settle a job on-chain ─────────────────────────────────────────────
 await write(token, erc20, 'approve', [escrow, 1_000_000_000n]);
-const specHash = keccak256(toHex('verify-indexer-spec'));
+// UNIQUE PER RUN, and that is not cosmetic.
+//
+// A constant here emits the same specHash on-chain on every run, and the
+// indexer links a job to its on-chain id by finding the first event carrying
+// a matching hash. Replaying from startBlock, that is an OLDER run's payment —
+// so this check reported "the linkage is broken" when the linkage was fine,
+// and would have reported success just as confidently if it were broken.
+//
+// This is the same defect the API already fixed by scoping its specHash to a
+// job id; the script had kept the old shape.
+const specHash = keccak256(toHex(`verify-indexer-spec:${Date.now()}:${Math.random()}`));
 const before = await pub.readContract({address: token, abi: erc20, functionName: 'balanceOf', args: [DEPLOYER.address]});
 
 // The escrow's job counter persists across runs of this script, so the id
@@ -120,7 +130,7 @@ ok(`advanced past the settlement (trailing ${chain.confirmations} confirmation(s
 // ── 3. the API row the indexer will project onto ─────────────────────────
 const sql = postgres(DB_URL, {max: 1, onnotice: () => {}});
 await sql`TRUNCATE agents, jobs, job_events, agent_stats, payments, agent_capabilities RESTART IDENTITY CASCADE`;
-await sql`DELETE FROM indexer_cursor`; // replay from the deployment block, so the run is self-contained
+await sql`DELETE FROM indexer_cursor`;
 
 const [clientRow] = await sql`
   INSERT INTO agents (chain_id, chain_agent_id, owner_address, wallet_address, name, price_per_task)
@@ -142,15 +152,36 @@ await sql`
 const db = createDb(DB_URL);
 const indexer = new Indexer({db, chain, abis});
 
-// Catch up. With a 100-block range on a live chain, reaching a settlement a
-// few hundred blocks past the deployment takes several ticks — which is the
-// indexer working as designed, not a failure.
+// Seed the cursor just behind the settlement instead of replaying from the
+// deployment block.
+//
+// Monad caps eth_getLogs at 100 blocks, and the deployment is now hundreds of
+// thousands of blocks behind the head — replaying from there would need
+// thousands of RPC round trips. That is the indexer working as designed; it
+// is simply not what this script is testing. What it tests is that a
+// settlement is decoded, linked by specHash, projected, and counted once.
+const seedFrom = receipt.blockNumber - 5n;
+const seedBlock = await pub.getBlock({blockNumber: seedFrom});
+await sql`
+  INSERT INTO indexer_cursor (chain_id, contract, last_block, last_block_hash)
+  VALUES (${CHAIN_ID}, 'TaskEscrow', ${Number(seedFrom)}, ${seedBlock.hash})`;
+
+// Catch up, and ASSERT that it did. This previously printed a tick count
+// unconditionally, so a run that never reached the settlement still reported
+// success — and then failed three assertions further down with a misleading
+// cause.
 let ticks = 0;
-for (; ticks < 200; ticks++) {
+let reached = false;
+for (; ticks < 50; ticks++) {
   const at = await indexer.tick();
-  if (at >= receipt.blockNumber) break;
+  if (at >= receipt.blockNumber) {
+    reached = true;
+    break;
+  }
 }
-ok(`indexer caught up in ${ticks + 1} tick(s) (range ${chain.maxLogRange}/tick)`);
+reached
+  ? ok(`indexer caught up in ${ticks + 1} tick(s) (range ${chain.maxLogRange}/tick)`)
+  : fail(`indexer did not reach block ${receipt.blockNumber} in ${ticks} ticks`);
 
 // ── 5. assert on the rows ────────────────────────────────────────────────
 const events = await sql`SELECT kind, tx_hash, log_index FROM job_events ORDER BY id`;
