@@ -1,0 +1,100 @@
+name: backend
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # Everything that needs nothing but this repo. Always runs, always meaningful.
+  static:
+    name: typecheck · secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+
+      - run: pnpm install --frozen-lockfile
+      - run: npx tsc -b
+
+      # The hook that guards private keys, run again where it cannot be
+      # skipped with --no-verify.
+      - run: node scripts/check-no-secrets.mjs
+
+  test:
+    name: tests
+    runs-on: ubuntu-latest
+
+    # The suite needs a database, and 6 of 13 test files read chain config from
+    # the contracts repo — addresses and protocol parameters live there as the
+    # single source of truth, and duplicating them here to make CI simpler
+    # would defeat the point of having one.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: agentx
+          POSTGRES_PASSWORD: agentx
+          POSTGRES_DB: agentx
+        ports: ['5442:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: agentx-backend }
+
+      # Cross-repo checkout. `github.token` is enough once both repos are
+      # public; until then it needs a PAT in CONTRACTS_TOKEN with read access.
+      #
+      # continue-on-error, because a missing checkout must SKIP the suite
+      # rather than fail it. A red badge that means "the token is not set yet"
+      # teaches everyone to ignore the badge, which is worse than not having
+      # one — the same reasoning that got the secret scanner tightened.
+      - id: contracts
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          repository: gopaltalaviya/agentx-contracts
+          path: agentx-contracts
+          token: ${{ secrets.CONTRACTS_TOKEN || github.token }}
+
+      - if: steps.contracts.outcome != 'success'
+        run: |
+          echo "::warning::agentx-contracts could not be checked out, so the \
+          suite was skipped. Set CONTRACTS_TOKEN, or re-run once both repos \
+          are public."
+
+      - if: steps.contracts.outcome == 'success'
+        uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - if: steps.contracts.outcome == 'success'
+        uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: agentx-backend/pnpm-lock.yaml }
+
+      - if: steps.contracts.outcome == 'success'
+        working-directory: agentx-backend
+        run: pnpm install --frozen-lockfile
+
+      - if: steps.contracts.outcome == 'success'
+        working-directory: agentx-backend
+        run: pnpm -r build
+
+      - if: steps.contracts.outcome == 'success'
+        working-directory: agentx-backend
+        env:
+          DATABASE_URL: postgres://agentx:agentx@127.0.0.1:5442/agentx
+        run: pnpm --filter @agentx/db migrate
+
+      - if: steps.contracts.outcome == 'success'
+        working-directory: agentx-backend
+        env:
+          # 127.0.0.1, never localhost: Node resolves localhost to ::1 while
+          # the service container binds IPv4.
+          DATABASE_URL: postgres://agentx:agentx@127.0.0.1:5442/agentx
+          AGENTX_CONTRACTS_ROOT: ../agentx-contracts
+        run: npx vitest run

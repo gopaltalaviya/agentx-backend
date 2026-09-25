@@ -114,27 +114,47 @@ agentx-backend/
 │       ├── trading-bot/
 │       └── execution-bot/
 ├── packages/
-│   ├── shared/       zod schemas, JobSpec/JobResult types, error codes
-│   └── db/           Drizzle schema + migrations
-├── railway.json
-├── docker-compose.yml        # local postgres + redis
+│   ├── config/       THE import for chain facts, params, addresses
+│   ├── shared/       zod schemas, JobSpec/JobResult, error codes, validateShape
+│   ├── db/           Drizzle schema + migrations
+│   ├── sdk/          the typed client every agent uses
+│   └── agent-core/   brains, prompts, judge, worker loop, orchestrator
+├── docs/             00..10 — the specification (moved here 2026-09-25)
+├── PLAN.md           the task plan
+├── PROGRESS.md       the running build log
+├── scripts/          e2e, demo, verify-indexer, check-no-secrets
+├── docker-compose.yml        # local postgres :5442 + redis :6381
 ├── pnpm-workspace.yaml
 ├── .env.example
 └── .github/workflows/ci.yml
 ```
+
+> **The specification lives here**, not beside the repos. Until 2026-09-25 the
+> docs, the plan and the build log were in no repository at all — the code was
+> on GitHub, the thinking behind it was on one machine in a folder named
+> `temp`. No fourth repo was created; they went into the largest existing one.
 
 Each app is a separate Railway service off the same repo, with its own start
 command:
 
 | Railway service | Start command | Notes |
 |---|---|---|
-| `api` | `pnpm --filter api start` | public, has a domain |
-| `indexer` | `pnpm --filter indexer start` | no public port |
-| `signer` | `pnpm --filter signer start` | **private networking only** |
-| `mcp` | `pnpm --filter mcp start` | public, has a domain |
-| `agents` | `pnpm --filter agents start` | no public port |
+| `api` | `pnpm --filter @agentx/api start` | public, has a domain |
+| `indexer` | `pnpm --filter @agentx/indexer start` | no public port |
+| `signer` | `pnpm --filter @agentx/signer start` | **private networking only** |
+| `agents` | one service per bot, e.g. `pnpm --filter @agentx/research-bot start` | no public port |
 | Postgres | Railway plugin | |
 | Redis | Railway plugin | |
+
+Filters take the **package name**, not the directory — `--filter api` matches
+nothing.
+
+`mcp` is **not** a Railway service: it speaks MCP over stdio, so a client
+spawns it rather than calling it over HTTP. Hosting it would mean building a
+transport it does not have.
+
+`railway.json` does not exist yet; Railway deployment is M5 work and is not
+started.
 
 `signer` must not be exposed publicly. Railway private networking only; the
 API reaches it at its internal hostname.
@@ -233,17 +253,17 @@ Nothing bespoke. If a tool has a documented default, we use it.
 
 | Area | Convention |
 |---|---|
-| Branching | `main` + short-lived `feat/…`, `fix/…` branches. Squash merge. |
+| Branching | **`main` only, direct commits.** The branch-and-PR convention below was written for a team; with one person and an assistant it added ceremony and no review, so it was dropped rather than pretended at. |
 | Commits | [Conventional Commits](https://www.conventionalcommits.org): `feat:`, `fix:`, `chore:`, `docs:`, `test:` |
 | Versioning | Semver, tagged `v0.1.0` |
 | TS config | `strict: true`, `noUncheckedIndexedAccess: true` |
-| Lint / format | ESLint (flat config) + Prettier defaults. No custom rules. |
+| Lint / format | Prettier defaults. **No ESLint** — the `lint` script was declared but no config or dependency ever existed, so it failed on every invocation. Removed rather than left as a script that lies. TypeScript strict, `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes` carry the weight. |
 | Solidity style | [Official Solidity style guide](https://docs.soliditylang.org/en/latest/style-guide.html), `forge fmt` |
 | NatSpec | Every external function on every contract |
 | Env | `.env.example` committed with empty values; `.env` gitignored everywhere |
-| CI | Every repo: install → lint → typecheck → test on every PR |
-| PRs | Required for `main`. Even solo — it is the review record judges can read. |
-| Changelog | `CHANGELOG.md`, Keep a Changelog format |
+| CI | contracts: fmt, build, test, coverage, gas snapshot. backend: typecheck + secret scan always; the suite needs a Postgres service **and** the contracts checkout, so it skips rather than fails while that repo is private. interface: typecheck + build. |
+| PRs | **Not used.** 27 commits straight to `main`. The commit messages carry the reasoning a PR description would. |
+| Changelog | **None.** No repo has one. `PROGRESS.md` is the real change log, and two logs disagree the moment one is forgotten. |
 
 ---
 
