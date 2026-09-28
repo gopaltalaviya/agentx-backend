@@ -3,13 +3,13 @@
 > **START HERE every session.** This file is the memory that survives a closed
 > terminal. Read it top to bottom before doing anything else.
 
-- Last updated: **2026-09-28** (Session 20 — docs audit, a real race, CI, interface tests)
+- Last updated: **2026-09-28** (Session 21 — deep testing, local deck, submission doc, status workbook)
 - Days to deadline: **15** — verified: **2026-10-13, 11:59 PM ET**
 - Target track: **4 — Trust, Identity & AI Infrastructure** ($30,000)
 - Current state: **live on Monad testnet**; every layer built, none of it yet
   run end to end with a real model
-- Overall: `█████████████████░░░` 84% — **97 / 115 tasks**, **306 tests green**
-  (120 contracts · 179 backend · 7 interface)
+- Overall: `██████████████████░░` 87% — **100 / 115 tasks**, **348 tests green**
+  (128 contracts · 213 backend · 7 interface)
 
 ---
 
@@ -509,7 +509,7 @@ the adversarial pass.
 | M3 | Agents + MCP | Oct 3–5 | 🟡 in progress | 12 / 15 |
 | M4 | Frontend | Oct 6–8 | 🟡 in progress | 9 / 11 |
 | M5 | Harden | Oct 9–11 | 🟡 in progress | 4 / 7 |
-| M6 | Submit | Oct 12–13 | 🟡 in progress | 4 / 8 |
+| M6 | Submit | Oct 12–13 | 🟡 in progress | 5 / 8 |
 
 Status key: ⬜ not started · 🟡 in progress · ✅ done · 🔴 blocked · ⏭ deferred · ❌ cut
 
