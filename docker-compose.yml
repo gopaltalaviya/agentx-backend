@@ -14,14 +14,19 @@ services:
       interval: 5s
       retries: 10
 
-  redis:
-    image: redis:7-alpine
-    # 6381 on the host: 6379 and 6380 are taken by other local projects.
-    ports: ['6381:6379']
-    healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
-      interval: 5s
-      retries: 10
 
 volumes:
   agentx-pg:
+
+# No Redis here.
+#
+# One was provisioned early and never wired up: nothing in this repo imports a
+# client, and there is no redis dependency. It was removed rather than left
+# running, because a service in the compose file implies something depends on
+# it — and on Railway it would have been a paid plugin nothing connects to.
+#
+# What it was meant for, stated as the limitation it now is: rate limiting and
+# idempotency are per-process. With one replica that is correct. With more than
+# one, each replica keeps its own counters, so the effective rate limit is N
+# times the configured one. Idempotency is unaffected — it is enforced by a
+# UNIQUE constraint in Postgres, not in memory.

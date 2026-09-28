@@ -90,6 +90,16 @@ export class RunService {
     try {
       const result = await this.deps.execute({...args, emit});
 
+      // The terminal event is recorded BEFORE the row leaves `running`.
+      //
+      // The state is what every reader treats as "this run is complete" — the
+      // demo page, the SDK, a test polling for it. Setting it first opened a
+      // window where a run reported itself done while its last event was
+      // still being written, so anything that read the trace at that instant
+      // got a story missing its ending. Rare, which is what makes it nasty:
+      // it surfaced as one flaky test in four full runs.
+      await emit({kind: 'finished', delivered: result.delivered, spent: result.spent});
+
       await this.deps.db
         .update(runs)
         .set({
@@ -100,21 +110,21 @@ export class RunService {
           finishedAt: new Date(),
         })
         .where(eq(runs.id, args.runId));
-
-      await emit({kind: 'finished', delivered: result.delivered, spent: result.spent});
     } catch (err) {
       // A run that throws must still end in a state the page can render.
       // "Running forever" is the one outcome a viewer cannot interpret.
       const detail = err instanceof Error ? err.message : String(err);
       this.deps.log?.(err, `run ${args.runId} failed`);
 
+      // Same ordering as the success path, for the same reason: the terminal
+      // event must be durable before the state says the run has ended.
+      await emit({kind: 'failed', detail}).catch(() => undefined);
+
       await this.deps.db
         .update(runs)
         .set({state: 'failed', error: detail, finishedAt: new Date()})
         .where(eq(runs.id, args.runId))
         .catch(() => undefined);
-
-      await emit({kind: 'failed', detail}).catch(() => undefined);
     }
   }
 

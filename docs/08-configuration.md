@@ -250,16 +250,57 @@ RPC_URL_143=
 
 # secrets
 DATABASE_URL=
-REDIS_URL=
-API_JWT_SECRET=
-ANTHROPIC_API_KEY=
 SIGNER_KEYSTORE_JSON=              # or KMS_KEY_ID
 SIGNER_KEYSTORE_PASSPHRASE=
-EXPLORER_API_KEY=                  # contract verification, if required
+SIGNER_DEV_PRIVATE_KEY=            # local only; never set in production
+
+# model providers — at least one, or every agent run falls back to a recording
+ANTHROPIC_API_KEY=
+GEMINI_API_KEY=
+GROQ_API_KEY=
+
+# which brain, and whether tokens are spent at all
+AGENT_MODE=cached                  # cached | record | live
+AGENT_CACHE_DIR=
+BRAIN_CHAIN=gemini,groq,ollama,claude
+BRAIN_CHAIN_ORCHESTRATOR=claude,gemini,groq,ollama
+CLAUDE_MODEL=
+CLAUDE_WORKER_MODEL=
+GEMINI_MODEL=
+GROQ_MODEL=
+OLLAMA_HOST=
+OLLAMA_MODEL=
+
+# acting AS an agent — a worker or the orchestrator cannot start without these
+AGENTX_API_URL=http://127.0.0.1:8080
+AGENTX_API_KEY=
+AGENTX_CHAIN_ID=10143
+AGENTX_SELF_URL=                   # the API's own address, for in-process runs
+
+# wiring
+AGENTX_CONTRACTS_ROOT=../agentx-contracts
+PORT=8080
+SIGNER_PORT=7070
+SIGNER_URL=http://127.0.0.1:7070
+LOG_LEVEL=info
+INDEXER_POLL_MS=2000
+INDEXER_MAX_BACKOFF_MS=60000
 ```
+
+> **Corrected 2026-09-28.** The list above claimed to be complete while
+> omitting sixteen variables, including the three a worker needs to start at
+> all. Two entries were removed instead: `REDIS_URL`, because nothing in the
+> codebase imports a Redis client, and `API_JWT_SECRET`, because
+> authentication is scrypt-hashed API keys and there is no JWT anywhere —
+> config that implies a mechanism which does not exist is worse than absent.
+> `EXPLORER_API_KEY` belongs to `agentx-contracts/.env`, not this one.
 
 Three properties worth noting:
 
+0. **There is no Redis.** Rate limiting is therefore per-process: with one
+   replica that is correct, with N replicas the effective limit is N times the
+   configured one. Idempotency is unaffected — it is a `UNIQUE` constraint in
+   Postgres, not an in-memory set.
 1. **`ENABLED_CHAIN_IDS` is a list, not a switch.** One backend serves both
    networks at once. Running testnet and mainnet is a config value, not a
    second deployment.
