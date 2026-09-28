@@ -578,6 +578,7 @@ Append-only. Never rewrite a decision — supersede it with a new row.
 | Sep 28 | M6 | **Name ERC-8183 in the submission rather than let a judge find it.** It standardises the job-escrow layer AGENTX independently built (Open → Funded → Submitted → terminal, permissionless refund). Positioning moves from "an escrow for agents" to settlement-backed reputation plus the bounds a spender needs — caps, stake, disputes — which 8183 leaves unspecified | ✅ |
 | Sep 28 | M6 | **Lead with the published numbers.** Xiong et al. 2026 measured the live ERC-8004 ecosystem: $0.0027 median to move a score on Base, 90.6% of reviewers Sybil, 98.7–100% of feedback with no payment proof. Their first recommendation is evidence-backed interactions — which is what this project is | ✅ |
 | Sep 28 | M6 | **Mapping TaskEscrow onto the ACP Job interface is post-hackathon.** Obvious next step, explicitly out of scope with 15 days left and the demo not yet run end to end | ✅ |
+| Sep 28 | M6 | **No Artifacts for this project — deliverables are local files**, committed to the repo: `.pptx`/`.html` decks, `.md` docs, `.xlsx` tables. A submission needs something a judge can download and a repo they can open; a hosted page is neither, is a second place for the truth to live, and is not in the backup. Recorded in `CLAUDE.md` at the project root and in this repo | ✅ |
 
 ---
 
