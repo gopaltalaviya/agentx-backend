@@ -330,3 +330,103 @@ from `NewFeedback` events; `getSummary` is kept for spot-checks.
 
 If `giveFeedback()` turns out to be EOA-only, fall back to the custom
 contracts specced in [04 §2.1 / §2.3](04-how-it-works.md#21-agentregistry).
+
+---
+
+## 10. Landscape refresh — 2026-09-28
+
+Six days after the original analysis. Two findings, one that strengthens the
+thesis considerably and one that changes how the project must be positioned.
+
+### 10.1 The empirical case for AGENTX is now published, with numbers
+
+*"Can Trustless Agents Be Trusted? An Empirical Study of the ERC-8004
+Decentralized AI Agent Ecosystem"*, Xiong et al., 2026
+([arxiv 2606.26028](https://arxiv.org/html/2606.26028)).
+
+The study measured the live ERC-8004 ecosystem. Its findings are the problem
+statement of this project, quantified:
+
+| Finding | Number |
+|---|---|
+| Median cost to manipulate an agent's score | **$0.0027** on Base, $0.0042 BSC, $0.055 Ethereum |
+| Reviewers flagged as Sybil | **90.6%** Base, 73.5% Ethereum, 59.2% BSC |
+| Rated agents left with *no valid feedback* once Sybil reviews are removed | **77.9% – 86.8%** |
+| Feedback records carrying neither payment proof nor task linkage | **98.7% – 100%** |
+| Base reviewers who have never made an x402 payment | **93.8%** |
+
+Feedback is free because the standard "require[s] no proof of interaction" and
+any non-owner account may submit a rating.
+
+**Their recommended mitigations, next to what AGENTX already does:**
+
+| Paper recommends | AGENTX |
+|---|---|
+| "Require evidence-backed interactions (payment proofs or validated tasks)" | `TaskEscrow` is the **sole writer** of AGENTX feedback, and only after a settlement |
+| "Attach stakes/costs to feedback proportional to value controlled" | `StakeVault` — a listing costs a bond keyed to the ERC-8004 agent id |
+| "Per-funder caps, stake requirements" | `AgentAccount` per-task and daily caps, enforced on-chain |
+| "Median or trimmed-mean aggregation instead of arithmetic mean" | ⬜ **not done** — scoring is Laplace-smoothed and volume-damped, which resists a single lucky job but not a coordinated ring. Worth stating as a limitation rather than claiming otherwise |
+
+This is independent third-party evidence that the design is the right one, and
+it is the strongest line available for the submission:
+
+> 98.7% of ERC-8004 feedback has no payment behind it, and moving an agent's
+> score costs about a third of a cent. AGENTX makes a review cost exactly what
+> the job cost, because only the escrow can write one.
+
+### 10.2 ERC-8183 Agentic Commerce — convergent, and it changes the pitch
+
+[ERC-8183](https://eips.ethereum.org/EIPS/eip-8183) (Draft, created
+2026-02-25), from Virtuals Protocol and the Ethereum Foundation's dAI team,
+standardises **the job-escrow layer this project also built.**
+
+It specifies a Job with states Open → Funded → Submitted →
+Completed/Rejected/Expired, ERC-20 escrow with an optional platform fee in
+basis points, and a permissionless `claimRefund()` after expiry. That is
+substantially `TaskEscrow`'s shape, arrived at independently.
+
+**This must be said plainly in the submission rather than discovered by a
+judge.** "We built an escrow that writes ERC-8004 reputation" is a weaker
+claim in September 2026 than it was in August. What survives scrutiny is the
+set of things ERC-8183 deliberately leaves out — verified against the spec
+text, not a summary:
+
+| | ERC-8183 | AGENTX |
+|---|---|---|
+| Agent spending caps | **not specified** | `AgentAccount` per-task + daily caps, on-chain |
+| Staking / bonding | **not specified** | `StakeVault`, bond per agent id |
+| Dispute resolution | **not specified** — the evaluator is final | `dispute()` → arbiter, and the review window |
+| Micro-payment fast path | **not specified** — every job uses full escrow | `directPay` below `fastPathMax` |
+| Permissionless exits | one (`claimRefund` after expiry) | three, one per non-terminal state |
+| ERC-8004 reputation | **optional extension**, written by client-supplied hooks | core: only the escrow writes, only on settlement |
+
+The last row is the important one. ERC-8183's own security note says the
+evaluator "is trusted for completion and rejection" and that "malicious
+evaluators can complete/reject arbitrarily — reputation systems recommended
+for high-value jobs." **That recommendation is the gap AGENTX fills**, and
+§10.1 is the evidence that reputation systems which are not payment-backed do
+not fill it.
+
+### 10.3 What this changes
+
+1. **Positioning.** AGENTX is not "an escrow for agents". It is
+   *settlement-backed reputation*, plus the bounds an autonomous spender needs
+   — caps, stake, disputes — on top of an escrow whose shape the ecosystem is
+   now standardising. Complementary to ERC-8183, not competing with it.
+2. **Say it first.** The submission should name ERC-8183 and explain the
+   relationship. A judge who knows the standard and finds no mention of it
+   will assume we did not.
+3. **Post-hackathon, not now.** Mapping `TaskEscrow` onto the ACP `Job`
+   interface is the obvious next step and is explicitly **out of scope** with
+   15 days left and the demo not yet run end to end. Recorded as roadmap.
+4. **One honest limitation to add** to the "not solved" list: scoring uses a
+   damped mean, not a trimmed mean, so a coordinated ring of settled jobs
+   between colluding agents would still move a score — it just has to pay full
+   price for every review, which is the point.
+
+### 10.4 Unchanged since 2026-09-22
+
+- ERC-8004 is still **Draft**; the EF dAI team has it on the 2026 roadmap.
+- The Monad registries and the pinned implementation address are as recorded
+  in §8. `make verify-erc8004` is the check that they have not moved.
+

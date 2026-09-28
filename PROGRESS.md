@@ -575,6 +575,9 @@ Append-only. Never rewrite a decision — supersede it with a new row.
 | Sep 23 | M3 | **System prompts are frozen module constants.** A prompt cache is a prefix match; one interpolated value invalidates every call. Dynamic context goes in the user turn. Enforced by a test, not a convention | ✅ |
 | Sep 23 | M3 | **A failed judgement neither pays nor disputes.** Paying on an unread result rewards a worker for our outage; disputing punishes them for it. The escrow's review window settling in their favour is the only neutral option | ✅ |
 | Sep 23 | M3 | **BUDGET_EXCEEDED is never retryable**, despite carrying a reset time. A cap is the owner's decision; an agent reports hitting it rather than sleeping until it lifts | ✅ |
+| Sep 28 | M6 | **Name ERC-8183 in the submission rather than let a judge find it.** It standardises the job-escrow layer AGENTX independently built (Open → Funded → Submitted → terminal, permissionless refund). Positioning moves from "an escrow for agents" to settlement-backed reputation plus the bounds a spender needs — caps, stake, disputes — which 8183 leaves unspecified | ✅ |
+| Sep 28 | M6 | **Lead with the published numbers.** Xiong et al. 2026 measured the live ERC-8004 ecosystem: $0.0027 median to move a score on Base, 90.6% of reviewers Sybil, 98.7–100% of feedback with no payment proof. Their first recommendation is evidence-backed interactions — which is what this project is | ✅ |
+| Sep 28 | M6 | **Mapping TaskEscrow onto the ACP Job interface is post-hackathon.** Obvious next step, explicitly out of scope with 15 days left and the demo not yet run end to end | ✅ |
 
 ---
 
