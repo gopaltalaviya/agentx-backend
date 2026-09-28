@@ -509,7 +509,7 @@ the adversarial pass.
 | M3 | Agents + MCP | Oct 3–5 | 🟡 in progress | 12 / 15 |
 | M4 | Frontend | Oct 6–8 | 🟡 in progress | 9 / 11 |
 | M5 | Harden | Oct 9–11 | 🟡 in progress | 4 / 7 |
-| M6 | Submit | Oct 12–13 | 🟡 in progress | 2 / 8 |
+| M6 | Submit | Oct 12–13 | 🟡 in progress | 4 / 8 |
 
 Status key: ⬜ not started · 🟡 in progress · ✅ done · 🔴 blocked · ⏭ deferred · ❌ cut
 
@@ -644,10 +644,28 @@ into CI.
 **docs/05** now carries a banner saying it is the plan as written, not the
 record, and names the three things that turned out differently.
 
+**Later the same day — research refresh and the deck.**
+
+- **docs/09 §10** added: the published ERC-8004 study (Xiong et al. 2026) and
+  ERC-8183 Agentic Commerce. Both change the pitch; see the decisions log.
+- **Submission deck drafted** — 10 slides, at
+  `https://claude.ai/artifact/MGoyMNdeQoYViNRGCCZS3a`. **Private**: judges
+  cannot open it until you share it from the page's Share menu.
+
+  Order: cover · the measured problem · the idea in one line · the four steps ·
+  what is live on chain · the injection risk · the bounded claim · where it
+  sits among the standards · what it does not solve · close with repo links.
+
+  Two things it deliberately does not have yet: **a demo slide** (nothing has
+  run end to end, and a screenshot of an unrun demo would be a lie) and any
+  figure from a live run. Both land the moment the model key does.
+
 **Next**
 
-- You: the model key; and an explorer API key if you want verified source.
-- Me: the landscape research refresh (docs/09 is six days old), then the deck.
+- You: the model key; an explorer API key if you want verified source; and
+  share the deck if you want anyone else to see it.
+- Me: the demo slide and real figures once the key lands; docs 01–04 and 07
+  still unaudited.
 
 ### Session 19 — 2026-09-25 (full recheck · CI · doc 06 audit)
 
