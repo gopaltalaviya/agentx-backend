@@ -15,6 +15,18 @@
 
 ---
 
+> **This is the plan as written on 2026-09-22, kept as the plan.** Its
+> checkboxes were never ticked and its dates are the original estimates —
+> [`PROGRESS.md`](../PROGRESS.md) is the record of what actually happened, and
+> the two are deliberately not the same document. Reality ran roughly a week
+> ahead of these dates, and three things below turned out differently:
+>
+> - **No Redis.** Provisioned in M0, never wired to anything, removed 2026-09-28.
+> - **No ESLint.** The script was declared but no config ever existed; removed
+>   rather than left failing. TypeScript strict carries that weight.
+> - **Contracts are not verified on the explorer.** An M1 done-condition that
+>   is still open — it needs an explorer API key.
+
 ## 1. The strategy in one paragraph
 
 Build the demo backwards. The thing being judged is one unbroken trace — a
@@ -52,7 +64,7 @@ them early.**
 Goal: every developer can run the whole thing and ship to testnet.
 
 - [ ] Three repos per [06 — Repository Structure](06-repo-structure.md)
-- [ ] `docker-compose.yml`: Postgres 16 + Redis 7
+- [x] `docker-compose.yml`: Postgres 16 ~~+ Redis 7~~ (Redis removed — nothing used it)
 - [ ] Foundry project, `forge test` green on a hello-world contract
 - [ ] **Chain reality check**: pull chain ID, RPC, explorer, faucet from
       current Monad docs; put them in `.env.example`; deploy and verify a
@@ -60,7 +72,7 @@ Goal: every developer can run the whole thing and ship to testnet.
       verification quirk found on Oct 10 is fatal; found on Sep 22 it is an
       afternoon.
 - [ ] `MockUSDC` deployed, minting to team wallets
-- [ ] CI: `forge test`, `forge coverage`, `tsc --noEmit`, `eslint`
+- [x] CI: `forge test`, `forge coverage`, `tsc --noEmit` — **no `eslint`**, no config ever existed
 - [ ] Shared zod schemas for `JobSpec` and `JobResult` in `packages/shared`
 
 **Done when:** a fresh clone reaches a green `pnpm test` in under ten minutes,
@@ -101,7 +113,7 @@ every contract; the deploy script generates `deployments/10143.json`
 - [ ] 100% branch coverage on `TaskEscrow`
 - [ ] invariants I1–I8 hold over 10,000 fuzz runs
 - [ ] `forge snapshot` committed — gas cost per hire is a tracked number
-- [ ] all contracts verified on the explorer with public source
+- [ ] all contracts verified on the explorer with public source — **STILL OPEN**, needs `EXPLORER_API_KEY`
 - [ ] a scripted lifecycle runs on testnet: register → hire → deliver → settle
       → score changes
 - [ ] the param-drift test passes: every value in `config/params.10143.json`

@@ -3,13 +3,13 @@
 > **START HERE every session.** This file is the memory that survives a closed
 > terminal. Read it top to bottom before doing anything else.
 
-- Last updated: **2026-09-25** (Session 18 — full status documentation pass)
-- Days to deadline: **18** — verified: **2026-10-13, 11:59 PM ET**
+- Last updated: **2026-09-28** (Session 20 — docs audit, a real race, CI, interface tests)
+- Days to deadline: **15** — verified: **2026-10-13, 11:59 PM ET**
 - Target track: **4 — Trust, Identity & AI Infrastructure** ($30,000)
 - Current state: **live on Monad testnet**; every layer built, none of it yet
   run end to end with a real model
-- Overall: `█████████████████░░░` 84% — **97 / 115 tasks**, 299 tests green
-  (120 contracts · 179 backend)
+- Overall: `█████████████████░░░` 84% — **97 / 115 tasks**, **306 tests green**
+  (120 contracts · 179 backend · 7 interface)
 
 ---
 
@@ -27,6 +27,10 @@
 3. **Vercel** account for `agentx-interface`.
 4. **Arbiter and fee-recipient addresses** — both currently default to
    `DEPLOYER`. Fine for the demo; say if you want them separate.
+5. **An explorer API key** (`EXPLORER_API_KEY` in `agentx-contracts/.env`) if
+   you want verified source on the explorer. Contracts are deployed but **not
+   verified**, so a judge following a link sees bytecode. The config that
+   blocked verification is fixed; only the key is missing.
 
 ### 🤖 Claude — next, none of it blocked
 
@@ -577,6 +581,70 @@ Append-only. Never rewrite a decision — supersede it with a new row.
 ## 📓 Session log
 
 Newest first. One entry per working session, however short.
+
+### Session 20 — 2026-09-28 (docs 05/08 audit · a real race · CI · interface tests)
+
+**Shipped** — backend `c5ab57e` · contracts `e9409a5` · interface `532823e`.
+179 + 120 + 7 = **306 tests green**.
+
+Three days idle. Nothing had changed: repos clean, `.env` still absent, so
+`pnpm demo` remains blocked. **15 days to the deadline.**
+
+**🔴 A flaky test was a real race.** One failure in four full suite runs:
+`runs.test.ts > the trace > survives the run and is readable afterwards`. The
+run row was set to `done` *before* the terminal `finished` event was recorded,
+so anything reading the trace in that window got a story missing its ending —
+the demo page, the SDK, anything polling `state`. The failure path had the same
+ordering. Both now emit the terminal event first: state means complete, so
+everything must be complete before it is set. Hammered after: 6 consecutive
+runs of that file, 3 full suites, all green.
+
+Rare is what made it dangerous — the kind of intermittent failure that gets
+re-run until green and forgotten.
+
+**docs/08 audit — `.env.example` was wrong in both directions**
+
+- **Eight variables the code reads were undocumented**, including
+  `AGENTX_API_KEY`, `AGENTX_API_URL` and `AGENTX_CHAIN_ID`. Without those
+  nothing in `apps/agents/` starts, so anyone following the file could not
+  have run a worker at all.
+- **`API_JWT_SECRET`** implies a JWT mechanism that exists nowhere — auth is
+  scrypt-hashed API keys. Removed.
+- **`REDIS_URL` pointed at a Redis nothing imports.** No client, no
+  dependency, and a compose service that would have become a paid Railway
+  plugin connected to nothing. Removed, and what it was provisioned for is now
+  written down as the limitation it is: rate limiting is per-process, so N
+  replicas means N times the configured limit. Idempotency is unaffected — a
+  `UNIQUE` constraint in Postgres, not an in-memory set.
+
+One near-miss worth recording: `RPC_URL_10143` looked unused too, because it
+is built as a template literal — `env[\`RPC_URL_${chainId}\`]`. A string grep
+cannot see it. Checked before reporting.
+
+**🟠 Contracts are NOT verified on the explorer.** An M1 done-condition that
+was never met: `EXPLORER_API_KEY` is empty, so a judge following an explorer
+link today sees bytecode, not source.
+
+Chasing it found a config defect: every `[etherscan]` entry is validated when
+forge starts, whichever verifier a command asks for, and ours had a key and a
+chain id but no `url` — so **every** `forge verify-contract` failed with "No
+known Etherscan API URL for chain 143", including ones explicitly passing
+`--verifier sourcify`. Fixed. Sourcify does support Monad Testnet (confirmed
+against its chain list), but forge's sourcify flow still reads the ABI from the
+block explorer first, which needs a real key. **Yours to obtain.**
+
+**Added:** interface tests — it had none. `formatUnits` is the only
+money-handling code there, and the case that matters asserts exactness past
+2^53, since a uint128 amount is far larger than a JS number can hold. Wired
+into CI.
+
+**docs/05** now carries a banner saying it is the plan as written, not the
+record, and names the three things that turned out differently.
+
+**Next**
+
+- You: the model key; and an explorer API key if you want verified source.
+- Me: the landscape research refresh (docs/09 is six days old), then the deck.
 
 ### Session 19 — 2026-09-25 (full recheck · CI · doc 06 audit)
 
