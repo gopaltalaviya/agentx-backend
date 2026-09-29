@@ -152,6 +152,8 @@ const TITLES: Record<string, string> = {
   [ErrorCode.IDEMPOTENCY_CONFLICT]: 'Idempotency key conflict',
   [ErrorCode.CHAIN_MISMATCH]: 'Wrong chain for this agent',
   [ErrorCode.CHAIN_NOT_ENABLED]: 'Chain not enabled',
+  [ErrorCode.UNAUTHORIZED]: 'Missing or invalid API key',
+  [ErrorCode.FORBIDDEN]: 'Not permitted for this agent',
 };
 
 function titleFor(code: string): string {

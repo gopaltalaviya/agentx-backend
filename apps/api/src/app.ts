@@ -9,7 +9,7 @@ import {registerJobRoutes, type JobRouteDeps} from './routes/jobs.js';
 import {registerMetaRoutes} from './routes/meta.js';
 import {registerRunRoutes} from './routes/runs.js';
 import {RunService, type RunExecutor} from './runs.js';
-import type {BudgetReader} from './chain-reads.js';
+import type {BudgetReader, IdentityReader} from './chain-reads.js';
 
 export interface AppDeps {
   db: Db;
@@ -19,6 +19,8 @@ export interface AppDeps {
   bus?: EventBus;
   /** Omitted, /v1/budget answers from the cached policy and says so. */
   readBudget?: BudgetReader;
+  /** Omitted, a registration that names an on-chain id is refused: it cannot be verified. */
+  readIdentity?: IdentityReader;
   /** Omitted, the API serves everything except starting a run. */
   runExecutor?: RunExecutor;
   logger?: boolean;
@@ -71,7 +73,12 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     orchestrator: Boolean(deps.runExecutor),
   }));
 
-  await registerAgentRoutes(app, {db: deps.db, chains: deps.chains, defaultChainId: deps.defaultChainId});
+  await registerAgentRoutes(app, {
+    db: deps.db,
+    chains: deps.chains,
+    defaultChainId: deps.defaultChainId,
+    ...(deps.readIdentity ? {readIdentity: deps.readIdentity} : {}),
+  });
   await registerJobRoutes(app, {
     db: deps.db,
     chains: deps.chains,

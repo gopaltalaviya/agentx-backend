@@ -16,6 +16,8 @@ import type {JobRouteDeps} from './routes/jobs.js';
 
 export interface SignerSubmitDeps {
   signerUrl: string;
+  /** Presented to the signer, which refuses requests without it when it has one. */
+  signerToken?: string;
   config: AgentxConfig;
   abis?: Record<string, Abi>;
   fetchImpl?: typeof fetch;
@@ -38,7 +40,10 @@ export function makeSignerSubmit(deps: SignerSubmitDeps): JobRouteDeps['submit']
 
     const res = await doFetch(`${deps.signerUrl}/sign`, {
       method: 'POST',
-      headers: {'content-type': 'application/json'},
+      headers: {
+        'content-type': 'application/json',
+        ...(deps.signerToken ? {authorization: `Bearer ${deps.signerToken}`} : {}),
+      },
       body: JSON.stringify({
         agentId,
         chainId,

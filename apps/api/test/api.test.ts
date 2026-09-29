@@ -203,8 +203,13 @@ describe('hiring', () => {
       payload: {workerAgentId: String(workerAgentId), spec: {capability: 'market-research', input: {}}, maxPrice: '50000', ...over},
     });
 
+  /** Paying up front is a bet on the worker; it is only offered on a record. */
+  const proven = (agentId: number, score = 80) =>
+    db.execute(sql`UPDATE agent_stats SET score = ${score}, completed = 30 WHERE agent_id = ${agentId}`);
+
   it('takes the fast path below the threshold and says so', async () => {
     const {client, worker} = await twoAgents();
+    await proven(worker.agentId);
     const res = await hire(client.apiKey, worker.agentId);
     expect(res.statusCode).toBe(201);
 
@@ -216,12 +221,65 @@ describe('hiring', () => {
     expect(submitted[0]!.kind).toBe('directPay');
   });
 
+  /**
+   * `fastPathMinScore` (70) was configured, documented, deployed — and read by
+   * nothing. So every cheap hire of an agent with no history at all paid up
+   * front, with no recourse if the work was bad. The fast path trades
+   * protection for speed, and only a record earns that trade.
+   */
+  it('uses escrow for an unproven worker, however cheap', async () => {
+    const {client, worker} = await twoAgents();
+    const res = await hire(client.apiKey, worker.agentId);
+    expect(res.json().path).toBe('escrow');
+    expect(submitted[0]!.kind).toBe('createJob');
+  });
+
+  it('uses escrow for a worker just under the score bar', async () => {
+    const {client, worker} = await twoAgents();
+    await proven(worker.agentId, 69);
+    expect((await hire(client.apiKey, worker.agentId)).json().path).toBe('escrow');
+  });
+
+  it('still honours a client that asks for the fast path explicitly', async () => {
+    const {client, worker} = await twoAgents();
+    expect((await hire(client.apiKey, worker.agentId, {path: 'direct'})).json().path).toBe('direct');
+  });
+
   it('uses escrow above the threshold', async () => {
     const client = await register({name: 'C', walletAddress: '0x' + 'f1'.repeat(20)});
     const worker = await register({name: 'W', pricePerTask: '90000', walletAddress: '0x' + 'f2'.repeat(20)});
     const res = await hire(client.apiKey, worker.agentId, {maxPrice: '100000'});
     expect(res.json().path).toBe('escrow');
     expect(submitted[0]!.kind).toBe('createJob');
+  });
+
+  /**
+   * A retried hire used to INSERT A NEW JOB each time. The signer correctly
+   * returned the original transaction — so nothing was paid twice — but the
+   * retry's response carried a new job id: the caller then waited on a job no
+   * transaction backed, and the worker was offered the same paid-once work a
+   * second time. Found by a live end-to-end run, which counted two rows.
+   */
+  it('returns the original job for a retried hire instead of creating another', async () => {
+    const {client, worker} = await twoAgents();
+    const first = (await hire(client.apiKey, worker.agentId)).json();
+    const retry = await hire(client.apiKey, worker.agentId);
+
+    expect(retry.statusCode).toBe(201);
+    expect(retry.json().jobId).toBe(first.jobId);
+    expect(retry.json().txHash).toBe(first.txHash);
+    const rows = (await db.execute(sql`SELECT count(*)::int AS n FROM jobs`)) as unknown as {n: number}[];
+    expect(rows[0]!.n).toBe(1);
+    expect(submitted).toHaveLength(1);
+  });
+
+  it('refuses a reused key for a different hire, rather than guessing which was meant', async () => {
+    const {client, worker} = await twoAgents();
+    await hire(client.apiKey, worker.agentId);
+    const other = await hire(client.apiKey, worker.agentId, {spec: {capability: 'market-research', input: {q: 'other'}}});
+
+    expect(other.statusCode).toBe(409);
+    expect(other.json().code).toBe('IDEMPOTENCY_CONFLICT');
   });
 
   it('refuses without an Idempotency-Key', async () => {
@@ -275,7 +333,11 @@ describe('hiring', () => {
   it('rejects an unknown API key', async () => {
     const {worker} = await twoAgents();
     const res = await hire('ax_not_a_real_key', worker.agentId);
-    expect(res.statusCode).toBe(409);
+    // 401, not the 409 CHAIN_MISMATCH it used to be: nothing about a bad key
+    // is a chain, and a client told "wrong chain" goes looking for a network
+    // problem instead of a credential one.
+    expect(res.statusCode).toBe(401);
+    expect(res.json().code).toBe('UNAUTHORIZED');
   });
 });
 
@@ -332,14 +394,16 @@ describe('job lifecycle', () => {
   it('lets only the worker accept and only the client approve', async () => {
     const {client, worker, jobId} = await escrowJob();
 
-    expect((await post(`/v1/jobs/${jobId}/accept`, client.apiKey)).statusCode).toBe(409);
+    const notYours = await post(`/v1/jobs/${jobId}/accept`, client.apiKey);
+    expect(notYours.statusCode).toBe(403);
+    expect(notYours.json().code).toBe('FORBIDDEN');
     await post(`/v1/jobs/${jobId}/accept`, worker.apiKey);
     await post(`/v1/jobs/${jobId}/result`, worker.apiKey, {
       output: {ok: true},
       producedAt: new Date().toISOString(),
     });
     // The worker would love to approve its own work.
-    expect((await post(`/v1/jobs/${jobId}/approve`, worker.apiKey)).statusCode).toBe(409);
+    expect((await post(`/v1/jobs/${jobId}/approve`, worker.apiKey)).statusCode).toBe(403);
   });
 
   it('rejects a result that fails schema validation before storing it', async () => {

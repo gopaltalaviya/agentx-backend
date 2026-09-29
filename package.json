@@ -13,7 +13,6 @@
     "format": "prettier --write .",
     "config:check": "node packages/config/bin/check.mjs",
     "db:migrate": "pnpm --filter @agentx/db migrate",
-    "db:seed": "pnpm --filter @agentx/db seed",
     "dev": "pnpm -r --parallel dev",
     "verify:indexer": "node scripts/verify-indexer.mjs",
     "verify:keystore": "node scripts/verify-keystore.mjs",

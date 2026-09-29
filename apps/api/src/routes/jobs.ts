@@ -64,6 +64,7 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
         'Idempotency-Key header is required on any request that spends money',
       );
     }
+    const hireKey: string = idempotencyKey;
 
     const body = HireRequest.parse(request.body);
     const workerAgentId = Number(body.workerAgentId);
@@ -107,9 +108,19 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
 
     // Fast path vs escrow, decided here and always reported back, so a caller
     // is never uncertain whether its money is protected.
+    //
+    // The fast path pays before any work is done and has no recourse, so it
+    // is a bet on the worker as much as a saving on gas: cheap is not enough,
+    // the worker must also have the record `fastPathMinScore` asks for. That
+    // parameter was configured and documented and read by nothing, so every
+    // cheap hire of an agent with no history paid up front. An explicit
+    // `path: 'direct'` is still the client's own call to make.
     const fastPathMax = chain.params.fastPathMax as bigint;
+    const fastPathMinScore = Number(chain.params.fastPathMinScore ?? 0);
+    const workerStats = await db.query.agentStats.findFirst({where: eq(agentStats.agentId, worker.id)});
+    const earnedFastPath = (workerStats?.score ?? 0) >= fastPathMinScore;
     const path =
-      body.path === 'auto' ? (price <= fastPathMax ? 'direct' : 'escrow') : body.path;
+      body.path === 'auto' ? (price <= fastPathMax && earnedFastPath ? 'direct' : 'escrow') : body.path;
 
     // Insert first so the job has an id, then commit to a hash that includes
     // it.
@@ -120,39 +131,66 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
     // payment. Scoping the commitment to the job makes it identify THIS job,
     // which is what it was always meant to do. A client can still verify it:
     // keccak256(canonicalJson + ':' + jobId), both of which are in the receipt.
-    const [inserted] = await db
-      .insert(jobs)
-      .values({
-        chainId,
-        clientAgentId: caller.agentId,
-        workerAgentId,
-        path,
-        amount: price.toString(),
-        spec: body.spec,
-        specHash: '',
-        traceId: request.id,
-      })
-      .returning();
+    //
+    // A retried hire — same client, same Idempotency-Key — is the SAME job.
+    // It used to insert a new row every time: the signer rightly returned the
+    // original transaction, so nothing was paid twice, but the retry answered
+    // with a job id no transaction backed, and the worker was offered work
+    // that had been paid for once.
+    const prior = await findHire(db, caller.agentId, idempotencyKey);
+    if (prior) {
+      if (prior.workerAgentId !== workerAgentId || canonicalize(prior.spec) !== canonicalize(body.spec)) {
+        throw new AgentxError(
+          ErrorCode.IDEMPOTENCY_CONFLICT,
+          `Idempotency-Key ${idempotencyKey} was already used for job ${prior.id}, a different hire`,
+        );
+      }
+      const txHash = await createdTxHash(db, prior.id);
+      // Finished before: answer exactly as then. If it never got as far as a
+      // transaction — the signer refused, or the wallet was out of gas — fall
+      // through and submit again for the SAME row; the signer retries a
+      // failed broadcast under the same key.
+      if (txHash) return reply.status(201).send(receipt(prior, chain, txHash));
+    }
 
-    const specHash = await sha3(`${canonicalize(body.spec)}:${inserted!.id}`);
-    const [job] = await db
-      .update(jobs)
-      .set({specHash})
-      .where(eq(jobs.id, inserted!.id))
-      .returning();
+    const job = prior ?? (await insertHire());
+
+    async function insertHire() {
+      const [inserted] = await db
+        .insert(jobs)
+        .values({
+          chainId,
+          clientAgentId: caller.agentId,
+          workerAgentId,
+          path,
+          amount: price.toString(),
+          spec: body.spec,
+          specHash: '',
+          traceId: request.id,
+          idempotencyKey: hireKey,
+        })
+        .returning();
+      const hashed = await sha3(`${canonicalize(body.spec)}:${inserted!.id}`);
+      const [row] = await db.update(jobs).set({specHash: hashed}).where(eq(jobs.id, inserted!.id)).returning();
+      return row!;
+    }
+
+    const specHash = job.specHash;
+    const jobPath = job.path;
+    const amount = BigInt(job.amount);
 
     const result = await submit({
       agentId: caller.agentId,
       chainId,
-      kind: path === 'direct' ? 'directPay' : 'createJob',
-      job: {id: job!.id, chainJobId: null},
-      spend: price,
+      kind: jobPath === 'direct' ? 'directPay' : 'createJob',
+      job: {id: job.id, chainJobId: null},
+      spend: amount,
       idempotencyKey,
       payload: {
         // ERC-8004 ids, never the database's.
         clientChainAgentId: clientRow.chainAgentId,
         workerChainAgentId: worker.chainAgentId,
-        amount: price.toString(),
+        amount: amount.toString(),
         specHash,
       },
     });
@@ -164,7 +202,7 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
     // The response said `settled` while the row stayed `created`, so the API
     // reported one state and enforced another: every subsequent check read
     // `created` and refused, including the worker's own delivery.
-    const settledNow = path === 'direct';
+    const settledNow = jobPath === 'direct';
     const creationPatch: Record<string, unknown> = {
       ...(result.chainJobId ? {chainJobId: result.chainJobId} : {}),
       ...(settledNow ? {state: 'settled', settledAt: new Date()} : {}),
@@ -173,27 +211,17 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
     // nothing to write here, and drizzle rejects an empty `set` with "No
     // values to set" — a 500 on the ordinary path.
     if (Object.keys(creationPatch).length > 0) {
-      await db.update(jobs).set(creationPatch).where(eq(jobs.id, job!.id));
+      await db.update(jobs).set(creationPatch).where(eq(jobs.id, job.id));
     }
 
-    await recordEvent(db, bus, job!.id, chainId, 'job.created', {
-      jobId: String(job!.id),
+    await recordEvent(db, bus, job.id, chainId, 'job.created', {
+      jobId: String(job.id),
       txHash: result.txHash,
     });
 
-    return reply.status(201).send({
-      jobId: String(job!.id),
-      chainJobId: result.chainJobId ?? null,
-      chainId,
-      network: chain.name,
-      state: path === 'direct' ? 'settled' : 'created',
-      path,
-      amount: price.toString(),
-      amountDisplay: chain.formatToken(price),
-      specHash,
-      txHash: result.txHash,
-      explorerUrl: chain.explorerTx(result.txHash),
-    });
+    return reply.status(201).send(
+      receipt({...job, chainJobId: result.chainJobId ?? job.chainJobId}, chain, result.txHash),
+    );
   });
 
   /**
@@ -303,7 +331,7 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
   app.post('/v1/jobs/:id/accept', async (request) =>
     transition(request, 'accept', 'created', 'accepted', (job, caller) => {
       if (job.workerAgentId !== caller.agentId) {
-        throw new AgentxError(ErrorCode.CHAIN_MISMATCH, 'only the assigned worker may accept');
+        throw new AgentxError(ErrorCode.FORBIDDEN, 'only the assigned worker may accept');
       }
     }),
   );
@@ -326,7 +354,7 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
   app.post('/v1/jobs/:id/result', async (request) =>
     transition(request, 'submitResult', ['accepted', 'settled'], 'submitted', (job, caller, body) => {
       if (job.workerAgentId !== caller.agentId) {
-        throw new AgentxError(ErrorCode.CHAIN_MISMATCH, 'only the assigned worker may submit a result');
+        throw new AgentxError(ErrorCode.FORBIDDEN, 'only the assigned worker may submit a result');
       }
       // `settled` is open only to the fast path, where it means "paid up
       // front, still owed the work". On an escrow job it means the client
@@ -357,7 +385,7 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
   app.post('/v1/jobs/:id/approve', async (request) =>
     transition(request, 'approve', 'submitted', 'settled', (job, caller) => {
       if (job.clientAgentId !== caller.agentId) {
-        throw new AgentxError(ErrorCode.CHAIN_MISMATCH, 'only the client may approve');
+        throw new AgentxError(ErrorCode.FORBIDDEN, 'only the client may approve');
       }
     }),
   );
@@ -365,7 +393,7 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
   app.post('/v1/jobs/:id/dispute', async (request) =>
     transition(request, 'dispute', 'submitted', 'disputed', (job, caller) => {
       if (job.clientAgentId !== caller.agentId) {
-        throw new AgentxError(ErrorCode.CHAIN_MISMATCH, 'only the client may dispute');
+        throw new AgentxError(ErrorCode.FORBIDDEN, 'only the client may dispute');
       }
     }),
   );
@@ -373,7 +401,7 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
   app.post('/v1/jobs/:id/cancel', async (request) =>
     transition(request, 'cancel', 'created', 'refunded', (job, caller) => {
       if (job.clientAgentId !== caller.agentId) {
-        throw new AgentxError(ErrorCode.CHAIN_MISMATCH, 'only the client may cancel');
+        throw new AgentxError(ErrorCode.FORBIDDEN, 'only the client may cancel');
       }
     }),
   );
@@ -546,6 +574,44 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
  * writes the on-chain ones with their real hash and log index, and the unique
  * constraint keeps the two from colliding.
  */
+/** A hire the client already made under this key, if any. */
+async function findHire(db: Db, clientAgentId: number, idempotencyKey: string) {
+  return db.query.jobs.findFirst({
+    where: and(eq(jobs.clientAgentId, clientAgentId), eq(jobs.idempotencyKey, idempotencyKey)),
+  });
+}
+
+/** The transaction that created this job, once there was one. */
+async function createdTxHash(db: Db, jobId: number): Promise<string | null> {
+  const event = await db.query.jobEvents.findFirst({
+    where: and(eq(jobEvents.jobId, jobId), eq(jobEvents.kind, 'job.created')),
+  });
+  const txHash = (event?.payload as {txHash?: string} | undefined)?.txHash;
+  return txHash ?? null;
+}
+
+/** What a hire answers with — the same for the first request and every retry of it. */
+function receipt(
+  job: {id: number; chainJobId: string | null; path: string; amount: string; specHash: string},
+  chain: ChainConfig,
+  txHash: string,
+) {
+  const amount = BigInt(job.amount);
+  return {
+    jobId: String(job.id),
+    chainJobId: job.chainJobId ?? null,
+    chainId: chain.chainId,
+    network: chain.name,
+    state: job.path === 'direct' ? 'settled' : 'created',
+    path: job.path,
+    amount: job.amount,
+    amountDisplay: chain.formatToken(amount),
+    specHash: job.specHash,
+    txHash,
+    explorerUrl: chain.explorerTx(txHash),
+  };
+}
+
 async function recordEvent(
   db: Db,
   bus: EventBus,

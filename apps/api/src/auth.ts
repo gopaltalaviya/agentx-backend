@@ -55,7 +55,7 @@ export interface Caller {
 export async function authenticate(db: Db, request: FastifyRequest): Promise<Caller> {
   const header = request.headers.authorization;
   if (!header?.startsWith('Bearer ')) {
-    throw new AgentxError(ErrorCode.CHAIN_MISMATCH, 'missing Authorization: Bearer <api key>');
+    throw new AgentxError(ErrorCode.UNAUTHORIZED, 'missing Authorization: Bearer <api key>');
   }
   const presented = header.slice('Bearer '.length).trim();
 
@@ -67,7 +67,7 @@ export async function authenticate(db: Db, request: FastifyRequest): Promise<Cal
     .where(isNull(apiKeys.revokedAt));
 
   const match = rows.find((r) => verifyApiKey(presented, r.keyHash));
-  if (!match) throw new AgentxError(ErrorCode.CHAIN_MISMATCH, 'unknown or revoked API key');
+  if (!match) throw new AgentxError(ErrorCode.UNAUTHORIZED, 'unknown or revoked API key');
 
   const agent = await db.query.agents.findFirst({where: eq(agents.id, match.agentId)});
   if (!agent) throw new AgentxError(ErrorCode.AGENT_NOT_HIREABLE, 'the key belongs to a deleted agent');

@@ -102,3 +102,56 @@ const MINIMAL_ERC20 = [
     outputs: [{name: '', type: 'uint256'}],
   },
 ] as const satisfies Abi;
+
+/** An ERC-8004 identity as the registry reports it. */
+export interface IdentityReading {
+  owner: string;
+  wallet: string;
+}
+
+export type IdentityReader = (args: {
+  chainId: number;
+  chainAgentId: bigint;
+}) => Promise<IdentityReading | null>;
+
+const IDENTITY_ABI = [
+  {
+    type: 'function',
+    name: 'ownerOf',
+    stateMutability: 'view',
+    inputs: [{name: 'agentId', type: 'uint256'}],
+    outputs: [{name: '', type: 'address'}],
+  },
+  {
+    type: 'function',
+    name: 'getAgentWallet',
+    stateMutability: 'view',
+    inputs: [{name: 'agentId', type: 'uint256'}],
+    outputs: [{name: '', type: 'address'}],
+  },
+] as const satisfies Abi;
+
+/**
+ * Real reader, against the chain's ERC-8004 Identity Registry.
+ *
+ * `null` for an id that does not exist (ownerOf reverts) — and for an
+ * unreachable RPC, since a registration that cannot be verified must not be
+ * recorded as verified.
+ */
+export function makeIdentityReader(config: AgentxConfig): IdentityReader {
+  return async ({chainId, chainAgentId}) => {
+    const chain = config.chain(chainId);
+    const registry = chain.erc8004['identityRegistry'] as Hex | undefined;
+    if (!registry) return null;
+    const pub = createPublicClient({transport: http(chain.rpcUrl)});
+    try {
+      const [owner, wallet] = await Promise.all([
+        pub.readContract({address: registry, abi: IDENTITY_ABI, functionName: 'ownerOf', args: [chainAgentId]}),
+        pub.readContract({address: registry, abi: IDENTITY_ABI, functionName: 'getAgentWallet', args: [chainAgentId]}),
+      ]);
+      return {owner, wallet};
+    } catch {
+      return null;
+    }
+  };
+}

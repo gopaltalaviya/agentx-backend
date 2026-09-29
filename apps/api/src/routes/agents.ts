@@ -7,6 +7,7 @@ import type {ChainConfig} from '@agentx/config';
 import {authenticate, generateApiKey, hashApiKey, resolveChainId} from '../auth.js';
 import {rank, RANK_MODES, type RankMode} from '../ranking.js';
 import type {AgentRow} from '../types.js';
+import type {IdentityReader} from '../chain-reads.js';
 
 const RegisterBody = z.object({
   name: z.string().min(1).max(64),
@@ -17,6 +18,8 @@ const RegisterBody = z.object({
   walletAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
   ownerAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
   chainId: z.number().int().optional(),
+  /** The ERC-8004 id, when the identity is already registered. Verified on-chain before it is stored. */
+  chainAgentId: z.string().regex(/^\d+$/).optional(),
 });
 
 const DiscoverQuery = z.object({
@@ -32,6 +35,7 @@ export interface RouteDeps {
   db: Db;
   chains: Record<number, ChainConfig>;
   defaultChainId: number;
+  readIdentity?: IdentityReader;
 }
 
 export async function registerAgentRoutes(app: FastifyInstance, deps: RouteDeps): Promise<void> {
@@ -142,15 +146,28 @@ export async function registerAgentRoutes(app: FastifyInstance, deps: RouteDeps)
    *
    * The on-chain ERC-8004 registration and the stake are done by the owner's
    * own wallet; this records the off-chain half (capabilities, endpoint,
-   * searchable price) and issues the API key. `chainAgentId` stays NULL until
-   * the indexer observes the registration — the database never claims an
-   * on-chain fact the chain has not confirmed.
+   * searchable price) and issues the API key.
+   *
+   * `chainAgentId` links the two, and without it the agent can never be
+   * hired: the escrow addresses agents by their ERC-8004 id. This used to say
+   * the id "stays NULL until the indexer observes the registration", but the
+   * indexer only watches TaskEscrow, so nothing ever set it — every agent
+   * registered through the API or the /register page was unhireable, and only
+   * the demo scripts worked, by writing the column with raw SQL.
+   *
+   * So the caller names the id and the chain confirms it: the id must exist,
+   * be owned by `ownerAddress`, and pay out to `walletAddress`. The database
+   * still never claims an on-chain fact the chain has not confirmed.
    */
   app.post('/v1/agents', async (request, reply) => {
     const body = RegisterBody.parse(request.body);
     const chainId = body.chainId ?? defaultChainId;
     if (!enabled.includes(chainId)) {
       throw new AgentxError(ErrorCode.CHAIN_NOT_ENABLED, `chain ${chainId} is not enabled`);
+    }
+
+    if (body.chainAgentId !== undefined) {
+      await verifyIdentity(deps.readIdentity, chainId, BigInt(body.chainAgentId), body);
     }
 
     const created = await db.transaction(async (tx) => {
@@ -164,6 +181,7 @@ export async function registerAgentRoutes(app: FastifyInstance, deps: RouteDeps)
           description: body.description ?? null,
           endpointUrl: body.endpointUrl ?? null,
           pricePerTask: body.pricePerTask,
+          chainAgentId: body.chainAgentId ?? null,
         })
         .returning();
 
@@ -213,7 +231,7 @@ export async function registerAgentRoutes(app: FastifyInstance, deps: RouteDeps)
     const caller = await authenticate(db, request);
     const {id} = request.params as {id: string};
     if (Number(id) !== caller.agentId) {
-      throw new AgentxError(ErrorCode.CHAIN_MISMATCH, 'an API key may only modify its own agent');
+      throw new AgentxError(ErrorCode.FORBIDDEN, 'an API key may only modify its own agent');
     }
     resolveChainId(request, caller, enabled);
 
@@ -260,4 +278,42 @@ function present(a: AgentRow, chain: ChainConfig) {
     active: a.active,
     explorerUrl: chain.explorerAddress(a.walletAddress),
   };
+}
+
+/**
+ * Refuse an on-chain id the chain does not back.
+ *
+ * The owner check stops anyone claiming an identity — and the reputation
+ * attached to it — by naming its id; the wallet check is what the escrow pays,
+ * so a mismatch would send every payment somewhere other than where the
+ * registrant thinks.
+ */
+async function verifyIdentity(
+  read: IdentityReader | undefined,
+  chainId: number,
+  chainAgentId: bigint,
+  body: {ownerAddress: string; walletAddress: string},
+): Promise<void> {
+  if (!read) {
+    throw new AgentxError(
+      ErrorCode.INVALID_STATE,
+      'this API cannot read the identity registry, so it cannot verify chainAgentId — register without it',
+    );
+  }
+  const identity = await read({chainId, chainAgentId});
+  if (!identity) {
+    throw new AgentxError(ErrorCode.INVALID_STATE, `ERC-8004 identity ${chainAgentId} does not exist on chain ${chainId}`);
+  }
+  if (identity.owner.toLowerCase() !== body.ownerAddress.toLowerCase()) {
+    throw new AgentxError(
+      ErrorCode.INVALID_STATE,
+      `ERC-8004 identity ${chainAgentId} is owned by ${identity.owner}, not ${body.ownerAddress}`,
+    );
+  }
+  if (identity.wallet.toLowerCase() !== body.walletAddress.toLowerCase()) {
+    throw new AgentxError(
+      ErrorCode.INVALID_STATE,
+      `ERC-8004 identity ${chainAgentId} pays out to ${identity.wallet}, not ${body.walletAddress}`,
+    );
+  }
 }

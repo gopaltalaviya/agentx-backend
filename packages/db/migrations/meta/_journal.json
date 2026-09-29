@@ -15,6 +15,13 @@
       "when": 1790177967880,
       "tag": "0001_sudden_morlocks",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790686734895,
+      "tag": "0002_chubby_rawhide_kid",
+      "breakpoints": true
     }
   ]
 }

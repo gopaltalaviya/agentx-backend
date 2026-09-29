@@ -154,9 +154,17 @@ export const jobs = pgTable(
     settledAt: timestamp('settled_at', {withTimezone: true}),
     /** Links the row to the agent's OpenTelemetry trace. */
     traceId: text('trace_id'),
+    /**
+     * The client's Idempotency-Key for the hire. A replayed hire returns this
+     * row instead of inserting another: it used to insert a phantom job each
+     * time — settled on the fast path, never linkable on escrow — while the
+     * signer correctly refused to pay twice.
+     */
+    idempotencyKey: text('idempotency_key'),
   },
   (t) => [
     uniqueIndex('jobs_chain_job_uk').on(t.chainId, t.chainJobId),
+    uniqueIndex('jobs_client_idempotency_uk').on(t.clientAgentId, t.idempotencyKey),
     index('jobs_worker_idx').on(t.chainId, t.workerAgentId, t.state),
     index('jobs_client_idx').on(t.chainId, t.clientAgentId, t.createdAt),
     index('jobs_open_idx').on(t.chainId, t.state),

@@ -9,8 +9,7 @@
   "scripts": {
     "build": "tsc -b",
     "generate": "drizzle-kit generate",
-    "migrate": "node ./bin/migrate.mjs",
-    "seed": "node ./bin/seed.mjs"
+    "migrate": "node ./bin/migrate.mjs"
   },
   "dependencies": {
     "drizzle-orm": "^0.36.0",

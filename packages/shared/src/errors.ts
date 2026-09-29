@@ -16,6 +16,10 @@ export const ErrorCode = {
   IDEMPOTENCY_CONFLICT: 'IDEMPOTENCY_CONFLICT',
   CHAIN_MISMATCH: 'CHAIN_MISMATCH',
   CHAIN_NOT_ENABLED: 'CHAIN_NOT_ENABLED',
+  /** No key, or one that is unknown or revoked. */
+  UNAUTHORIZED: 'UNAUTHORIZED',
+  /** A valid key acting on something that is not its agent's to act on. */
+  FORBIDDEN: 'FORBIDDEN',
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -31,6 +35,8 @@ export const ERROR_STATUS: Record<ErrorCode, number> = {
   IDEMPOTENCY_CONFLICT: 409,
   CHAIN_MISMATCH: 409,
   CHAIN_NOT_ENABLED: 400,
+  UNAUTHORIZED: 401,
+  FORBIDDEN: 403,
 };
 
 export interface Problem {
