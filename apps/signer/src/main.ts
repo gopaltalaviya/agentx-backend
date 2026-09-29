@@ -5,6 +5,9 @@ import {createDb} from '@agentx/db';
 import {AgentxError} from '@agentx/shared';
 import {EnvKeystoreSource, RawKeySource, type KeySource} from './keystore.js';
 import {SignerService} from './signer.js';
+import {chainKeeper} from './keeper.js';
+import {authorised, bindHost} from './auth.js';
+import {privateKeyToAccount} from 'viem/accounts';
 
 /**
  * The signer is NOT a public service.
@@ -16,7 +19,7 @@ import {SignerService} from './signer.js';
 const logger = pino({
   level: process.env['LOG_LEVEL'] ?? 'info',
   // Key material must never reach a log line, even by accident.
-  redact: ['req.body.privateKey', 'SIGNER_KEYSTORE_JSON', 'SIGNER_KEYSTORE_PASSPHRASE'],
+  redact: ['req.body.privateKey', 'req.headers.authorization', 'SIGNER_KEYSTORE_JSON', 'SIGNER_KEYSTORE_PASSPHRASE', 'KEEPER_PRIVATE_KEY', 'SIGNER_TOKEN'],
 });
 
 const config = loadConfig();
@@ -41,6 +44,9 @@ const app = Fastify({logger: false});
 app.get('/health', async () => ({ok: true, chainId: chain.chainId, keys: keys.kind}));
 
 app.post('/sign', async (request, reply) => {
+  if (!authorised(request.headers.authorization, process.env['SIGNER_TOKEN'])) {
+    return reply.status(401).send({code: 'UNAUTHORIZED', detail: 'the signer requires its SIGNER_TOKEN'});
+  }
   const body = request.body as Record<string, unknown>;
   try {
     const result = await service.sign({
@@ -62,6 +68,21 @@ app.post('/sign', async (request, reply) => {
   }
 });
 
+// The keeper sends the escrow's permissionless exits when they fall due —
+// without it, a worker that vanishes after accepting strands the client's
+// money. It runs here because this is the process allowed to hold a key, but
+// on a key of its own: sharing the signer's would race it for nonces.
+const keeperKey = process.env['KEEPER_PRIVATE_KEY'];
+if (keeperKey) {
+  if (!chain.testnet) throw new Error('KEEPER_PRIVATE_KEY is a raw key; raw keys are for testnet only');
+  const keeper = chainKeeper({db, chain, abis, account: privateKeyToAccount(keeperKey as `0x${string}`), logger});
+  keeper.start(Number(process.env['KEEPER_INTERVAL_MS'] ?? 15_000));
+  logger.info({chainId: chain.chainId}, 'keeper sweeping for due exits');
+} else {
+  logger.warn('no KEEPER_PRIVATE_KEY: expired escrow jobs will wait for someone else to exit them');
+}
+
 const port = Number(process.env['SIGNER_PORT'] ?? 7070);
-await app.listen({port, host: '0.0.0.0'});
-logger.info({port, chainId: chain.chainId}, 'signer listening (private networking only)');
+const host = bindHost(process.env);
+await app.listen({port, host});
+logger.info({port, host, chainId: chain.chainId, token: Boolean(process.env['SIGNER_TOKEN'])}, 'signer listening');

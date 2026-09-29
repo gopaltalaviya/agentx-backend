@@ -77,7 +77,7 @@ export class SignerService {
     }
 
     // 2. Policy, mirroring AgentAccount's on-chain checks.
-    await this.checkPolicy(req);
+    const capsOnChain = await this.checkPolicy(req);
 
     // The agent's registered wallet — the address the CHAIN will check.
     //
@@ -176,6 +176,21 @@ export class SignerService {
         throw new AgentxError(ErrorCode.IDEMPOTENCY_CONFLICT, 'a request with this key is in flight');
       }
 
+      // No AgentAccount, so nothing on-chain will stop this spend: the cap
+      // is ours to hold. Reserved here — under the lock, after a replay has
+      // already returned, before anything is broadcast — so two concurrent
+      // hires cannot both fit into the same remaining budget.
+      const reserved = !capsOnChain && req.spend > 0n;
+      if (reserved) {
+        try {
+          await this.reserveOffChain(req.agentId, req.spend);
+        } catch (err) {
+          // Free the key: a spend refused today may be allowed tomorrow.
+          await db.update(signerTxs).set({status: 'failed'}).where(eq(signerTxs.id, slot.id));
+          throw err;
+        }
+      }
+
       const wallet = createWalletClient({account, transport: http(chain.rpcUrl)});
 
       let txHash: Hex;
@@ -188,6 +203,9 @@ export class SignerService {
           chain: null,
         });
       } catch (err) {
+        // Nothing left the building, so nothing was spent.
+        if (reserved) await this.releaseOffChain(req.agentId, req.spend).catch(() => undefined);
+
         // Record the failure rather than leaving the row 'pending' forever,
         // so the key can be retried once whatever broke is fixed.
         await db
@@ -225,13 +243,20 @@ export class SignerService {
     return agent;
   }
 
-  private async checkPolicy(req: SignRequest): Promise<void> {
-    const {db, chain, abis} = this.deps;
+  /**
+   * The on-chain caps, where the wallet is an AgentAccount.
+   *
+   * Returns whether the chain holds this agent's caps. When it does not — a
+   * plain EOA, which is every agent today — the caller must enforce the
+   * stored policy itself, because nothing else will.
+   */
+  private async checkPolicy(req: SignRequest): Promise<boolean> {
+    const {chain, abis} = this.deps;
 
     const agent = await this.loadAgent(req.agentId);
 
     const accountAbi = abis['AgentAccount'];
-    if (!accountAbi || req.spend === 0n) return;
+    if (!accountAbi || req.spend === 0n) return false;
 
     // Read the caps from the chain, not from our cache. The cache exists for
     // fast rejection; the contract is the authority, and a stale cache that
@@ -277,6 +302,65 @@ export class SignerService {
         this.secondsUntilReset(dayStart),
       );
     }
+
+    return perTaskCap !== null && dailyRemaining !== null;
+  }
+
+  /**
+   * Check and reserve a spend against the stored policy, atomically.
+   *
+   * One UPDATE decides and records: the window rolls over after 24 hours
+   * (rolling, like AgentAccount's, not UTC midnight), the per-task cap and
+   * the daily cap are both tested, and if either fails no row changes.
+   */
+  private async reserveOffChain(agentId: number, spend: bigint): Promise<void> {
+    const {db, chain} = this.deps;
+    const amount = spend.toString();
+    const rows = (await db.execute(sql`
+      UPDATE spend_policies SET
+        spent_today = CASE WHEN day_start <= now() - interval '24 hours'
+                           THEN ${amount}::numeric ELSE spent_today + ${amount}::numeric END,
+        day_start   = CASE WHEN day_start <= now() - interval '24 hours' THEN now() ELSE day_start END
+      WHERE agent_id = ${agentId}
+        AND per_task_cap >= ${amount}::numeric
+        AND (CASE WHEN day_start <= now() - interval '24 hours' THEN 0 ELSE spent_today END)
+            + ${amount}::numeric <= daily_cap
+      RETURNING agent_id
+    `)) as unknown as {agent_id: number}[];
+    if (rows.length > 0) return;
+
+    // Refused. Say which rule, and when it lifts.
+    const [policy] = (await db.execute(sql`
+      SELECT per_task_cap, daily_cap, spent_today,
+             GREATEST(0, EXTRACT(EPOCH FROM (day_start + interval '24 hours' - now())))::int AS resets_in
+      FROM spend_policies WHERE agent_id = ${agentId}
+    `)) as unknown as {per_task_cap: string; daily_cap: string; spent_today: string; resets_in: number}[];
+
+    if (!policy) {
+      throw new AgentxError(
+        ErrorCode.BUDGET_EXCEEDED,
+        `agent ${agentId} has no spending policy — nothing may be spent until one is set`,
+      );
+    }
+    if (spend > BigInt(policy.per_task_cap)) {
+      throw new AgentxError(
+        ErrorCode.BUDGET_EXCEEDED,
+        `spend ${chain.formatToken(spend)} exceeds the per-task cap of ${chain.formatToken(BigInt(policy.per_task_cap))}`,
+      );
+    }
+    const remaining = BigInt(policy.daily_cap) - BigInt(policy.spent_today);
+    throw new AgentxError(
+      ErrorCode.BUDGET_EXCEEDED,
+      `spend ${chain.formatToken(spend)} exceeds today's remaining budget of ${chain.formatToken(remaining > 0n ? remaining : 0n)}`,
+      Math.max(1, policy.resets_in),
+    );
+  }
+
+  private async releaseOffChain(agentId: number, spend: bigint): Promise<void> {
+    await this.deps.db.execute(sql`
+      UPDATE spend_policies SET spent_today = GREATEST(0, spent_today - ${spend.toString()}::numeric)
+      WHERE agent_id = ${agentId}
+    `);
   }
 
   /**

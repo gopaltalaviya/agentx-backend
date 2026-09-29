@@ -40,6 +40,8 @@ interface ChainState {
   dailyCap: bigint;
   dailyRemaining: bigint;
   dayStart: bigint;
+  /** A plain EOA: no code, so every contract read returns empty data. */
+  eoa?: boolean;
   /** When set, eth_sendRawTransaction fails with this message. */
   broadcastError?: string;
   broadcasts: number;
@@ -97,6 +99,7 @@ function rpc(method: string, params: unknown[]): unknown {
       // reported the signer accepting a spend it had actually never been
       // asked about. A stub that answers the wrong question convincingly is
       // worse than one that fails.
+      if (state.eoa) return '0x';
       const data = String((params[0] as {data?: string}).data ?? '');
       if (data.startsWith(SELECTORS.dailyRemaining)) return uint(state.dailyRemaining);
       if (data.startsWith(SELECTORS.dayStart)) return uint(state.dayStart);
@@ -109,6 +112,8 @@ function rpc(method: string, params: unknown[]): unknown {
     case 'eth_sendRawTransaction':
       if (state.broadcastError) throw new Error(state.broadcastError);
       state.broadcasts++;
+      // The pending nonce advances, as a real node's does.
+      state.nonce++;
       return TX_HASH;
     default:
       return null;
@@ -427,5 +432,90 @@ describe('signing as the right agent', () => {
     // A keystore holding one key per agent can only pick the right one if it
     // is told the address it has to match.
     expect(JSON.stringify(asked).toLowerCase()).toContain(ACCOUNT.address.toLowerCase());
+  });
+});
+
+/**
+ * An agent whose wallet is a plain EOA — which is every agent today.
+ *
+ * The caps were enforced nowhere for these. The signer read them from
+ * `AgentAccount`, every read failed on an address with no code, and each
+ * failure was treated as "no cap". `spend_policies.spent_today` was never
+ * incremented, so `/v1/budget` never went down either. The claim the project
+ * rests on — a hijacked agent cannot spend past its daily cap — held only for
+ * a contract account nobody uses.
+ */
+describe('an EOA agent, which is every agent today', () => {
+  async function withPolicy(perTaskCap: bigint, dailyCap: bigint, over: {spentToday?: bigint; hoursAgo?: number} = {}) {
+    const agentId = await anAgent();
+    await db.execute(
+      sql`INSERT INTO spend_policies (agent_id, per_task_cap, daily_cap, spent_today, day_start)
+          VALUES (${agentId}, ${perTaskCap.toString()}, ${dailyCap.toString()}, ${(over.spentToday ?? 0n).toString()},
+                  now() - make_interval(hours => ${over.hoursAgo ?? 0}))`,
+    );
+    return agentId;
+  }
+
+  const spentToday = async (agentId: number) =>
+    BigInt(
+      ((await db.execute(sql`SELECT spent_today FROM spend_policies WHERE agent_id = ${agentId}`)) as unknown as {
+        spent_today: string;
+      }[])[0]!.spent_today,
+    );
+
+  beforeEach(() => {
+    state.eoa = true;
+  });
+
+  it('refuses a spend over the per-task cap', async () => {
+    const agentId = await withPolicy(30_000n, 1_000_000n);
+    await expectRefusal(makeSigner().sign(request(agentId, {spend: 40_000n})), ErrorCode.BUDGET_EXCEEDED);
+    expect(state.broadcasts).toBe(0);
+  });
+
+  it('counts what it signs, and refuses once the day would pass the cap', async () => {
+    const agentId = await withPolicy(50_000n, 60_000n);
+    const signer = makeSigner();
+
+    await signer.sign(request(agentId, {spend: 40_000n}));
+    expect(await spentToday(agentId)).toBe(40_000n);
+
+    const refused = await expectRefusal(signer.sign(request(agentId, {spend: 40_000n})), ErrorCode.BUDGET_EXCEEDED);
+    expect(refused.retryAfter).toBeGreaterThan(0);
+    expect(state.broadcasts).toBe(1);
+    expect(await spentToday(agentId)).toBe(40_000n);
+  });
+
+  it('does not charge the budget for a broadcast that failed', async () => {
+    const agentId = await withPolicy(50_000n, 60_000n);
+    state.broadcastError = 'insufficient funds for gas';
+    await makeSigner().sign(request(agentId, {spend: 40_000n})).catch(() => undefined);
+    expect(await spentToday(agentId)).toBe(0n);
+  });
+
+  it('does not charge twice for a retried request', async () => {
+    const agentId = await withPolicy(50_000n, 60_000n);
+    const signer = makeSigner();
+    await signer.sign(request(agentId, {spend: 40_000n, idempotencyKey: 'same-key-001'}));
+    await signer.sign(request(agentId, {spend: 40_000n, idempotencyKey: 'same-key-001'}));
+    expect(await spentToday(agentId)).toBe(40_000n);
+  });
+
+  it('opens a new window once 24 hours have passed', async () => {
+    const agentId = await withPolicy(50_000n, 60_000n, {spentToday: 60_000n, hoursAgo: 25});
+    await makeSigner().sign(request(agentId, {spend: 40_000n}));
+    expect(await spentToday(agentId)).toBe(40_000n);
+  });
+
+  /** No policy is not "no limit". */
+  it('refuses to spend for an agent with no policy at all', async () => {
+    const agentId = await anAgent();
+    await expectRefusal(makeSigner().sign(request(agentId, {spend: 1n})), ErrorCode.BUDGET_EXCEEDED);
+  });
+
+  it('still signs calls that spend nothing', async () => {
+    const agentId = await anAgent();
+    const result = await makeSigner().sign(request(agentId, {spend: 0n}));
+    expect(result.replayed).toBe(false);
   });
 });
