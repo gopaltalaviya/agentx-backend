@@ -356,7 +356,15 @@ describe('the confidence floor', () => {
     });
     const inner = strict as unknown as {decode: unknown; handleLog: (e: unknown) => Promise<void>};
     inner.decode = async () => ({kind: 'settled', chainJobId: '7', payload: {fee: '200'}});
-    for (let i = 0; i < 10; i++) await inner.handleLog.call(strict, settledLog({logIndex: 100 + i}));
+    // Ten settlements are ten transactions. (This used one hash for all ten,
+    // which the chain cannot produce and the re-mined-event guard now,
+    // correctly, reads as one event.)
+    for (let i = 0; i < 10; i++) {
+      await inner.handleLog.call(
+        strict,
+        settledLog({logIndex: 100 + i, transactionHash: `0x${(0xf0 + i).toString(16).repeat(32)}`}),
+      );
+    }
     return Number((await statsOf(workerId)).score);
   }
 
@@ -416,5 +424,62 @@ describe('linking by spec hash', () => {
     await handle(directPaid(901n, 902n, 21));
     expect(await chainJobIdOf(jobId)).toBeNull();
     expect(Number((await statsOf(workerId)).completed)).toBe(0);
+  });
+});
+
+/**
+ * Reorgs. The indexer rewound its cursor and replayed, trusting the
+ * (chain, tx, logIndex) key to make that safe. Two cases it was not:
+ *
+ * - A transaction RE-MINED in a later block keeps its hash but can change
+ *   its logIndex, which is block-level. The replayed log had a new key, was
+ *   applied again, and credited the same settlement twice.
+ * - A transaction DROPPED from the chain left its effects in the projection
+ *   for good. job_events is append-only by design (it is the audit log), so
+ *   they cannot be quietly rewritten — the indexer must stop and say so.
+ */
+describe('after a reorg', () => {
+  it('does not credit a re-mined settlement twice', async () => {
+    const {workerId} = await seedJob();
+    await feed(settledLog({logIndex: 3, blockNumber: 1000n}), 'settled', {fee: '200'});
+    // Same transaction, mined again in a later block at a different position.
+    await feed(settledLog({logIndex: 9, blockNumber: 1003n}), 'settled', {fee: '200'});
+
+    expect(Number((await statsOf(workerId)).completed)).toBe(1);
+    expect(await countRows('payments')).toBe(1);
+  });
+
+  it('stops, naming the transaction, when a recorded event was dropped from the chain', async () => {
+    await seedJob();
+    await feed(settledLog({logIndex: 3, blockNumber: 1000n}), 'settled', {fee: '200'});
+
+    const inner = indexer as unknown as {
+      client: unknown;
+      checkRewindWindow: (from: bigint, to: bigint) => Promise<void>;
+    };
+    const real = inner.client;
+    inner.client = {getTransactionReceipt: async () => Promise.reject(new Error('Transaction receipt not found'))};
+    try {
+      await expect(inner.checkRewindWindow.call(indexer, 990n, 1010n)).rejects.toThrow(/0xabab/);
+    } finally {
+      inner.client = real;
+    }
+  });
+
+  it('carries on when every recorded event in the window is still on chain', async () => {
+    await seedJob();
+    await feed(settledLog({logIndex: 3, blockNumber: 1000n}), 'settled', {fee: '200'});
+
+    const inner = indexer as unknown as {
+      client: unknown;
+      checkRewindWindow: (from: bigint, to: bigint) => Promise<void>;
+    };
+    const real = inner.client;
+    inner.client = {getTransactionReceipt: async () => ({status: 'success', blockNumber: 1003n})};
+    try {
+      await expect(inner.checkRewindWindow.call(indexer, 990n, 1010n)).resolves.toBeUndefined();
+    } finally {
+      inner.client = real;
+    }
   });
 });

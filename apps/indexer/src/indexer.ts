@@ -1,5 +1,5 @@
 import {createPublicClient, hexToString, http, type Abi, type Log, type PublicClient} from 'viem';
-import {and, eq, isNull, sql} from 'drizzle-orm';
+import {and, eq, gte, isNotNull, isNull, lte, sql} from 'drizzle-orm';
 import type {ChainConfig} from '@agentx/config';
 import {type Db, indexerCursor, jobEvents, jobs, agents, agentStats, payments} from '@agentx/db';
 
@@ -92,6 +92,9 @@ export class Indexer {
       const back = this.reorgDepth * 2n; // rewind further than we trail
       const rewindTo = BigInt(cursor.lastBlock) > back ? BigInt(cursor.lastBlock) - back : BigInt(chain.startBlock);
       this.log.warn({chainId: chain.chainId, from: cursor.lastBlock, rewindTo: rewindTo.toString()}, 'reorg detected, rewinding');
+      // Throws — and so halts the indexer where it stands — if anything we
+      // recorded in the window is no longer on the chain at all.
+      await this.checkRewindWindow(rewindTo, BigInt(cursor.lastBlock));
       from = rewindTo;
     }
 
@@ -116,6 +119,49 @@ export class Indexer {
       this.log.info({chainId: chain.chainId, from: from.toString(), to: to.toString(), logs: logs.length}, 'indexed');
     }
     return to;
+  }
+
+  /**
+   * Is everything we recorded between `from` and `to` still on the chain?
+   *
+   * A transaction that was re-mined elsewhere has a receipt and the same
+   * effects, so replaying is correct. One that was DROPPED has no receipt, and
+   * its effects — a settlement, a reputation credit — are now false. They
+   * cannot be quietly undone: job_events is append-only by design, because it
+   * is the audit log. So the indexer stops here, names every orphaned
+   * transaction, and waits for an operator, rather than carrying a projection
+   * it knows to be wrong. The indexer trails the head by the network's
+   * confirmation depth, so this takes a reorg deeper than that.
+   */
+  private async checkRewindWindow(from: bigint, to: bigint): Promise<void> {
+    const {db, chain} = this.deps;
+    const recorded = await db
+      .selectDistinct({txHash: jobEvents.txHash})
+      .from(jobEvents)
+      .where(
+        and(
+          eq(jobEvents.chainId, chain.chainId),
+          isNotNull(jobEvents.txHash),
+          gte(jobEvents.blockNumber, Number(from)),
+          lte(jobEvents.blockNumber, Number(to)),
+        ),
+      );
+
+    const orphaned: string[] = [];
+    for (const {txHash} of recorded) {
+      const receipt = await this.client
+        .getTransactionReceipt({hash: txHash as `0x${string}`})
+        .catch(() => null);
+      if (!receipt) orphaned.push(txHash!);
+    }
+
+    if (orphaned.length > 0) {
+      throw new Error(
+        `reorg dropped ${orphaned.length} transaction(s) this indexer had already applied: ${orphaned.join(', ')} — ` +
+          'their events are in the append-only log and their effects are in the projection; halting for an operator ' +
+          'to reconcile rather than indexing on top of state the chain no longer backs',
+      );
+    }
   }
 
   /**
@@ -211,6 +257,21 @@ export class Indexer {
     // stored and its effect skipped forever on replay.
     const jobRow = job;
     await db.transaction(async (tx) => {
+      // A transaction re-mined in a later block keeps its hash but can move
+      // position, and logIndex is block-level — so the unique key below sees
+      // a new event, and a settlement would be credited twice. One
+      // transaction emits at most one event of a kind for a job; if this one
+      // is already recorded, it is the same event, wherever it now sits.
+      const seen = await tx.query.jobEvents.findFirst({
+        where: and(
+          eq(jobEvents.chainId, chain.chainId),
+          eq(jobEvents.txHash, entry.transactionHash ?? ''),
+          eq(jobEvents.jobId, jobRow.id),
+          eq(jobEvents.kind, kind),
+        ),
+      });
+      if (seen) return;
+
       const [recorded] = await tx
         .insert(jobEvents)
         .values({
