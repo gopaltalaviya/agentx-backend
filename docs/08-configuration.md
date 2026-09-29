@@ -141,7 +141,9 @@ The parameter table in [04 §2.5](04-how-it-works.md#25-parameters) is
   "acceptWindowSeconds":  300,          // 5 min
   "workWindowSeconds":    1800,         // 30 min
   "reviewWindowSeconds":  600,          // 10 min
-  "confidenceFloor":      25
+  "confidenceFloor":      25,
+  "defaultPerTaskCap":    "100000",     // 0.10 USDC, a new agent's spend_policies row
+  "defaultDailyCap":      "1000000"     // 1.00 USDC
 }
 ```
 
@@ -156,27 +158,37 @@ The parameter table in [04 §2.5](04-how-it-works.md#25-parameters) is
   "acceptWindowSeconds":  900,
   "workWindowSeconds":    3600,
   "reviewWindowSeconds":  3600,         // an hour to dispute, not ten minutes
-  "confidenceFloor":      50
+  "confidenceFloor":      50,
+  "defaultPerTaskCap":    "50000",      // 0.05 USDC
+  "defaultDailyCap":      "250000"      // 0.25 USDC
 }
 ```
 
-These files are read by **three** consumers, and that is the entire point:
+These files are read by the deploy script and the backend, and the interface
+sees them through the API:
 
 ```
 config/params.<chainId>.json
    │
    ├─▶ Deploy.s.sol         vm.parseJsonUint(...)   sets them on-chain
-   ├─▶ @agentx/config       zod-validated           backend pre-checks + API errors
-   └─▶ agentx-interface           same package            UI shows the real thresholds
+   ├─▶ @agentx/config       zod-validated           API (fast-path rule incl.
+   │                                                fastPathMinScore, windows,
+   │                                                default caps), indexer
+   │                                                (confidenceFloor)
+   └─▶ agentx-interface     via GET /v1/network     UI shows the real thresholds
 ```
 
-The backend's off-chain pre-check ([04 §3.2](04-how-it-works.md#32-signer-service))
-and the contract's on-chain enforcement now provably use the same numbers,
-because they read the same bytes.
+The backend and the contract use the same numbers because they read the same
+bytes — as long as the deployment has not been changed since. That is what
+the drift check is for.
 
-**Drift test (CI):** read every parameter back from the deployed contracts and
-assert it equals the JSON. A config file that disagrees with the chain is
-worse than no config file, and this is a ten-line test.
+**Drift check:** `make drift NETWORK=monad_testnet` in `agentx-contracts`
+(`scripts/check-param-drift.mjs`, added 2026-09-29) reads `TaskEscrow.config()`
+and `StakeVault`'s `minStake` / `withdrawDelay` from the chain, maps them the
+way `Deploy.s.sol` does, and exits 1 on any difference. It is run by hand; CI
+does not run it, since CI has no deployed chain to read. Against Monad testnet
+on 2026-09-29 it reported no drift. A config file that disagrees with the
+chain is worse than no config file.
 
 ---
 
@@ -214,24 +226,23 @@ concept. Nothing in the codebase hardcodes these.
 - `commit` is how you answer "which source is actually deployed?" six days
   later at 2am.
 
-### Deterministic addresses across networks
+### Addresses differ per network (plain `CREATE`)
 
-Deploy through the standard deterministic-deployment proxy
-(`0x4e59b44847b379578588920cA78FbF26c0B4956C`, the Safe Singleton Factory
-present on most EVM chains) with a fixed salt. Identical bytecode + identical
-constructor args + identical salt ⇒ **identical addresses on testnet and
-mainnet**.
+**As built, `Deploy.s.sol` deploys with plain `new` — `CREATE`, not
+`CREATE2`.** Each address depends on the deployer's nonce, so testnet and
+mainnet addresses will differ, and a redeploy on the same network gives new
+addresses. Only `AgentAccount` clones, made by `AgentAccountFactory`, are at
+CREATE2-predictable addresses.
 
-That requires constructor args to be network-independent, which is why the
+The original intent was deterministic deployment through the standard
+deterministic-deployment proxy (`0x4e59b44847b379578588920cA78FbF26c0B4956C`)
+with a fixed salt, for identical addresses on both networks. That is why the
 contracts take only an `admin` in the constructor and receive every parameter
 through a post-deploy `configure()` call driven by `params.<chainId>.json`.
-The parameters were always going to be settable — this just makes the
-deployment deterministic for free.
+That shape is kept, but nothing uses a salt today.
 
-Verify the proxy exists on Monad before relying on this; fall back to plain
-`CREATE` and different-per-network addresses if it does not. Nothing breaks
-either way, because **no code ever hardcodes an address** — it looks them up
-by chain ID.
+Nothing breaks either way, because **no code ever hardcodes an address** — it
+looks them up by chain ID in `deployments/<chainId>.json`.
 
 ---
 
@@ -250,9 +261,13 @@ RPC_URL_143=
 
 # secrets
 DATABASE_URL=
-SIGNER_KEYSTORE_JSON=              # or KMS_KEY_ID
+SIGNER_KEYSTORE_JSON=              # KMS is not built
 SIGNER_KEYSTORE_PASSPHRASE=
 SIGNER_DEV_PRIVATE_KEY=            # local only; never set in production
+SIGNER_TOKEN=                      # shared secret, set in BOTH api and signer;
+                                   # unset → signer binds 127.0.0.1 only
+KEEPER_PRIVATE_KEY=                # the keeper's OWN key (gas only), never one the
+                                   # signer uses; testnet only; unset → no keeper
 
 # model providers — at least one, or every agent run falls back to a recording
 ANTHROPIC_API_KEY=
@@ -281,7 +296,9 @@ AGENTX_SELF_URL=                   # the API's own address, for in-process runs
 AGENTX_CONTRACTS_ROOT=../agentx-contracts
 PORT=8080
 SIGNER_PORT=7070
+SIGNER_HOST=                       # bind address; anything but loopback needs SIGNER_TOKEN
 SIGNER_URL=http://127.0.0.1:7070
+KEEPER_INTERVAL_MS=15000           # how often the keeper sweeps
 LOG_LEVEL=info
 INDEXER_POLL_MS=2000
 INDEXER_MAX_BACKOFF_MS=60000
@@ -294,6 +311,12 @@ INDEXER_MAX_BACKOFF_MS=60000
 > authentication is scrypt-hashed API keys and there is no JWT anywhere —
 > config that implies a mechanism which does not exist is worse than absent.
 > `EXPLORER_API_KEY` belongs to `agentx-contracts/.env`, not this one.
+>
+> **Added 2026-09-29:** `SIGNER_TOKEN`, `SIGNER_HOST`, `KEEPER_PRIVATE_KEY` and
+> `KEEPER_INTERVAL_MS`. `SIGNER_HOST` is read by the signer but not listed in
+> `.env.example`. In `agentx-contracts/.env`, `ARBITER_ADDRESS` and
+> `FEE_RECIPIENT` are now read by `Deploy.s.sol` (empty means the deployer);
+> before that date nothing read them.
 
 Three properties worth noting:
 
@@ -399,8 +422,9 @@ function run() external {
         protocolFeeBps: uint16(vm.parseJsonUint(p, ".protocolFeeBps")),
         // …
     });
-    // deploy with CREATE2 + fixed salt, then configure(params)
-    // then write deployments/<chainId>.json
+    // deploy with plain `new` (CREATE), then configure(params);
+    // FEE_RECIPIENT / ARBITER_ADDRESS from env, defaulting to the deployer
+    // (then `make deploy` runs write-deployment.mjs → deployments/<chainId>.json)
 }
 ```
 
@@ -409,8 +433,8 @@ One command, network chosen by alias:
 ```makefile
 NETWORK ?= monad_testnet
 
-deploy:
-	forge script script/Deploy.s.sol --rpc-url $(NETWORK) --broadcast --verify
+deploy:                            # VERIFY=1 adds --verify
+	forge script script/Deploy.s.sol:Deploy --rpc-url $(NETWORK) --broadcast $(VERIFY_FLAG) -vvv
 	node scripts/write-deployment.mjs $(NETWORK)
 
 deploy-mainnet:
@@ -495,7 +519,7 @@ Nothing invented. Every choice below is the documented default somewhere.
 |---|---|
 | Config vs secrets separation | [12-Factor App §3](https://12factor.net/config) |
 | Network descriptor shape | [EIP-3085](https://eips.ethereum.org/EIPS/eip-3085), ethereum-lists/chains |
-| Deterministic deployment | CREATE2 via the Safe Singleton Factory |
+| Deterministic deployment | CREATE2 via the deterministic-deployment proxy — the intent; **not done**: `Deploy.s.sol` uses plain CREATE (§4). Only `AgentAccount` clones are CREATE2 |
 | Contract libraries | OpenZeppelin Contracts 5.x |
 | Solidity layout & NatSpec | Official Solidity style guide, `forge fmt` |
 | Multi-network Foundry | `[rpc_endpoints]` + `[etherscan]` aliases |
@@ -515,7 +539,9 @@ configuration and a deploy — no application code.
 1. Add its entry to `config/networks.json`
 2. Add `config/params.<chainId>.json`
 3. `make deploy NETWORK=<alias>` → writes `deployments/<chainId>.json`
-4. Publish `@agentx/contracts`
+4. `make export` (the backend reads the contracts checkout via
+   `AGENTX_CONTRACTS_ROOT`; `@agentx/contracts` is not published), and
+   `make drift NETWORK=<alias>` to confirm the chain matches the params file
 5. Add the chain ID to `ENABLED_CHAIN_IDS`
 
 **Zero** application code changes. If a step 6 appears that touches `apps/`,

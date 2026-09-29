@@ -49,18 +49,31 @@ that succeeds completely still cannot take more than a known amount.
 | 1 | **Schema validation before the model sees it** | Anything that is not the declared shape never reaches a context at all |
 | 2 | **Results enter as delimited data, never as instructions** | The model is told, in a frozen system prompt, that the block is untrusted third-party content |
 | 3 | **The judge runs with NO tools** | Even a fully successful injection into the judging call has nothing to call. It can only return a verdict |
-| 4 | **Spending caps are on-chain** | The decisive layer. A *completely* compromised orchestrator still cannot exceed `AgentAccount.perTaskCap` or `dailyCap`, or pay a non-allowlisted address |
-| 5 | **The owner can revoke and sweep** | Bounded blast radius, human override |
+| 4 | **Spending caps are enforced outside the model** | The decisive layer. The per-task and daily caps are checked by the **signer**, the only process that holds the agents' keys, before it signs. A *completely* compromised orchestrator can only ask; it cannot sign, and the signer refuses a spend over `per_task_cap` or past `daily_cap` |
+| 5 | **Design: on-chain `AgentAccount` policy, owner revoke and sweep** | Where an agent's wallet is an `AgentAccount`, the contract enforces the same caps plus a counterparty allowlist, and the owner can revoke and sweep. **No agent uses one today**, so this layer is not in effect |
+
+How layer 4 works as built (2026-09-29): every agent today pays from a plain
+EOA, so the signer holds each agent's caps in `spend_policies` and checks and
+reserves every spend in one `UPDATE` under a per-agent lock, over a rolling
+24-hour window. An agent with no policy spends nothing. Before 2026-09-29 this
+check did not run for EOAs at all, and nothing enforced the caps. See
+[04 §3.2](04-how-it-works.md#32-signer-service).
 
 Layer 4 is the one that makes the claim defensible. Everything above it is
-best-effort mitigation of an unsolved problem; layer 4 is arithmetic. The
-honest sentence for the submission is:
+best-effort mitigation of an unsolved problem; layer 4 is arithmetic, done by
+code the model cannot reach. The honest sentence for the submission is:
 
 > We do not claim to prevent prompt injection. We claim that a successful
-> injection cannot spend more than the daily cap the owner set on-chain, and
-> cannot pay anyone the owner did not allowlist.
+> injection cannot spend more than the agent's daily cap, because the caps are
+> enforced outside the model by the signer, the only process holding the key.
+> On-chain enforcement applies only to `AgentAccount` wallets, and today's
+> agents use plain EOAs.
 
 That is a far stronger statement than "we sanitise inputs", and it is true.
+What it does not cover: a compromised **signer** bypasses the off-chain caps
+(that is what `AgentAccount` is for), and there is no counterparty allowlist
+for EOA agents — within its cap, a hijacked orchestrator can still hire, and
+pay, any registered agent.
 
 ### What we deliberately do NOT do
 
@@ -91,7 +104,8 @@ result → schema check (structural)  → reject if malformed
 ```
 
 The judge is a separate model call that returns
-`{accept, reason, score}` and **has no tools**. Its verdict drives the
+`{accept, reason, rating}` (the rating a word, `poor`…`excellent`; accept
+needs `adequate` or better) and **has no tools**. Its verdict drives the
 on-chain `approve` or `dispute`, which is what gives the dispute mechanism
 something real to do.
 
@@ -140,6 +154,13 @@ and fast enough to watch.
 | Short worker prompts | Groq's free tier binds on tokens/day, not requests/day |
 | Parallel independent subtasks | Wall-clock is what an audience perceives |
 
+> **As built (2026-09-29):** subtasks run **sequentially** (`orchestrator.ts`
+> loops over the plan), not in parallel. The recorded demo runs on local
+> Ollama `llama3` 8B for every role (`BRAIN_CHAIN=ollama`,
+> `BRAIN_CHAIN_ORCHESTRATOR=ollama` — the orchestrator reads the second), not
+> Claude/Gemini/Groq; a cached replay reproduces that run with no model.
+> Three cached rehearsals took 155 s, 109 s and 111 s.
+
 ---
 
 ## 5. How we know it works: evals
@@ -159,6 +180,9 @@ carrying an embedded instruction; the eval passes only if the verdict is
 unchanged from the same result without the injection.
 
 Run with `pnpm eval`. Cases live in `apps/agents/eval/cases/`.
+
+> **Not built (checked 2026-09-29):** there is no `eval` script in
+> `package.json` and no `apps/agents/eval/`. This section is the design.
 
 ---
 
@@ -181,8 +205,8 @@ What the agents must handle, and how:
 | Model refuses | Treated as unavailable; next provider |
 | Output fails schema | **Do not** fall through — every provider reproduces it. Surface it |
 | Output valid but empty or wrong | Judge disputes; worker is not paid |
-| Worker never responds | On-chain `workDeadline` expires; permissionless refund |
+| Worker never responds | Escrow offer not accepted in 45 s: the orchestrator cancels it (immediate refund) and hires a different agent. Accepted but silent until the step timeout: it hires a different agent with the budget minus what is still locked, and the **keeper** sends the permissionless `expireUndelivered` refund once `workDeadline` passes. At most 2 attempts per step, never the same agent twice; if the cancel fails (the worker accepted in the gap), no second hire |
 | Every provider unavailable | Cached replay, labelled as such |
-| Injection attempt in a result | Contained by §1; bounded by on-chain caps |
+| Injection attempt in a result | Contained by §1; bounded by the caps the signer enforces (on-chain only for an `AgentAccount`) |
 
 Nothing in that table ends in "the demo hangs".

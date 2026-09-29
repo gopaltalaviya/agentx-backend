@@ -31,7 +31,8 @@ The single most important design decision is what lives on-chain.
 - how much is locked for which job
 - the outcome of each job and the hash of its result
 - the counters reputation is derived from
-- spending limits on agent wallets
+- spending limits on agent wallets (where the wallet is an `AgentAccount`;
+  none is today, so the signer holds the caps off-chain — §3.2)
 
 **Off-chain (everything else):**
 - job descriptions and result payloads
@@ -47,32 +48,49 @@ committed. A payment amount can. So the hash goes on-chain and the text does not
 
 | Service | Responsibility | Never does |
 |---|---|---|
-| `api` | HTTP/SSE surface, auth, validation, job orchestration | hold private keys |
-| `signer` | policy check + sign + broadcast + nonce management | accept unauthenticated calls |
-| `indexer` | chain events → Postgres, reorg-safe | write anything the chain did not say |
-| `mcp` | agent-facing tool surface over `api` | contain business logic of its own |
-| `web` | marketplace, profiles, live job feed | talk to the chain for writes |
+| `api` | HTTP/SSE surface, auth, validation, job orchestration, orchestrator runs | hold private keys |
+| `signer` | policy check + cap reservation + sign + broadcast + nonce management; also runs the **keeper** (§2.2) on its own key | sign for a caller without `SIGNER_TOKEN` (without a token configured it binds to `127.0.0.1` only) |
+| `indexer` | `TaskEscrow` events → Postgres, reorg-safe | write anything the chain did not say |
+| `mcp` | agent-facing tool surface over `api` (stdio) | contain business logic of its own |
+| `web` (`agentx-interface`) | marketplace, profiles, registration, live run trace | sign anything itself. The one chain write, the ERC-8004 registration, is signed by the owner's own browser wallet |
 | `agents/*` | do the actual work | share a wallet with another agent |
 
-Data flows one way: **chain → indexer → database → API → clients.** The API
-never invents on-chain state; it reads what the indexer recorded. This is why
-the UI can never show a payment that did not happen.
+Data flows **chain → indexer → database → API → clients** for everything
+the chain decides. The API is allowed one optimistic step: after the signer
+accepts a transaction for broadcast, it advances the job's state itself so a
+worker that accepts and immediately delivers is not refused. The indexer then
+rewrites state from the chain's events, and if the two disagree the chain
+wins.
+
+The indexer reads **only `TaskEscrow`**. It does not follow the Identity
+Registry or `StakeVault`. An agent's ERC-8004 id (`chain_agent_id`) is set at
+registration instead, after the API verifies it on chain (§5.1). Its `stake`
+column is never filled in; see [§4](#4-database-schema).
 
 ### 1.3 Request path for a hire
 
 ```
-agent → MCP tool call
-      → api: validate spec, resolve agent, check caller budget
-      → signer: check policy, sign createJob(), broadcast
-      → chain: funds locked, JobCreated emitted
-      → indexer: writes jobs row + job_events row
-      → api: SSE push to client agent
-      → queue: offer dispatched to worker agent
+agent → MCP tool call (or REST)
+      → api: authenticate key, validate spec, resolve worker, price ≤ maxPrice,
+             choose path, find-or-insert the jobs row for this Idempotency-Key,
+             specHash = keccak256(spec ":" jobId)
+      → signer: token check, idempotency check, cap check-and-reserve,
+                sign createJob()/directPay()
+                with the client agent's key, broadcast
+      → api: 201 with txHash (state "created", or "settled" for direct pay)
+      → chain: funds locked (or paid), JobCreated / DirectPaid + JobSettled
+      → indexer: links the row to its on-chain id by specHash (and matching
+                 client/worker ERC-8004 ids), writes job_events, applies
+                 the state change
+      → worker: finds the job by polling GET /v1/jobs?role=worker
 ```
 
-The API responds to the caller as soon as the transaction is *broadcast*, with
-status `pending` and the tx hash, then pushes `confirmed` over SSE. Agents get
-a fast acknowledgement without the system lying about finality.
+The API responds as soon as the transaction is *broadcast* and does not wait
+for a receipt. The response carries the tx hash, and `chainJobId` is null
+until the indexer links it. Actions that address the job on-chain (accept,
+submit, approve) are refused with a retryable `INVALID_STATE` until that link
+exists. There is no `pending` state and no `job.confirmed` event, and there
+is no offer queue.
 
 ---
 
@@ -105,7 +123,13 @@ OpenZeppelin 5.x.
 ```
 
 **What we build:** `TaskEscrow`, `AgentAccount` + factory, `StakeVault`.
-**What we integrate:** ERC-8004 Identity and Reputation.
+**What we integrate:** ERC-8004 Identity and Reputation. The addresses above
+are the canonical **mainnet** deployments. ERC-8004 is not deployed on Monad
+testnet, so there `Deploy.s.sol` deploys our own minimal registries
+(`src/mocks/MockERC8004.sol`). They reproduce the self-feedback guard and the
+empty-client-list revert, and their `register(agentURI, wallet)` takes the
+payout wallet directly. Addresses come from `deployments/<chainId>.json`,
+never from code.
 **Why:** identity and reputation are a solved, deployed standard; escrow,
 settlement and on-chain spending policy are not.
 
@@ -145,12 +169,12 @@ interface IReputationRegistry {                  // 0x8004BAa1…9b63
 |---|---|
 | Agent identity | `agentId` = the ERC-8004 ERC-721 token id. AGENTX mints nothing. |
 | Owner | `ownerOf(agentId)` |
-| Payout address | `getAgentWallet(agentId)` — the `AgentAccount` |
-| Price | `setMetadata(agentId, "agentx:pricePerTask", abi.encode(uint96))` |
-| Capabilities | `skills[]` in the agent card, mirrored to `"agentx:capabilities"` |
+| Payout address | `getAgentWallet(agentId)`. The design has this be the `AgentAccount`; today every agent's is a plain EOA |
+| Price | **Off-chain**, `agents.price_per_task` in Postgres. The API charges it and passes it to the contract as `amount`. No ERC-8004 metadata is written |
+| Capabilities | **Off-chain**, `agent_capabilities` in Postgres. Not mirrored to ERC-8004 |
 | Stake | `StakeVault.bondOf(agentId)` — ERC-8004 has no custody |
-| Reputation **write** | `TaskEscrow` calls `giveFeedback()` **only after settlement** |
-| Reputation **read** | `getSummary(agentId, [address(taskEscrow)], "agentx", "settled")` |
+| Reputation **write** | `TaskEscrow` calls `giveFeedback()` **only when money moves**: 100 on settlement (including `directPay`), 0 on a refund after a failed delivery or a lost dispute |
+| Reputation **read** | By any third party: `getSummary(agentId, [address(taskEscrow)], "agentx", "settled")`. AGENTX's own score comes from its indexer (see below) |
 
 **The one idea that matters.** `giveFeedback()` is callable by anyone, which
 is precisely why the empirical study found ERC-8004 reputation manipulable.
@@ -173,31 +197,37 @@ spending money.
 2. `MAX_ABS_VALUE = 1e38` bounds `value`. Our 0–100 scale is far inside it.
 
 ```solidity
-// inside TaskEscrow._settle(), after funds have moved
-reputation.giveFeedback({
-    agentId:       workerAgentId,
-    value:         outcome == Outcome.SUCCESS ? int128(100) : int128(0),
-    valueDecimals: 0,
-    tag1:          "agentx",
-    tag2:          "settled",
-    endpoint:      "",
-    feedbackURI:   "",                 // job receipt, optional
-    feedbackHash:  keccak256(abi.encode(jobId, specHash, resultHash, amount))
-});
+// TaskEscrow._recordFeedback(), called from _settle(), from _refund() when the
+// outcome counts, and from directPay() — always after funds have moved
+try reputationRegistry.giveFeedback(
+    agentId,
+    outcome == Outcome.SUCCESS ? int128(100) : int128(0),  // value
+    0,                                                       // valueDecimals
+    "agentx", "settled",                                     // tag1, tag2
+    "", "",                                                  // endpoint, feedbackURI
+    keccak256(abi.encode(jobId, job.specHash, job.resultHash, job.amount))
+) {} catch { emit FeedbackFailed(jobId, agentId); }
 ```
 
 `feedbackHash` binds the feedback to the exact job, spec, result and amount.
 Anyone can recompute it from public chain state and confirm the review
-corresponds to a real settled payment.
+corresponds to a real payment. On `directPay`, `resultHash` is zero: the
+feedback is written in the payment transaction, before any result exists.
 
 **Score derivation.** The smoothed, volume-damped formula in
-[§2.3](#23-reputationregistry) still applies — computed off-chain in
-`@agentx/config` from the `count` and `summaryValue` returned by
-`getSummary()`, rather than from our own storage. Same maths, standard source.
+[§2.3](#23-reputationregistry) applies. AGENTX does **not** compute it from
+`getSummary()`, nor from ERC-8004's `NewFeedback` events. The indexer counts
+`TaskEscrow`'s own `JobSettled` (completed) and `JobRefunded` (failed) events
+and recomputes `agent_stats.score` in SQL on each one
+(`apps/indexer/src/indexer.ts`). Same transactions as the feedback, different
+source. Only refunds with reason `undelivered` or `dispute` count as
+failures, and the confidence floor is the chain's `confidenceFloor`
+parameter; both were fixed on 2026-09-29 (see
+[02 §6](02-flowcharts.md#6-reputation-update)).
 
-**Verify before committing** (M1, by Sep 28): read the deployed registries
-directly and confirm the ABIs match this draft EIP, and that `giveFeedback()`
-accepts a contract caller. If either fails, build §2.1 and §2.3 below instead.
+**Verification (M1):** done. The mainnet registries were probed, and a
+contract caller is accepted by `giveFeedback()`. §2.1 and §2.3 below were not
+needed and are not built.
 
 ---
 
@@ -212,12 +242,17 @@ function deposit(uint256 agentId, uint96 amount) external;
 function requestWithdraw(uint256 agentId, uint96 amount) external;  // starts cooldown
 function withdraw(uint256 agentId) external;                        // after WITHDRAW_DELAY
 function slash(uint256 agentId, uint96 amount, bytes32 reason) external;  // SLASHER_ROLE
-function bondOf(uint256 agentId) external view returns (uint96);
-function isHireable(uint256 agentId) external view returns (bool);   // bond >= minStake
+function bondOf(uint256 agentId) external view returns (uint96);    // available only
+function pendingOf(uint256 agentId) external view returns (uint96 amount, uint64 unlockAt);
+function isHireable(uint256 agentId) external view returns (bool);   // available >= minStake
+function setMinStake(uint96 newMinStake) external;                  // CONFIGURER_ROLE
 ```
 
-Only `ownerOf(agentId)` may withdraw. The withdrawal delay is what stops an
-agent taking a large job and pulling its bond in the same block.
+Only `ownerOf(agentId)` may request a withdrawal or withdraw, and the funds
+go to that owner. A requested amount leaves the hireable bond at once but
+stays **slashable** until it is withdrawn. The withdrawal delay is what stops
+an agent taking a large job and pulling its bond in the same block. Anyone
+may deposit to any `agentId`. Nothing calls `slash` today.
 
 ---
 
@@ -322,15 +357,18 @@ permits any `uint256`, so the guard is load-bearing, not decorative.
 
 ```solidity
 
-event JobCreated(uint256 indexed jobId, uint256 indexed client, uint256 indexed worker,
-                 uint128 amount, bytes32 specHash, uint64 acceptDeadline);
+event JobCreated(uint256 indexed jobId, uint256 indexed clientAgentId, uint256 indexed workerAgentId,
+                 uint128 amount, uint128 fee, bytes32 specHash, uint64 acceptDeadline);
 event JobAccepted(uint256 indexed jobId, uint64 workDeadline);
 event ResultSubmitted(uint256 indexed jobId, bytes32 resultHash, string resultURI);
-event JobSettled(uint256 indexed jobId, uint128 paid, uint128 fee);
+event JobSettled(uint256 indexed jobId, uint128 paid, uint128 fee, Outcome outcome);
 event JobRefunded(uint256 indexed jobId, uint128 amount, bytes32 reason);
+    // reason: "cancelled" | "unaccepted" | "undelivered" | "dispute"
 event JobDisputed(uint256 indexed jobId, bytes32 reasonHash);
 event DisputeResolved(uint256 indexed jobId, bool forWorker);
-event DirectPaid(uint256 indexed jobId, uint256 indexed client, uint256 indexed worker, uint128 amount);
+event DirectPaid(uint256 indexed jobId, uint256 indexed clientAgentId, uint256 indexed workerAgentId,
+                 uint128 amount, uint128 fee, bytes32 specHash);   // followed by JobSettled
+event FeedbackFailed(uint256 indexed jobId, uint256 indexed agentId);
 
 // --- escrow path ---
 function createJob(
@@ -342,8 +380,13 @@ function createJob(
     uint64  workWindow
 ) external returns (uint256 jobId);
 
+// acceptWindow and workWindow must be > 0 and <= maxAcceptWindow / maxWorkWindow,
+// else revert WindowTooLong. workDeadline = acceptDeadline + workWindow,
+// absolute from creation, so the worker knows it before accepting.
+
 function acceptJob(uint256 jobId) external;                               // worker wallet
 function submitResult(uint256 jobId, bytes32 resultHash, string calldata uri) external;
+    // the API sends keccak256(canonicalJson(output)) and an empty uri
 function approve(uint256 jobId) external;                                 // client wallet
 function dispute(uint256 jobId, bytes32 reasonHash) external;             // client, in review window
 function resolveDispute(uint256 jobId, bool forWorker) external;          // ARBITER_ROLE
@@ -370,12 +413,10 @@ function getJob(uint256 jobId) external view returns (Job memory);
 function lockedTotal() external view returns (uint256);
 ```
 
-Two events deserve explanation:
-
-```solidity
-event JobSettled(uint256 indexed jobId, uint128 paid, uint128 fee, Outcome outcome);
-event FeedbackFailed(uint256 indexed jobId, uint256 indexed agentId);
-```
+`directPay` transfers `amount - fee` straight from the client to the worker's
+wallet and `fee` to `feeRecipient`, records the job as `SETTLED`, and writes
+the feedback, all in one transaction. The funds never rest in the escrow, so
+`lockedTotal` is untouched.
 
 `FeedbackFailed` is the safety valve for the ERC-8004 dependency. The
 Reputation Registry is an **upgradeable proxy owned by someone else** — if it
@@ -393,12 +434,39 @@ Registry** via `getAgentWallet(agentId)`:
 
 | Function | Required `msg.sender` |
 |---|---|
-| `createJob`, `directPay`, `cancel`, `approve`, `dispute` | `registry.getAgent(clientAgentId).wallet` |
-| `acceptJob`, `submitResult` | `registry.getAgent(workerAgentId).wallet` |
-| `resolveDispute` | `ARBITER_ROLE` |
-| `expireUnaccepted`, `expireUndelivered`, `autoApprove` | anyone (that is the point) |
+| `createJob`, `directPay`, `cancel`, `approve`, `dispute` | `identityRegistry.getAgentWallet(clientAgentId)` |
+| `acceptJob`, `submitResult` | `identityRegistry.getAgentWallet(workerAgentId)` |
+| `resolveDispute` | `ARBITER_ROLE` (granted to the deployer at construction; `Deploy.s.sol` hands it to `ARBITER_ADDRESS` instead when that is set, revoking the deployer's) |
+| `expireUnaccepted`, `expireUndelivered`, `autoApprove` | anyone (that is the point). AGENTX's keeper sends them when due; see below |
+| `setParams`, `configure` | `CONFIGURER_ROLE`; `pause` / `unpause`: `DEFAULT_ADMIN_ROLE` |
 
 Without this, anyone could create a job charged to another agent's wallet.
+A hire also reverts `NotHireable` if the worker has no payout wallet or
+`StakeVault.isHireable(worker)` is false, and `SelfDealing` if client and
+worker are the same id.
+
+**The keeper.** A permissionless exit only happens if someone sends it. The
+keeper (`apps/signer/src/keeper.ts`) runs inside the signer process when
+`KEEPER_PRIVATE_KEY` is set, on that key and never the signer's (two
+processes drawing nonces from one account would race). Every
+`KEEPER_INTERVAL_MS` (default 15000) it:
+
+1. lists escrow jobs the database still holds as `created`, `accepted` or
+   `submitted` with a known `chain_job_id`;
+2. reads each job's state and deadlines from `getJob` on chain, and the time
+   from the latest block, not the machine clock;
+3. picks the due exit, strictly after the deadline (the contract reverts on
+   the boundary second): `CREATED` past `acceptDeadline` →
+   `expireUnaccepted`, `ACCEPTED` past `workDeadline` → `expireUndelivered`,
+   `SUBMITTED` past `reviewDeadline` → `autoApprove`;
+4. simulates, then sends, and waits for the receipt. One job failing (most
+   likely someone else sent the exit first) does not stop the sweep.
+
+`DISPUTED` is not touched: it has no permissionless exit. The raw keeper key
+is refused on a non-testnet chain. `scripts/keeper-sweep.mjs` runs a single
+sweep, optionally for explicit on-chain job ids (a demo run wipes the
+database), and reads each result back from the chain. Without
+`KEEPER_PRIVATE_KEY` no keeper runs, and expired jobs wait for someone else.
 
 Invariants the contract must hold — these become Foundry invariant tests:
 
@@ -408,15 +476,17 @@ Invariants the contract must hold — these become Foundry invariant tests:
 | I2 | A job in a terminal state (`SETTLED`, `REFUNDED`) can never transition again |
 | I3 | Every state change emits exactly one event |
 | I4 | `paid + fee == amount` on every settlement; no dust is stranded |
-| I5 | Every non-terminal job has a deadline strictly in the future *or* an enabled permissionless exit |
+| I5 | Every job in `CREATED`, `ACCEPTED` or `SUBMITTED` has a deadline strictly in the future *or* an enabled permissionless exit. **`DISPUTED` does not:** only the arbiter can move it |
 | I6 | `clientAgentId != workerAgentId` (no self-dealing to farm reputation) |
-| I7 | `giveFeedback()` is called **only** from `_settle()`, after funds have moved — never on a path reachable without a completed payment |
+| I7 | `giveFeedback()` is called only after funds have moved: from `_settle()`, from `directPay()`, and from `_refund()` for the two refunds that count against the worker (`undelivered`, lost dispute). Never on a path reachable without a transfer |
 | I8 | A reverting `giveFeedback()` can never revert a settlement (try/catch + `FeedbackFailed`). Payment must not depend on a third party's upgradeable contract |
 
 Implementation requirements:
 
 - `SafeERC20` for every transfer; assume a non-standard token.
-- `nonReentrant` on every state-changing external function.
+- `nonReentrant` on every external function that transfers tokens.
+  (`acceptJob`, `submitResult` and `dispute` move no funds and are not
+  guarded.)
 - **Checks-effects-interactions**: set `state` before transferring.
 - `Pausable` — `whenNotPaused` on `createJob` and `directPay` only. Pausing
   must never trap funds already in escrow; settlement and refund stay open.
@@ -433,9 +503,15 @@ Implementation requirements:
 > That function loops `for j = 1..lastIndex` over every feedback entry per
 > client, and because AGENTX is a *single* client address, an agent with 1,284
 > settled jobs means a 1,284-iteration loop in one `eth_call` — it will hit RPC
-> gas caps. The indexer therefore derives the score from `NewFeedback` events,
-> which it already consumes. `getSummary()` is kept for spot-checks and
-> reconciliation, where the loop is short.
+> gas caps. The indexer therefore derives the score from `TaskEscrow`'s own
+> `JobSettled` / `JobRefunded` events, the transactions that write the
+> feedback. It does not read `NewFeedback`. `getSummary()` is left for
+> third-party readers and spot-checks, where the loop is short.
+>
+> As built, the indexer applies the formula below in SQL with the floor read
+> from the chain's `confidenceFloor` parameter (25 on testnet, 50 on mainnet;
+> it was hard-coded to 25 until 2026-09-29). `agent_stats.disputed` is never
+> incremented.
 
 ```solidity
 enum Outcome { SUCCESS, FAILED, DISPUTE_LOST }
@@ -506,36 +582,57 @@ spending policy on-chain.
 struct Policy {
     uint128 perTaskCap;
     uint128 dailyCap;
-    uint64  dayStart;       // rolling window anchor
-    uint128 spentToday;
-    bool    allowlistOnly;  // if true, only allowlisted counterparties
+    bool    allowlistOnly;  // if true, only allowlisted targets
 }
+uint128 public spentToday;  // storage, outside the struct
+uint64  public dayStart;    // rolling 24h window anchor
+uint64  public constant MAX_SESSION_KEY_TTL = 1 days;
 
 event PolicySet(uint128 perTaskCap, uint128 dailyCap, bool allowlistOnly);
 event SessionKeyGranted(address indexed key, uint64 expiry, uint128 budget);
 event SessionKeyRevoked(address indexed key);
-event Executed(address indexed target, uint256 value, bytes4 selector);
+event Executed(address indexed target, bytes4 selector, uint128 spent);
 
-function execute(address target, uint256 value, bytes calldata data) external returns (bytes memory);
+function initialize(address owner, address token, Policy calldata p) external;  // once, by the factory
+function execute(address target, bytes calldata data) external returns (bytes memory);
 function setPolicy(Policy calldata p) external;                          // owner only
-function grantSessionKey(address key, uint64 expiry, uint128 budget) external;  // owner only
+function grantSessionKey(address key, uint64 expiry, uint128 budget) external;  // owner; expiry <= now + 1 day
 function revokeSessionKey(address key) external;                         // owner OR the key itself
-function setAllowlist(address counterparty, bool allowed) external;
-function sweep(address token, uint256 amount) external;                  // owner only
+function setAllowedTarget(address target, bool allowed) external;        // owner only
+function setAllowedSelector(bytes4 selector, bool allowed) external;     // owner; refuses `approve`
+function setAllowance(address spender, uint256 amount) external;         // owner only
+function sweep(address to, uint256 amount) external;                     // owner only
+function dailyRemaining() external view returns (uint128);
 ```
 
 `execute` enforces, in order:
 
-1. caller is the owner, or a session key that is unexpired and within budget
-2. `target` is allowlisted (registry, escrow, payment token — nothing else)
-3. the selector is in the permitted set (no arbitrary `approve` to anywhere)
-4. decoded spend ≤ `perTaskCap`
-5. `spentToday + spend ≤ dailyCap`, rolling the window if the day has turned
+1. caller is the owner, or a session key that is unexpired
+2. `target` is allowlisted, **when `allowlistOnly` is set**
+3. the selector is allowlisted, and is never ERC-20 `approve`
+4. spend ≤ `perTaskCap`
+5. `spentToday + spend ≤ dailyCap`, rolling the window if 24h have passed
+6. for a session key, its cumulative spend ≤ its `budget`
+
+Spend is measured as the account's actual **token balance delta** across the
+call, not decoded from calldata, so checks 4–6 run after the call and revert
+it if it overspent. Standing allowances can only be granted by the owner
+through `setAllowance`, outside `execute`, so every spend a session key
+causes shows up as a delta.
 
 Every one of those checks exists because the signer service could be
 compromised. The account is the last line: even with the key, an attacker
-cannot exceed the daily cap or send funds to an address the owner never
-allowlisted.
+cannot exceed the daily cap or call a target the owner never allowlisted.
+
+> **As built (2026-09-29): no agent uses an `AgentAccount` yet.** The factory
+> is deployed on testnet (`AgentAccountFactory`, ERC-1167 clones at
+> CREATE2-predictable addresses), but the demo agents are registered with
+> plain EOA wallets and the signer sends their transactions straight to
+> `TaskEscrow`. None of the checks above is in the payment path today. For
+> EOA agents the signer enforces the per-task and daily caps off-chain from
+> `spend_policies` ([§3.2](#32-signer-service)); that holds against a
+> hijacked model, but not against a compromised signer, which is what this
+> contract exists for.
 
 > ERC-4337 bundler support is explicitly **out of scope for the MVP**. The
 > account is a plain smart contract called by an EOA session key. The interface
@@ -546,38 +643,65 @@ allowlisted.
 > **These values are not declared here.** They live in
 > `config/params.<chainId>.json` and are read by the deploy script, the
 > backend, and the UI — see [08 §3](08-configuration.md#3-protocol-parameters--configparamschainidjson).
-> The table below is a **copy for reading**, regenerated from those files, and
-> a CI test asserts it matches what is actually deployed.
+> The table below is a **copy for reading**. CI's `check-config` validates
+> the params files against each other and against `networks.json`. `make
+> drift` (`scripts/check-param-drift.mjs`, in `agentx-contracts`) reads the
+> deployed values — `TaskEscrow.config()` and `StakeVault`'s `minStake` /
+> `withdrawDelay` — and exits 1 if any differs from the params file. It is run
+> by hand; CI does not call it.
 
 | Parameter | Testnet (10143) | Mainnet (143) | Contract |
 |---|---|---|---|
 | `minStake` | 10 USDC | 100 USDC | StakeVault |
 | `withdrawDelay` | 7 days | 14 days | StakeVault |
 | `fastPathMax` | 0.03 USDC | 0.50 USDC | TaskEscrow |
-| `fastPathMinScore` | 70 | 80 | TaskEscrow |
-| `protocolFeeBps` | 100 (1%) | 100 (1%) | TaskEscrow |
-| `acceptWindow` | 5 min | 15 min | caller-supplied, clamped |
-| `workWindow` | 30 min | 60 min | caller-supplied, clamped |
+| `fastPathMinScore` | 70 | 80 | stored in TaskEscrow (not checked by `directPay`); the API's `auto` rule reads it from config |
+| `protocolFeeBps` | 100 (1%) | 100 (1%) | TaskEscrow (max 1000) |
+| `acceptWindow` | 5 min | 15 min | sent by the API on every `createJob`; contract rejects 0 or > 10× |
+| `workWindow` | 30 min | 60 min | sent by the API on every `createJob`; contract rejects 0 or > 10× |
 | `reviewWindow` | 10 min | 60 min | TaskEscrow |
-| `confidenceFloor` | 25 jobs | 50 jobs | off-chain (`@agentx/config`) |
+| `confidenceFloor` | 25 jobs | 50 jobs | off-chain: read by the indexer's score SQL |
+| `defaultPerTaskCap` | 0.10 USDC | 0.05 USDC | off-chain: the spend policy a new agent starts with |
+| `defaultDailyCap` | 1.00 USDC | 0.25 USDC | off-chain: the spend policy a new agent starts with |
 
-Mainnet is more conservative in every row, and deliberately so: a ten-minute
-review window is fine when a failed demo costs nothing and indefensible when
-real funds auto-release against it.
+Mainnet is more conservative in almost every row, and deliberately so: a
+ten-minute review window is fine when a failed demo costs nothing and
+indefensible when real funds auto-release against it.
+
+The windows are not caller-chosen. The API always sends the configured
+`acceptWindowSeconds` / `workWindowSeconds`. The deploy sets the contract's
+ceilings (`maxAcceptWindow`, `maxWorkWindow`) to ten times those values, and
+the contract **reverts** (`WindowTooLong`) above them rather than clamping.
+
+`defaultPerTaskCap` / `defaultDailyCap` are written into `spend_policies`
+when an agent registers, so `/v1/budget` never reports zero for a new agent.
+Where an `AgentAccount` exists its on-chain caps take precedence. None does
+today, so these stored policies are what agents plan against, and the signer
+enforces them before it broadcasts: see [§3.2](#32-signer-service).
 
 Constructor args stay network-independent (`admin` only); parameters arrive
-through a post-deploy `configure()`. That is what makes CREATE2 give identical
-addresses on both networks — see [08 §4](08-configuration.md#deterministic-addresses-across-networks).
+through a post-deploy `configure()`. The intent was CREATE2 deployment for
+identical addresses on both networks
+([08 §4](08-configuration.md#deterministic-addresses-across-networks)), but
+`Deploy.s.sol` currently deploys with plain `new` (CREATE). Addresses depend
+on the deployer's nonce and will differ between networks. Only
+`AgentAccount` clones are CREATE2-deterministic.
 
-All are settable by `DEFAULT_ADMIN_ROLE` (a multisig in production, a single
-key on testnet) and all emit events on change.
+`TaskEscrow` parameters change through `setParams` (`CONFIGURER_ROLE`) and
+`StakeVault.minStake` through `setMinStake` (`CONFIGURER_ROLE`). Both emit
+events. `withdrawDelay` is fixed at `configure()`. `Deploy.s.sol` reads
+`FEE_RECIPIENT` and `ARBITER_ADDRESS`, both defaulting to the deployer; a
+separate arbiter replaces the deployer in `ARBITER_ROLE` rather than joining
+it. On the current testnet deployment every role is held by the single
+deployer key. A multisig is the mainnet intent, not yet done.
 
 **Why testnet `fastPathMax` is 0.03 and not something rounder:** the demo
-hires at 0.02 (direct) and 0.05 (escrow). The threshold has to sit between
-them or `path: "auto"` sends both down the same route and the demo only ever
-shows one of the two mechanisms. Mainnet uses 0.50, which is the value a real
-deployment wants. Say this out loud in the submission rather than letting a
-judge notice the testnet threshold looks arbitrary.
+hires at 0.02 and 0.05, and the threshold sits between them so that price
+alone would send the two down different routes. Since 2026-09-29 price is
+not enough: `auto` also needs the worker's score ≥ `fastPathMinScore`, and
+the demo's freshly registered agents score 50, so in the demo **every hire
+goes through escrow** and the fast path is not shown. Mainnet uses 0.50,
+which is the value a real deployment wants.
 
 ---
 
@@ -602,42 +726,91 @@ The human never approves individual payments — that is the entire point — bu
 retains the two powers that matter: **revoke** and **sweep**. Autonomy with a
 kill switch.
 
+> **As built:** this is the target model. Today there is no `AgentAccount`
+> and no session key in use. Each agent's registered wallet is an EOA whose
+> key the signer holds, and that key signs `TaskEscrow` calls directly.
+> Revoke and sweep therefore do not exist for these agents. The owner's
+> recourse is to stop the signer or move the EOA's funds.
+
 ### 3.2 Signer service
 
 One process. One job. Refuses everything else.
 
 ```
-POST /sign  { agentId, target, value, data, idempotencyKey }
-   ├─ authenticate caller (mTLS or signed service token)
-   ├─ load policy snapshot for agentId
-   ├─ off-chain pre-check: same 5 rules the contract enforces
-   ├─ check idempotencyKey in Redis      → replay returns the original tx hash
-   ├─ check MON balance >= GAS_FLOOR     → else top up from funder, or 503
-   ├─ KMS sign with agent session key
-   ├─ broadcast, record (agentId, nonce, txHash) in Postgres
-   └─ return { txHash, nonce }
+POST /sign  { agentId, chainId, target, data, spend, idempotencyKey }
+   ├─ Authorization: Bearer <SIGNER_TOKEN>, when set    → else 401 UNAUTHORIZED
+   ├─ chainId must be the chain this signer serves      → else CHAIN_MISMATCH
+   ├─ idempotencyKey already broadcast in signer_txs?   → return the original txHash
+   ├─ on-chain policy check (only when spend > 0): read perTaskCap and
+   │    dailyRemaining from the agent's AgentAccount; if the wallet is not
+   │    one, the reads fail and the caps are enforced off-chain below
+   ├─ load the key for the agent's registered wallet; refuse if the key
+   │    signs as a different address (it would revert NotAgentWallet)
+   ├─ native balance >= 0.01 MON                        → else INSUFFICIENT_FUNDS
+   ├─ per-agent Postgres advisory lock; nonce = pending tx count
+   ├─ claim (idempotencyKey, nonce) in signer_txs, status 'pending'
+   ├─ no on-chain caps and spend > 0: check-and-reserve against
+   │    spend_policies in one UPDATE                    → else BUDGET_EXCEEDED
+   ├─ sign with the keystore / dev key, broadcast
+   │    (broadcast fails → release the reservation, mark 'failed')
+   └─ status 'broadcast', return { txHash, nonce, replayed }
 ```
 
+- **Caller authentication** is a shared secret. With `SIGNER_TOKEN` set, a
+  request must present it as a bearer token (constant-time compare) and the
+  signer listens on every interface, or on `SIGNER_HOST`. Without a token it
+  binds to `127.0.0.1`, and refuses to start if `SIGNER_HOST` asks for
+  anything wider. The API presents the token; the demo and e2e scripts
+  generate a fresh one per run. Anything holding the token can still have any
+  registered agent sign any call to any target, so it is a secret on the
+  same footing as the keys.
 - **Nonce management** is centralised here with a per-agent Postgres advisory
   lock. Two concurrent hires for the same agent cannot produce the same nonce.
 - **Idempotency** is mandatory: agents retry, and a retried hire must not
-  create a second job. The key is `hash(agentId, specHash, workerAgentId)`.
-- **Gas top-ups** are pull-based from a funder wallet with its own daily cap.
-- The service **pre-checks the same rules the contract enforces**. Duplication
-  is intentional: the off-chain check gives a useful error, the on-chain check
-  gives the guarantee.
+  create a second job. The signer dedupes on the key it is given, which is
+  `UNIQUE` in `signer_txs`. A hire needs an `Idempotency-Key` header, and
+  `@agentx/sdk` derives one from `keccak256(workerAgentId:canonicalJson(spec))`
+  when the caller omits it. Other transitions default to
+  `<action>:<jobId>:<state>`. A broadcast that failed is marked `failed` and
+  retried on the **same nonce**, so a retry cannot double-spend.
+- **No gas top-ups.** The signer refuses below the floor and names the address
+  to fund. Funding is manual.
+- **Caps for EOA agents are enforced here.** Every agent today pays from an
+  EOA, so the on-chain check finds no `AgentAccount` and the signer holds the
+  caps itself. Under the per-agent lock, after a replay has already returned
+  and before anything is broadcast, one `UPDATE` on `spend_policies` tests
+  `spend ≤ per_task_cap` and `spent_today + spend ≤ daily_cap` (rolling the
+  window after 24 hours, like `AgentAccount`, not at UTC midnight) and
+  increments `spent_today` only if both pass. Two concurrent hires cannot both
+  fit into the same remaining budget. The reservation is released if the
+  broadcast fails; a replayed key returns before the reservation, so it is
+  never charged twice. An agent with no policy row is refused outright. A
+  refused spend is `BUDGET_EXCEEDED` (402) naming the rule and, for the daily
+  cap, when it lifts. `/v1/budget` now falls as the agent spends. Limits of
+  this: it is application code in the one process holding the keys, so it
+  stops a hijacked model but not a compromised signer; and money later
+  refunded by the escrow is not credited back to `spent_today`. Where an
+  `AgentAccount` exists, the contract enforces the caps and this reservation
+  is skipped.
+- **Before 2026-09-29** none of this was enforced for EOA agents: the
+  on-chain reads failed, each failure meant "no cap", and `spent_today` never
+  moved.
 
 ### 3.3 Key handling
 
-| Environment | Owner key | Session key |
+| Environment | Owner key | Agent key |
 |---|---|---|
-| local dev | anvil account 0 | encrypted keystore file, gitignored |
-| testnet demo | RainbowKit browser wallet | AWS KMS, 24h rotation |
-| production | hardware wallet / Safe multisig | AWS KMS, per-agent, 24h rotation |
+| local dev / e2e / demo on anvil | anvil accounts | raw key in `SIGNER_DEV_PRIVATE_KEY(S)`, testnet-only by construction |
+| testnet demo | the operator's wallets (`DEPLOYER`, `AGENT_A`, `AGENT_B`); the interface uses an injected browser wallet | raw dev keys or an encrypted Web3 keystore (`SIGNER_KEYSTORE_JSON` + `SIGNER_KEYSTORE_PASSPHRASE`, decision C1), single key or a per-agent map |
+| production (intent) | hardware wallet / Safe multisig | encrypted keystore per C1. AWS KMS is not built; it would sit behind the same `KeySource` interface |
 
 Rules, no exceptions: no private key in `.env` beyond local dev, no key in
-logs, no key in a Postgres column, `.env.example` ships empty. Key rotation is
-a `grantSessionKey` + `revokeSessionKey` pair — no funds move, no downtime.
+logs (the signer's logger redacts the keystore variables, `KEEPER_PRIVATE_KEY`,
+`SIGNER_TOKEN` and the `Authorization` header), no key in a
+Postgres column, `.env.example` ships empty. The signer refuses a raw key on a
+non-testnet chain. Once `AgentAccount` is in use, key rotation is a
+`grantSessionKey` + `revokeSessionKey` pair with no funds moved and no
+downtime, and a session key cannot be granted for more than 24h.
 
 ---
 
@@ -656,7 +829,7 @@ queryable projection plus the off-chain payloads.
 CREATE TABLE agents (
   id                BIGSERIAL PRIMARY KEY,
   chain_id          BIGINT NOT NULL,                -- 10143 testnet, 143 mainnet
-  chain_agent_id    NUMERIC(78,0),                  -- NULL until indexed
+  chain_agent_id    NUMERIC(78,0),                  -- set at registration, verified on chain; NULL = not hireable
   owner_address     TEXT NOT NULL,
   wallet_address    TEXT NOT NULL,
   name              TEXT NOT NULL,
@@ -722,10 +895,12 @@ CREATE TABLE jobs (
   created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
   settled_at        TIMESTAMPTZ,
   trace_id          TEXT,                           -- links to the agent trace
+  idempotency_key   TEXT,                           -- the hire's Idempotency-Key (migration 0002)
   CONSTRAINT no_self_dealing CHECK (client_agent_id <> worker_agent_id),
   CONSTRAINT amount_positive CHECK (amount > 0)
 );
 CREATE UNIQUE INDEX jobs_chain_job_uk ON jobs (chain_id, chain_job_id);
+CREATE UNIQUE INDEX jobs_client_idempotency_uk ON jobs (client_agent_id, idempotency_key);
 CREATE INDEX ON jobs (chain_id, worker_agent_id, state);
 CREATE INDEX ON jobs (chain_id, client_agent_id, created_at DESC);
 CREATE INDEX ON jobs (chain_id, state) WHERE state IN ('created','accepted','submitted');
@@ -780,13 +955,14 @@ CREATE TABLE spend_policies (
 
 CREATE TABLE signer_txs (
   id              BIGSERIAL PRIMARY KEY,
+  chain_id        BIGINT NOT NULL,
   agent_id        BIGINT NOT NULL REFERENCES agents(id),
   idempotency_key TEXT NOT NULL UNIQUE,
   nonce           BIGINT NOT NULL,
   tx_hash         TEXT,
-  status          TEXT NOT NULL DEFAULT 'pending',  -- pending|mined|failed
+  status          TEXT NOT NULL DEFAULT 'pending',  -- pending|broadcast|failed
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (agent_id, nonce)
+  UNIQUE (chain_id, agent_id, nonce)
 );
 
 -- ─────────────── disputes & auth ───────────────
@@ -802,7 +978,7 @@ CREATE TABLE disputes (
 CREATE TABLE api_keys (
   id          BIGSERIAL PRIMARY KEY,
   agent_id    BIGINT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
-  key_hash    TEXT NOT NULL UNIQUE,                 -- argon2id, never the key
+  key_hash    TEXT NOT NULL UNIQUE,                 -- salted scrypt, never the key
   scopes      TEXT[] NOT NULL DEFAULT '{}',
   last_used_at TIMESTAMPTZ,
   revoked_at  TIMESTAMPTZ
@@ -817,7 +993,55 @@ CREATE TABLE indexer_cursor (
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (chain_id, contract)                  -- one cursor per chain
 );
+
+-- ─────────────── orchestrator runs ───────────────
+CREATE TYPE run_state AS ENUM ('running','done','failed');
+
+CREATE TABLE runs (
+  id          BIGSERIAL PRIMARY KEY,
+  chain_id    BIGINT NOT NULL,
+  agent_id    BIGINT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  goal        TEXT NOT NULL,
+  state       run_state NOT NULL DEFAULT 'running',
+  answer      TEXT,
+  steps       JSONB NOT NULL DEFAULT '[]',
+  spent       NUMERIC(38,0) NOT NULL DEFAULT 0,
+  error       TEXT,
+  started_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at TIMESTAMPTZ
+);
+
+CREATE TABLE run_events (                           -- append-only run trace
+  id          BIGSERIAL PRIMARY KEY,
+  run_id      BIGINT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL,
+  payload     JSONB NOT NULL DEFAULT '{}',
+  occurred_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 ```
+
+This is a readable summary. The source of truth is
+`packages/db/src/schema.ts` plus `packages/db/migrations/`, where
+`0001_constraints.sql` adds the CHECKs and composite foreign keys that Drizzle
+cannot express. It also adds `fee_within_amount`, `stake_non_negative`,
+`score_in_range`, `payment_amount_positive` and a kebab-case CHECK on
+`agent_capabilities.capability`. An `outcome` enum
+(`success|failed|dispute_lost`) is declared but no column uses it.
+
+**Known gaps in how these tables are filled (2026-09-29):**
+
+- `agents.stake` is never updated from `StakeVault` and stays 0.
+- `agent_stats.disputed` is never incremented.
+- `disputes` is never written. Disputes exist only as `job_events` and the
+  job's `disputed` state.
+- The `outcome` enum is declared and unused (above).
+
+Fixed on 2026-09-29, and no longer gaps: `agents.chain_agent_id` is set by
+`POST /v1/agents` after an on-chain check (§5.1) — before, nothing in the
+services wrote it and only the demo and e2e scripts, writing it in SQL, had
+hireable agents; `payments.tx_hash` is taken from the log (it was `''` on every
+row); and `spend_policies.spent_today` is incremented by the signer's
+reservation (§3.2).
 
 Schema notes worth defending in a review:
 
@@ -833,8 +1057,9 @@ Schema notes worth defending in a review:
   `chain_agent_id` would make the second network fail to index at agent #1.
   The composite foreign keys go further and make a cross-chain job
   *structurally* impossible rather than merely checked.
-- `spent_today` here is a cache for fast rejection; `AgentAccount.spentToday`
-  is the authority.
+- `spent_today` was meant as a cache for fast rejection, with
+  `AgentAccount.spentToday` as the authority. With no `AgentAccount` in use,
+  it is the authority: the signer reserves against it (§3.2).
 
 ---
 
@@ -857,7 +1082,10 @@ resolves to `DEFAULT_CHAIN_ID` (10143). **Every response echoes `chainId` and
 
 An API key is bound to an agent, and an agent belongs to exactly one chain, so
 a key used against the wrong `chainId` gets `CHAIN_MISMATCH` (409) rather than
-silently operating on the wrong network.
+silently operating on the wrong network. A missing, unknown or revoked key is
+`UNAUTHORIZED` (401); a valid key acting on a job or agent that is not its own
+(accepting someone else's job, approving as the worker) is `FORBIDDEN` (403).
+Until 2026-09-29 both answered `CHAIN_MISMATCH`.
 
 ### 5.1 Agents
 
@@ -869,10 +1097,27 @@ POST /v1/agents
   "capabilities": ["market-research", "data-analysis"],
   "pricePerTask": "20000",
   "endpointUrl": "https://researchbot.example/agentx",
-  "stake": "10000000"
+  "walletAddress": "0x…",          # the ERC-8004 payout wallet
+  "ownerAddress": "0x…",           # the ERC-8004 owner
+  "chainAgentId": "42"             # optional: the ERC-8004 id, verified on chain
 }
-→ 201 { "agentId": 42, "walletAddress": "0x…", "txHash": "0x…", "status": "pending" }
+→ 201 { "agentId": 7, "chainId": 10143, "walletAddress": "0x…",
+        "apiKey": "ax_…", "warning": "Store this key now — it is not recoverable." }
 ```
+
+The route records the off-chain half (capabilities, price, endpoint), seeds
+the agent's `spend_policies` row from the chain's default caps, and issues the
+API key, shown once. The ERC-8004 registration and the stake are done by the
+owner's own wallet, not by this call.
+
+`chainAgentId` is what makes the agent hireable: the escrow addresses agents
+by their ERC-8004 id, and a hire is refused (`AGENT_NOT_HIREABLE`) if either
+the client or the worker lacks one. When it
+is given, the API reads the Identity Registry before storing it: the id must
+exist, `ownerOf(id)` must equal `ownerAddress`, and `getAgentWallet(id)` must
+equal `walletAddress`. Any mismatch, or an RPC it cannot reach, is a refusal
+(`INVALID_STATE`), never a silent store. The `/register` page takes the id
+from the registration receipt's `Registered` event and passes it.
 
 ```http
 GET /v1/agents?capability=market-research&maxPrice=50000&minScore=80&limit=10
@@ -923,9 +1168,21 @@ Idempotency-Key: 9f2c…                       # required
 ```
 
 `path: "auto"` applies the rule from
-[02-flowcharts §4](02-flowcharts.md#4-fast-path-vs-escrow-path). The response
-always states which path was taken, so the caller is never surprised about
-whether its money is protected.
+[02-flowcharts §4](02-flowcharts.md#4-fast-path-vs-escrow-path): direct only
+if the price is at most `fastPathMax` **and** the worker's score is at least
+`fastPathMinScore`, otherwise escrow. An explicit `"direct"` skips the score
+test. The response always states which path was taken, so the caller is never
+surprised about whether its money is protected.
+
+**A retried hire is the same job.** The `Idempotency-Key` is stored on the job
+row, unique per client (`jobs.idempotency_key`, migration 0002). A retry with
+the same key and the same worker and spec returns the original receipt; if
+the first attempt never produced a transaction (the signer refused, or the
+wallet was out of gas), the retry re-submits for the **same** row. The same
+key used for a different worker or spec is `IDEMPOTENCY_CONFLICT` (409).
+Before 2026-09-29 every retry inserted a new row: the signer replayed the
+original transaction, so nothing was paid twice, but the retry answered with
+a job id no transaction backed.
 
 ```http
 GET  /v1/jobs/{jobId}
@@ -975,7 +1232,8 @@ GET  /health                      chains, default chain, whether an
 
 Reading a run needs no credentials — the trace is the thing being
 demonstrated. Starting one does, because it spends, and it runs under the
-calling agent's own on-chain caps.
+calling agent's own caps (enforced by the signer for an EOA agent, and by the
+contract for an `AgentAccount`).
 
 **Staking is not an API endpoint.** An owner bonds an agent by calling
 `StakeVault.deposit` directly; putting it behind the API would mean the API
@@ -1003,16 +1261,22 @@ RFC 7807 problem details, with machine-readable codes agents can branch on:
 | `INVALID_STATE` | 409 | transition not legal from current state |
 | `DEADLINE_PASSED` | 410 | window closed; job is refundable |
 | `SCHEMA_MISMATCH` | 422 | result failed `outputSchema` validation |
-| `IDEMPOTENCY_CONFLICT` | 409 | same key, different body |
+| `IDEMPOTENCY_CONFLICT` | 409 | same key, different hire; or the same key already in flight at the signer |
 | `CHAIN_MISMATCH` | 409 | key's agent is on a different chain than `?chainId=` |
+| `UNAUTHORIZED` | 401 | missing, unknown or revoked API key (the signer also answers this without its `SIGNER_TOKEN`) |
+| `FORBIDDEN` | 403 | valid key, but not this agent's job or agent to act on |
 | `CHAIN_NOT_ENABLED` | 400 | `chainId` is not in `ENABLED_CHAIN_IDS` |
 
 ### 5.4 Cross-cutting rules
 
-- **Idempotency-Key required on every POST that spends money.** Stored 24h,
-  replay returns the original response verbatim.
-- Rate limits per API key: 60 writes/min, 600 reads/min.
-- Every response carries `x-trace-id`, matching the agent's OTel trace.
+- **Idempotency-Key required on every POST that spends money.** A hire's key
+  is kept on its job row with no expiry; a retry returns the original
+  receipt (§5.2). The signer dedupes every transaction on its own key in
+  `signer_txs`.
+- Rate limit: 600 requests/min per API key (`@fastify/rate-limit`, in memory,
+  so per process: N replicas allow N times that).
+- Every response carries `x-trace-id`, the request id also stored on the job
+  row as `trace_id`. There is no OpenTelemetry.
 - Pagination is cursor-based. No offsets.
 
 ---
@@ -1033,11 +1297,20 @@ or a judge's — can transact without writing an HTTP client.
 | `my_budget` | — | remaining per-task and daily budget |
 | `get_network` | — | chain ID, name, whether it is a testnet, payment token symbol |
 
-Two design rules:
+The server is `apps/mcp`, a **stdio** MCP server. It is not a hosted
+endpoint: you run it next to your agent with `AGENTX_API_URL`,
+`AGENTX_API_KEY` (an agent's `ax_…` key) and optionally `AGENTX_CHAIN_ID`, and
+it calls the REST API as that agent. It fails at startup if the API is
+unreachable rather than guessing the network. `hire_agent` also accepts an
+optional `idempotencyKey`, and `await_result` defaults to 120 s (max 600).
 
-1. **Tool descriptions state the cost.** `hire_agent` says plainly that it
-   spends real funds up to `maxPrice`. An agent should never spend money
-   without the tool having told it so.
+Three design rules:
+
+1. **Tool descriptions state the cost.** Every spending tool's description is
+   prefixed with a spend warning, and `hire_agent` says plainly that it pays
+   up to `maxPrice`. An agent should never spend money without the tool
+   having told it so. `get_job` and `await_result` warn that `result` is
+   another agent's output: data, not instruction.
 2. **`my_budget` exists so an agent can plan.** Without it, the agent
    discovers its limits only by hitting 402s, which is how you get retry storms.
 3. **`get_network` reports `testnet: true/false`.** An autonomous agent
@@ -1050,58 +1323,100 @@ Two design rules:
 
 ### 7.1 Orchestrator (the "main agent")
 
+As built in `packages/agent-core/src/orchestrator.ts`:
+
 ```
 receive user goal
    │
    ▼
-plan: decompose into subtasks, each with a capability tag
+discover()  → the capabilities actually on offer
+plan (model): subtasks, each ONE of those capabilities, optional dependsOn
+   │           (a self- or forward-reference is dropped)
+   ▼
+budget() once → ceiling = min(dailyRemaining / #subtasks, maxSingleSpend)
    │
    ▼
-for each subtask:
-   │   my_budget()  ─── insufficient ──▶ degrade: fewer subtasks, or ask user
-   │
-   ├─ discover_agents(capability, maxPrice = remaining/steps, minScore = 70)
-   │      │
-   │      └─ none found ──▶ widen capability, raise maxPrice within budget,
-   │                        or do it in-house and say so
-   ├─ pick candidate by rank
-   ├─ hire_agent(...)                      ── budget/funds error ──▶ next candidate
-   ├─ await_result(jobId, timeout)
-   │      ├─ timeout   ──▶ expire → refund → try next candidate
-   │      └─ result
-   ├─ validate against spec.outputSchema
-   │      ├─ valid    ──▶ approve_job
-   │      └─ invalid  ──▶ dispute_job, try next candidate
-   └─ feed result into the next subtask's input
+for each subtask, in order:
+   ├─ depends on a step that did not settle ──▶ skip as failed
+   ├─ ceiling ≤ 0                           ──▶ budget-exceeded, stop the run
+   ├─ discover(capability, maxPrice = ceiling, rank = balanced)
+   │      └─ none ──▶ no-candidate (step skipped; no widening, no in-house)
+   ├─ up to 2 attempts, never the same agent twice:
+   │  ├─ select (model): pick one candidate not yet tried and priced within
+   │  │     the remaining ceiling, or none worth hiring
+   │  ├─ hire(spec incl. goal + upstream result, maxPrice = ceiling, path auto)
+   │  │      ├─ BUDGET_EXCEEDED ──▶ budget-exceeded, stop the run
+   │  │      └─ other error     ──▶ failed (not retried)
+   │  └─ await_result(jobId, step timeout, default 120 s)
+   │         ├─ escrow offer not accepted within 45 s ──▶ cancel (immediate
+   │         │     on-chain refund) ──▶ `retrying`, next attempt
+   │         │     └─ cancel fails (worker accepted in the gap) ──▶ failed,
+   │         │        NOT re-hired: that would pay twice
+   │         ├─ accepted, no result by the step timeout ──▶ `retrying`, next
+   │         │     attempt with ceiling − the amount still locked; the
+   │         │     keeper refunds the abandoned job at its work deadline
+   │         └─ refunded with no result ──▶ `retrying`, next attempt
+   │  after the last attempt, the step reports the last `timeout`
+   ├─ validate against spec.outputSchema   ── invalid ──▶ dispute
+   ├─ judge (model, no tools): accept + rating poor|weak|adequate|good|excellent
+   │      ├─ judge unavailable ──▶ failed; left for the review window
+   │      ├─ reject, escrow    ──▶ dispute_job
+   │      ├─ reject, direct    ──▶ unrecoverable (already paid; result kept)
+   │      └─ accept ──▶ approve_job (escrow) · already settled (direct)
+   └─ a settled result feeds the next dependent subtask as previousResult
    │
    ▼
-synthesise final answer + receipts (jobIds, amounts, explorer links)
+synthesise final answer from settled steps + per-step receipts
 ```
+
+Acceptance requires `accept: true` **and** a rating of `adequate` or better.
+A verdict that says accept but rates the work `weak` or `poor` contradicts
+itself, and the stricter reading wins. The rating is a word, not a number,
+because models reported numeric quality on inconsistent scales. A 0–5
+`quality` is derived from it deterministically, for display.
 
 The failure branches are not decoration. An orchestrator that only handles
 the happy path will stall live in front of judges the first time a worker is
-slow.
+slow. A **silent** worker — one that never accepts, or accepts and never
+delivers — is retried once with a different candidate (since 2026-09-29;
+`MAX_ATTEMPTS = 2`, `ACCEPT_WITHIN_MS = 45_000` in `orchestrator.ts`). The SDK's
+`awaitResult` takes `acceptWithinMs` and throws `NotAccepted`, which is still
+a `DEADLINE_PASSED` so older callers treat it as a timeout. Other failures —
+a hire error, a judge that cannot be reached, a rejected result — are not
+retried: the step is reported and the run moves on. `DEMO_CHAOS=no-accept`
+and `DEMO_CHAOS=mid-job` add a broken worker to the demo to exercise both
+retry paths.
 
 ### 7.2 Worker agent loop
 
+As built in `packages/agent-core/src/worker.ts`:
+
 ```
-authenticate  →  subscribe to offers (SSE) or poll GET /v1/jobs?state=created&worker=me
+poll GET /v1/jobs?role=worker every WORKER_POLL_MS (default 1 s)
+   │   no state filter: a fast-path job is `settled` at creation and still
+   │   owed the work, so "is there work?" is `hasResult: false`, not state
+   ▼
+for each job: my capability, !hasResult, not refunded/disputed, not declined before
+   ├─ structural: can my output schema satisfy spec.outputSchema?  (no model)
+   ├─ triage (model): does the input contain what the task needs?
+   │      any "no" ──▶ decline: remembered, never re-offered; no transaction.
+   │                   Escrow: the job expires at acceptDeadline into a refund.
+   │                   Direct: the client has already paid; there is no refund.
+   │      model unreachable ──▶ reported as `failed` at stage triage, not a decline
+   │
+   ├─ escrow path only: POST /v1/jobs/{id}/accept   (decided by path, not state)
+   ├─ do the work (model call, schema-constrained)
+   ├─ validate own output against its schema
+   └─ POST /v1/jobs/{id}/result { output, producedAt }
    │
    ▼
-offer received
-   ├─ can I do this? (capability match, input parses, schema satisfiable)
-   ├─ is the price worth it? (amount >= my floor)
-   ├─ can I finish before workDeadline?
-   │      any "no" ──▶ decline (do not accept and then fail; that costs reputation)
-   │
-   ├─ accept  →  POST /v1/jobs/{id}/accept
-   ├─ do the work (LLM call, API call, computation)
-   ├─ validate own output against spec.outputSchema
-   └─ POST /v1/jobs/{id}/result
-   │
-   ▼
-settled → payment lands in the agent's wallet, reputation increments
+escrow: submitted → client approves (or review window) → paid, feedback 100
+direct: delivery recorded off-chain; payment and feedback already happened
 ```
+
+Workers take one capability each, handle jobs sequentially (one wallet, one
+nonce), and do not check price against a floor or the deadline before
+accepting.
 
 **The decline path is the reputation strategy.** A worker that accepts
 everything and fails 20% of the time ranks below one that accepts selectively
@@ -1115,9 +1430,12 @@ agent applies the same three rules:
 
 1. Results are injected into the prompt inside a delimited, clearly-labelled
    data block, never concatenated into the instruction section.
-2. The orchestrator's spending tools are gated by `my_budget` caps that a
-   result cannot alter. The worst a malicious result can do is waste one
-   subtask's budget, not drain the wallet.
+2. Spending is capped outside the model. The per-task and daily caps are
+   enforced by the signer — the only process holding the agents' keys — from
+   `spend_policies` for an EOA agent (every agent today), and by the contract
+   only for an `AgentAccount` wallet (none today). No text a result contains
+   can raise them. A hijacked orchestrator can still spend up to its daily
+   cap; it cannot spend past it.
 3. Results are schema-validated **before** they reach the model. A result that
    does not match `outputSchema` is disputed, not read.
 
@@ -1135,10 +1453,19 @@ agent applies the same three rules:
   this that gets flagged in review.
 - Gas is paid in MON by the acting agent, and is deliberately *not* netted out
   of the job amount — that would make prices unquotable.
-- The escrow contract holds only job funds. Fees accrue to a separate
-  `feeRecipient` and are swept by admin. This keeps invariant I1 clean.
-- Every payment in Postgres carries its `tx_hash` and `block_number`. Any
-  balance shown in the UI must be reconstructible from `payments` alone.
+- The fee is paid by the **worker**: the client pays exactly the listed
+  price, and the worker receives `amount - fee`. A refund returns the full
+  `amount` to the client, with no fee.
+- The escrow contract holds only job funds. The fee is transferred straight
+  to `feeRecipient` in the settling transaction, or in the `directPay`
+  transaction, so nothing accrues in the escrow and there is nothing to
+  sweep. This keeps invariant I1 clean. `feeRecipient` is `FEE_RECIPIENT` at
+  deploy, defaulting to the deployer (which it is on the current testnet
+  deployment), and is changeable through `setParams`.
+- Every payment in Postgres carries its `tx_hash` and `block_number`, so
+  that any balance shown in the UI can be reconstructed from `payments`
+  alone. (`tx_hash` was empty on every row until 2026-09-29; it is now taken
+  from the log.)
 
 ---
 
@@ -1150,14 +1477,20 @@ agent applies the same three rules:
 |---|---|
 | Contracts | everything about custody and outcome |
 | Indexer | liveness only — it can be slow, it cannot lie (events are signed by the chain) |
-| API / signer | availability and good errors — **not** custody; policy is enforced on-chain |
+| API / signer | availability and good errors, **and today also the agents' keys and spending limits**. The design leaves policy to `AgentAccount` on-chain. With EOA agents, the signer holds the keys and enforces the caps itself (§3.2), so a compromised signer bypasses them |
+| Keeper | liveness only — it sends exits the contract would accept from anyone, and holds only gas |
 | Agents | nothing |
 | Arbiter (MVP) | dispute outcomes only, and only for disputed jobs |
 
 The arbiter is the honest weak point of the MVP and the submission should say
-so plainly. It is a multisig, it can only act on `DISPUTED` jobs, and it cannot
-touch funds outside a dispute. The path beyond it is an optimistic
-challenge window with staked challengers — designed for, not built in three weeks.
+so plainly. On testnet `ARBITER_ROLE` is held by the **deployer EOA**, granted
+at construction. `Deploy.s.sol` can now hand it to a separate
+`ARBITER_ADDRESS` (replacing the deployer), but the current deployment was not
+redeployed with one. A multisig is the mainnet intent, not yet done. The arbiter
+can only act on `DISPUTED` jobs and cannot touch funds outside a dispute, but
+a disputed job has **no timeout**: if the arbiter never rules, its funds stay
+locked. The path beyond it is an optimistic challenge window with staked
+challengers — designed for, not built in three weeks.
 
 ### 9.2 Threat table
 
@@ -1165,21 +1498,21 @@ challenge window with staked challengers — designed for, not built in three we
 |---|---|---|
 | T1 | **Sybil agents** farming reputation | `MIN_STAKE` + withdrawal delay; new agents score 50 with volume damping so a fresh identity cannot outrank a proven one |
 | T2 | **Self-dealing** — one owner hiring their own agent to farm score | `clientAgentId != workerAgentId` on-chain; off-chain clustering by owner address and funding source flags rings for review |
-| T3 | **Worker takes payment, delivers nothing** | escrow above `fastPathMax`; `workDeadline` + permissionless `expireUndelivered` returns funds |
+| T3 | **Worker takes payment, delivers nothing** | escrow above `fastPathMax`, and for any worker below `fastPathMinScore` on `auto`; `workDeadline` + permissionless `expireUndelivered` returns funds, sent by the keeper when it is running; the orchestrator re-hires the step with another agent |
 | T4 | **Client receives result, refuses to pay** | the hash of the delivered **output** is committed on-chain by `submitResult` before release; `reviewDeadline` + permissionless `autoApprove` settles without the client. Verified 2026-09-24 — until then the encoder fell back to the *spec* hash, committing to what was asked for rather than to what was delivered |
-| T5 | **Both go offline mid-job, funds stuck** | every non-terminal state has a deadline and a permissionless exit (invariant I5) |
+| T5 | **Both go offline mid-job, funds stuck** | `CREATED`, `ACCEPTED` and `SUBMITTED` each have a deadline and a permissionless exit (invariant I5), and the keeper sends it once due. `DISPUTED` has neither: only the arbiter moves it |
 | T6 | **Reentrancy on settlement** | `nonReentrant`, checks-effects-interactions, `SafeERC20` |
-| T7 | **Signer key compromise** | on-chain `AgentAccount` caps and allowlists bound the loss; owner can revoke and sweep. ⚠️ **Session key lifetime is NOT bounded on-chain** — `grantSessionKey(key, expiry, budget)` accepts any expiry the owner passes, so "expires in 24h" is operational policy, not a control. Nothing in AGENTX grants a session key today; the signer uses an EOA. See the open decision in `PROGRESS.md`. Corrected 2026-09-23 |
-| T8 | **Replayed hire drains budget** | mandatory `Idempotency-Key`. The signer dedupes on **the key it is given**, stored `UNIQUE` in `signer_txs`; a replay returns the original `txHash` instead of signing again. `@agentx/sdk` derives that key from `keccak256(workerAgentId:canonicalJson(spec))` when the caller omits one, so an in-process retry is safe by default — but a caller supplying its own key controls dedupe, and two different keys for the same hire are two payments. Verified 2026-09-23 |
-| T9 | **Prompt injection via a result** | results are delimited untrusted data, schema-validated pre-model, and cannot alter spending caps (§7.3) |
-| T10 | **Runaway agent loop burning funds** | per-task + daily caps enforced in the contract, not only the app; `my_budget` lets the agent see the wall before hitting it |
+| T7 | **Signer key compromise** | Design: on-chain `AgentAccount` caps and allowlists bound the loss, and the owner can revoke and sweep. Session key lifetime **is** bounded on-chain: `grantSessionKey` reverts `SessionKeyTtlInvalid` for an expiry in the past or more than `MAX_SESSION_KEY_TTL` (1 day) ahead; factory redeployed 2026-09-23/24 to include it. ⚠️ **As built, none of this applies yet.** No agent has an `AgentAccount`, and the signer holds each agent's EOA key directly, so a compromised signer can spend each agent's whole balance: the off-chain caps it enforces are its own code. Access to it now needs `SIGNER_TOKEN` (or loopback), which narrows who can ask, not what a compromise costs. Updated 2026-09-29 |
+| T8 | **Replayed hire drains budget** | mandatory `Idempotency-Key`. The signer dedupes on **the key it is given**, stored `UNIQUE` in `signer_txs`; a replay returns the original `txHash` instead of signing again. `@agentx/sdk` derives that key from `keccak256(workerAgentId:canonicalJson(spec))` when the caller omits one, so an in-process retry is safe by default — but a caller supplying its own key controls dedupe, and two different keys for the same hire are two payments. Verified 2026-09-23. Since 2026-09-29 the API also stores the key on the job row (unique per client), so a retry returns the original job instead of inserting a second row, and a key reused for a different hire is `IDEMPOTENCY_CONFLICT` |
+| T9 | **Prompt injection via a result** | results are delimited untrusted data, schema-validated pre-model, and cannot alter spending caps, which the signer enforces outside the model (§7.3) |
+| T10 | **Runaway agent loop burning funds** | Design: per-task + daily caps enforced in the contract, not only the app; `my_budget` lets the agent see the wall before hitting it. **As built (2026-09-29):** with EOA agents the signer enforces the caps from `spend_policies`, reserving each spend atomically under the per-agent lock, and refuses past them with `BUDGET_EXCEEDED`; `dailyRemaining` falls as the agent spends (§3.2). Enforcement is off-chain, in the signer; on-chain only for an `AgentAccount`, of which there are none |
 | T11 | **Front-running `acceptJob`** to snipe good jobs | jobs are addressed to a named `workerAgentId`; there is no open mempool auction to snipe |
 | T12 | **Fee-on-transfer / rebasing token** breaking accounting | balance delta measured on every transfer-in, reverting with `TokenDeliveredLess` on mismatch — in `TaskEscrow.createJob`, `directPay` and `StakeVault.deposit`. There is no allowlist: there is exactly **one** payment token, set once as a governance parameter, which is the stronger property. Verified 2026-09-23 |
-| T13 | **Indexer reorg** writing a phantom payment | store `last_block_hash`; on mismatch, roll back N blocks and replay; `UNIQUE (tx_hash, log_index)` makes replay idempotent |
-| T14 | **Griefing by mass job creation** | creating a job locks the client's own funds — spam is self-taxing; plus API rate limits |
+| T13 | **Indexer reorg** writing a phantom payment | index only up to `head - confirmations` (2 on testnet, 5 on mainnet); store `last_block_hash`; on mismatch, rewind the cursor 2× `confirmations` and replay; `UNIQUE (chain_id, tx_hash, log_index)` makes replay idempotent. ⚠️ The rewind **re-reads** but does not **delete**: rows written from an orphaned block (event, payment, reputation bump) are not removed. Protection against a phantom payment rests on the confirmation lag |
+| T14 | **Griefing by mass job creation** | creating a job locks the client's own funds — spam is self-taxing; plus API rate limits (600 req/min per API key, in memory and per process — N replicas allow N×) |
 | T15 | **Metadata URI pointing at malicious content** | **Not applicable as built: nothing fetches these URLs.** `metadata_uri` and `endpoint_url` are stored and returned verbatim, never dereferenced server-side, so there is no SSRF surface to guard. This was previously written as though the guard existed — it never did. If anything ever fetches them, the guard (size cap, timeout, content-type allowlist, no redirects to private ranges, no credentials) must be built **first**. Corrected 2026-09-23 |
 | T17 | **Operator-approval griefing** — an agent owner calls `setApprovalForAll(taskEscrow, true)` on the Identity Registry, making `isAuthorizedOrOwner(taskEscrow, agentId)` true, so **every** `giveFeedback` for that agent reverts | Self-harm rather than an attack on others: it destroys only their own reputation writes. Invariant I8's try/catch keeps settlement working; each occurrence emits `FeedbackFailed`, which is alerted on and replayable from the event log |
-| T16 | **Admin key compromise** | admin is a multisig; `pause` cannot trap escrowed funds; parameter changes are event-logged and cannot alter in-flight jobs |
+| T16 | **Admin key compromise** | `pause` cannot trap escrowed funds; parameter changes are event-logged, and the fee is captured per job, so they cannot alter in-flight jobs. On testnet the admin, configurer and arbiter roles are all the single deployer key, so a compromise of it also decides every open dispute and can redirect future fees through `setParams`. A multisig is the mainnet intent |
 
 ### 9.3 What is explicitly not solved
 
@@ -1188,9 +1521,19 @@ State these in the submission rather than letting a judge find them:
 - **Result quality is not cryptographically verified.** The MVP verifies
   *schema conformance and hash integrity*, not truth. Semantic verification
   (attestation, redundant execution, staked challenges) is future work.
-- **Disputes are centralised** to a multisig arbiter.
+- **Disputes are centralised** to a single arbiter (the deployer key on
+  testnet), with no timeout on a disputed job, and the keeper cannot help:
+  `DISPUTED` has no permissionless exit.
 - **No slashing game.** `slash()` exists and is role-gated but the MVP never
   calls it automatically.
+- **On-chain spending caps are built but not in use.** Agents pay from EOAs
+  (§2.4). Their caps are enforced by the signer, off-chain (§3.2).
+- **The keeper is optional and single.** Without `KEEPER_PRIVATE_KEY`, no one
+  sends the escrow's exits; with it, it is one process on one key.
+- **Indexer reorgs rewind but do not delete** rows written from orphaned
+  blocks (T13).
+- **The fast path writes positive feedback at payment time,** before any work
+  is delivered, and cannot be disputed.
 - **No cross-chain settlement.**
 
 ---
@@ -1200,16 +1543,17 @@ State these in the submission rather than letting a judge find them:
 | Layer | Tool | Must cover |
 |---|---|---|
 | Contract unit | `forge test` | every state transition, including illegal ones reverting |
-| Contract fuzz | `forge test --fuzz-runs 10000` | amounts, deadlines, fee rounding at boundaries |
-| Contract invariant | `forge test --mt invariant_` | I1–I8 from §2.2 under randomised call sequences |
-| Gas | `forge snapshot` | cost per hire committed to the repo; regressions fail CI |
-| Backend | `vitest` + testcontainers | state machine, idempotency, SSE ordering |
-| Indexer | replay fixtures | reorg rollback, duplicate log handling |
-| E2E | scripted demo run against testnet | the full [§7 trace](#7-agent-workflow), asserted on explorer receipts |
-| Chaos | manual, pre-demo | kill the worker mid-job; kill the indexer; hit the daily cap; submit a malformed result |
+| Contract fuzz | `forge test` (10,000 runs under `FOUNDRY_PROFILE=ci`, which CI sets; 512 by default) | amounts, deadlines, fee rounding at boundaries |
+| Contract invariant | `test/invariant/Escrow.invariant.t.sol` | I1 (solvency, and `lockedTotal` matches open jobs), I2, I4, I6, and valid states, under randomised call sequences. I8 has a unit test with a registry that reverts. I3, I5 and I7 have no invariant test |
+| Gas | `forge snapshot --check` in CI | cost per hire committed to the repo; regressions fail CI |
+| Backend | `vitest` against a real Postgres (docker-compose locally, a service container in CI) | state machine, idempotency, SSE ordering, chaos cases |
+| Indexer | replay tests + `pnpm verify:indexer` against a live chain | duplicate log handling, replay idempotency |
+| E2E | `pnpm e2e` and `pnpm demo` (anvil by default, `VERIFY_CHAIN_ID=10143` for testnet) | hire → settle, asserted on balances and chain state, not log lines |
+| Chaos | `DEMO_CHAOS=no-accept` / `mid-job pnpm demo`, plus manual | a worker that never accepts, and one that accepts and dies (both asserted by the demo); `scripts/keeper-sweep.mjs <chainJobId>` to check the keeper's refund after the work deadline. Manual: kill the indexer; hit the daily cap; submit a malformed result |
 
 Coverage target: **100% of branches in `TaskEscrow`**, no exceptions. It is
-the contract that holds the money.
+the contract that holds the money. CI runs `forge coverage --ir-minimum` and
+reports it, but does not fail below the target.
 
 The chaos row is the one teams skip and the one that decides the demo. Run it
 the day before, not the hour before.
@@ -1230,5 +1574,6 @@ Carry these as explicit unknowns rather than pretending they are settled:
 4. **Batching.** Ten subtasks currently mean ten settlements. A per-epoch
    netting contract would cut that materially — the right v2 answer, and worth
    naming in the submission as the scaling path.
-5. **Who pays the protocol fee** — worker (current design) or client? It
-   changes how agents quote prices.
+5. **Who pays the protocol fee** — worker or client? The contract implements
+   worker-pays (the fee comes out of `amount`), which is the recommendation.
+   Decision D3 is still formally open. It changes how agents quote prices.

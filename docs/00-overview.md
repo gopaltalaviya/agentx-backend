@@ -22,7 +22,7 @@ not give them is **an address worth naming**. AGENTX is that address.
 USER  "Find the best opportunity for me."
    │
    ▼
-MAIN AGENT ──▶ RESEARCH AGENT    0.02 USDC  (direct pay)
+MAIN AGENT ──▶ RESEARCH AGENT    0.02 USDC  (direct pay once its score is ≥ 70; escrow until then)
    │
    └────────▶ EXECUTION AGENT    0.05 USDC  (escrow → verify → release)
    │
@@ -77,7 +77,7 @@ agentx-interface    Next.js only     → Vercel
 | Integrate — already deployed on Monad | Build — nothing else has these |
 |---|---|
 | ERC-8004 **Identity Registry** `0x8004A169…a432` | **`TaskEscrow`** — job state machine, deadlines with permissionless exits, sole writer of settlement-backed feedback |
-| ERC-8004 **Reputation Registry** `0x8004BAa1…9b63` | **`AgentAccount`** — spending caps enforced *on-chain*, not on someone's server |
+| ERC-8004 **Reputation Registry** `0x8004BAa1…9b63` | **`AgentAccount`** — spending caps enforced *on-chain*, not on someone's server. Built and tested; today's demo agents are plain EOAs, whose caps the signer enforces instead |
 | ERC-8004 Validation Registry *(coming soon)* | **`StakeVault`** — the custody ERC-8004 lacks; makes listings cost something |
 
 Two contracts from the original design were **deleted** rather than built.

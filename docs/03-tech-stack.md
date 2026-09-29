@@ -12,21 +12,21 @@ belongs in the product, not in the toolchain.
 |---|---|---|
 | Chain | **Monad** (EVM) | Settlement layer. EVM equivalence means the whole Solidity/Foundry/viem toolchain works unchanged. |
 | Contracts | **Solidity 0.8.26**, **Foundry** | Fast tests, fuzzing and invariants built in, no JS in the test loop. |
-| Contract libs | **OpenZeppelin 5.x** | `ERC20`, `SafeERC20`, `AccessControl`, `ReentrancyGuard`, `Pausable`, `EIP712`. Do not hand-roll these. |
+| Contract libs | **OpenZeppelin 5.0.2** | `SafeERC20`, `AccessControl`, `ReentrancyGuard`, `Pausable`, `Clones` (ERC-1167), `Initializable`. Do not hand-roll these. |
 | Chain reads/writes | **viem 2.x** | Typed ABIs, lighter and stricter than ethers, first-class with TypeScript. |
-| Backend | **TypeScript + Fastify** | Same language as the agents and the frontend; Fastify gives schema-validated routes and SSE without ceremony. |
+| Backend | **TypeScript + Fastify 5** | Same language as the agents and the frontend. Fastify gives routes and SSE without ceremony. Request bodies are validated with **zod**. |
 | Database | **PostgreSQL 16** + **Drizzle ORM** | Relational job/ledger data with real constraints. Drizzle keeps migrations in SQL you can read. |
-| Queue / cache | **Redis 7** + **BullMQ** | Job offers, retries, indexer cursor, rate limits, idempotency keys. |
-| Indexer | Custom **viem `watchContractEvent`** worker | Contracts are few and events are few. A hosted indexer is more setup than it saves at this size. |
-| Agent runtime | **TypeScript** + **Claude API** (`@anthropic-ai/sdk`) | The orchestrator and the worker agents are ordinary Node processes. |
-| Agent interface | **MCP server** (`@modelcontextprotocol/sdk`) | Exposes `discover_agent`, `hire_agent`, `get_result` as tools, so any MCP-capable agent can transact. |
-| Frontend | **Next.js 15** (App Router) + **React 19** | Marketplace, agent profile, live job feed. |
-| Styling | **Tailwind CSS** + **shadcn/ui** | Demo-quality UI without a design phase. |
-| Wallet UI | **wagmi 2** + **RainbowKit** | Human owner connects to register an agent and fund it. |
-| Keys | **AWS KMS** in prod, encrypted keystore in dev | Agent keys never sit in plaintext on disk or in env vars in production. |
-| Observability | **Pino** logs, **OpenTelemetry** traces | One trace ID spans user prompt → agent call → tx hash. |
-| CI | **GitHub Actions** | `forge test`, `forge coverage`, `tsc --noEmit`, `vitest`, `eslint`. |
-| Deploy | **Railway** or **Fly.io** (API + workers), **Vercel** (web) | Fastest path from commit to a public demo URL. |
+| Queue / cache | **None, deliberately.** | Redis was planned and removed: nothing imported a client. Idempotency is a `UNIQUE` constraint in Postgres (`signer_txs` for transactions, `jobs.idempotency_key` per client for hires). The signer's nonce lock is a Postgres advisory lock. The indexer cursor is a table. Rate limiting is `@fastify/rate-limit`, in memory and per process, so N replicas allow N times the limit. Workers poll for jobs; there is no offer queue. |
+| Indexer | Custom **viem `getLogs` polling** loop | Contracts are few and events are few. Polls in ranges capped by the chain's `maxLogRange` (Monad's RPC rejects `eth_getLogs` over 100 blocks), trailing the head by `confirmations`. A hosted indexer is more setup than it saves at this size. |
+| Agent runtime | **TypeScript**, ordinary Node processes | A provider chain of **Claude**, **Gemini**, **Groq** and local **Ollama**, with automatic fallback along it, plus a recorded-replay backstop. `AGENT_MODE=cached` (the default) spends no tokens. The demo has run end to end on local Ollama, so no hosted key is required. |
+| Agent interface | **MCP server** (`@modelcontextprotocol/sdk`, stdio) | Exposes `get_network`, `my_budget`, `discover_agents`, `hire_agent`, `get_job`, `await_result`, `approve_job`, `dispute_job` as tools, so any MCP-capable agent can transact. |
+| Frontend | **Next.js 15** (App Router) + **React 19** | Marketplace, agent profile, registration, live run trace. |
+| Styling | **Tailwind CSS 4** | Demo-quality UI without a design phase. No component library. |
+| Wallet UI | **viem + EIP-1193** directly (injected wallets) | The owner connects on one page to send the ERC-8004 registration. wagmi + RainbowKit were dropped: RainbowKit needs a WalletConnect project id, and one page does not need shared reactive state. |
+| Keys | **Encrypted keystore** (Web3 Secret Storage) in an env var, passphrase in a second one | Decision C1. A raw dev key is allowed on testnet only. AWS KMS is not built; the `KeySource` interface is where it would slot in. |
+| Observability | **Pino** logs, `x-trace-id` on every response | The request id is stored on the job row (`trace_id`). There is no OpenTelemetry. |
+| CI | **GitHub Actions**, one workflow per repo | contracts: `forge fmt --check`, `build`, `test`, `coverage`, `snapshot --check`, config and secrets checks, `verify-erc8004`. backend: `tsc -b`, secrets check, migrations and `vitest` against a real Postgres. interface: `tsc --noEmit`, `vitest`, `next build`. There is no eslint. |
+| Deploy | **Railway** (API, signer, indexer, Postgres), **Vercel** (interface) | Chosen, not yet provisioned (blocked on accounts). |
 
 ---
 
@@ -73,7 +73,7 @@ agentx/
 │   └── web/                 Next.js marketplace + live demo view
 │
 ├── docs/                    these files
-└── docker-compose.yml       postgres + redis for local dev
+└── docker-compose.yml       postgres for local dev
 ```
 
 ---
@@ -114,9 +114,16 @@ parameter; it is not hard-coded to any one stablecoin. On testnet we deploy
 canonical bridged USDC exists on the target network, point the same parameter
 at it — no code change.
 
-**Gas.** Agents pay their own gas in MON. The signer service keeps every agent
-wallet topped up from a funding wallet, and refuses to sign when balance is
-below a floor rather than emitting a failing transaction.
+**ERC-8004.** Deployed on mainnet, absent on testnet (verified 2026-09-22).
+`Deploy.s.sol` deploys our own minimal registries on a testnet, and refuses to
+on a non-testnet. On mainnet it adopts the canonical `0x8004…` addresses from
+`config/networks.json`.
+
+**Gas.** Agents pay their own gas in MON. The signer refuses to sign when the
+agent's balance is below a floor (0.01 MON) rather than emitting a failing
+transaction, and names the address to fund. **It does not top wallets up.**
+Wallets are funded by hand from `DEPLOYER`/`FUNDER` (the faucet has
+bot-detection and cannot be scripted).
 
 ---
 
@@ -140,31 +147,50 @@ ledger; the database is the cache and the catalogue.
 
 **MCP as the agent interface.** Exposing hire/discover/settle as MCP tools is
 the difference between "a dApp with an AI theme" and "infrastructure any agent
-can plug into". A judge can point their own agent at our MCP endpoint and hire
-a bot. That is the strongest possible proof of the thesis.
+can plug into". The server is a **stdio** process (`apps/mcp`). A judge runs it
+locally with `AGENTX_API_URL` and an agent's `AGENTX_API_KEY`, points their
+own agent at it, and hires a bot. That is the strongest possible proof of the
+thesis.
 
 **Separate signer service.** Key material lives in exactly one process, with
 one job: check the spending policy, then sign. The API never touches a private
-key. This is also what makes the on-chain `AgentAccount` policy credible —
-defence in depth rather than a contract that trusts its caller.
+key. It encodes the call and sends it to the signer's `POST /sign`. The design
+pairs this with the on-chain `AgentAccount` policy for defence in depth.
+
+As built (2026-09-29):
+
+- **Caller authentication** is a shared secret, `SIGNER_TOKEN`, which the API
+  presents as a bearer token and the signer compares in constant time.
+  Without a token configured, the signer binds to `127.0.0.1` only and
+  refuses a wider `SIGNER_HOST`.
+- **Caps.** Where the wallet is an `AgentAccount`, the signer reads the caps
+  from the contract, and the contract enforces them too. Every agent today
+  uses a plain EOA, so the signer enforces the agent's `spend_policies` row
+  itself: it checks and reserves the spend in one `UPDATE` under the
+  per-agent lock (rolling 24-hour window) and refuses an agent with no
+  policy. That is enforcement outside the model, but not on-chain. See
+  [04 §3.2](04-how-it-works.md#32-signer-service).
+- The signer process also runs the **keeper** (`KEEPER_PRIVATE_KEY`, its own
+  key), which sends the escrow's permissionless exits when they fall due.
 
 ---
 
 ## 5. Versions to pin
 
 ```
-node            22 LTS
-pnpm            9.x
-solc            0.8.26
-foundry         stable (record the exact nightly in CI)
+node            >= 22 (engines)
+pnpm            9.12.0 (packageManager)
+solc            0.8.26, via_ir = true (required: ERC-8004's 11-argument
+                NewFeedback event overflows the stack without it)
+foundry         stable (CI prints `forge --version`)
 openzeppelin    5.0.2
 viem            2.x
 fastify         5.x
-next            15.x
+next            15.5.x
 react           19.x
-drizzle-orm     0.33+
-postgres        16
-redis           7
+tailwindcss     4.x
+drizzle-orm     0.36
+postgres        16 (postgres:16-alpine in docker-compose)
 ```
 
 Pin exact versions in the lockfile and in `foundry.toml`. A dependency that
@@ -175,18 +201,33 @@ moves under you the night before a deadline is a self-inflicted outage.
 ## 6. Local development
 
 ```bash
+# contracts (separate repo)
+cd agentx-contracts
+make test                            # forge test -vvv
+anvil                                # local chain, in another terminal
+make deploy-local                    # writes deployments/31337.json
+
+# backend
+cd ../agentx-backend
 pnpm install
-docker compose up -d                 # postgres + redis
-pnpm --filter contracts test         # forge test -vvv
-anvil --fork-url $RPC_URL            # local fork for fast iteration
-pnpm --filter contracts deploy:local
-pnpm db:migrate && pnpm db:seed      # 6 demo agents with history
-pnpm dev                             # api + indexer + signer + web + agents
+docker compose up -d                 # postgres only, on host port 5442
+pnpm -r build                        # services and scripts run from dist/
+pnpm db:migrate
+pnpm --filter @agentx/api start      # likewise signer, indexer, apps/agents/*
+
+# the whole loop, unattended
+pnpm e2e                             # scripted hire → settle
+pnpm demo                            # orchestrator + three workers
 ```
 
-`pnpm db:seed` matters more than it looks: reputation is only interesting with
-history behind it. The seed writes a few hundred settled jobs so the
-marketplace does not open on a wall of zeroes during the demo.
+There is no `pnpm dev` that starts the stack. The root `dev` script runs each
+package's `dev` script, and only the indexer has one (`tsc --watch`). Each
+service starts from its own `start` script, and `pnpm demo` boots what it
+needs itself.
+
+There is no seed of historical jobs. `pnpm db:seed` was removed on Sep 29: it
+pointed at a `packages/db/bin/seed.mjs` that never existed. Demo agents are
+registered fresh by `scripts/demo.mjs` and start at the unproven score of 50.
 
 ---
 
@@ -198,13 +239,31 @@ addresses are versioned config, not env vars — see
 for the complete list and the reasoning.
 
 ```
+# agentx-backend/.env
 ENABLED_CHAIN_IDS=10143       DEFAULT_CHAIN_ID=10143
+AGENTX_CONTRACTS_ROOT=../agentx-contracts
 RPC_URL_10143=                RPC_URL_143=          # optional overrides
 
-DATABASE_URL=                 REDIS_URL=            API_JWT_SECRET=
+DATABASE_URL=                 SIGNER_URL=
+SIGNER_TOKEN=                 SIGNER_HOST=          # API ↔ signer secret; bind address
 SIGNER_KEYSTORE_JSON=         SIGNER_KEYSTORE_PASSPHRASE=
-ANTHROPIC_API_KEY=            EXPLORER_API_KEY=
+SIGNER_DEV_PRIVATE_KEY=                             # testnet only
+KEEPER_PRIVATE_KEY=           KEEPER_INTERVAL_MS=15000   # keeper; testnet only as a raw key
+
+AGENT_MODE=cached             BRAIN_CHAIN=          BRAIN_CHAIN_ORCHESTRATOR=
+OLLAMA_HOST=                  OLLAMA_MODEL=         # local, no key needed
+GEMINI_API_KEY=               GROQ_API_KEY=         ANTHROPIC_API_KEY=   # all optional
+AGENTX_API_URL=               AGENTX_API_KEY=       AGENTX_CHAIN_ID=     # agent processes
+
+# agentx-contracts/.env
+EXPLORER_API_KEY=                                   # source verification only
 ```
+
+`.env.example` in each repo is the complete, commented list.
+
+There is no `REDIS_URL` (nothing uses Redis) and no `API_JWT_SECRET`.
+Authentication is a per-agent API key (`Authorization: Bearer ax_…`), stored
+only as a salted scrypt hash.
 
 **No contract address is ever an env var.** That is the single most common
 cause of "works locally, points at the wrong contract in production".

@@ -1,176 +1,180 @@
 # 07 — What I Need From You
 
-Grouped by when it blocks me. Nothing here takes more than a few minutes each;
-the ones marked **BLOCKING** stop work entirely until they exist.
+Grouped by status. Updated 2026-09-29 against the code and
+[PROGRESS.md](../PROGRESS.md). **Nothing here blocks development any more.**
+The demo runs end to end on Monad testnet with a local model. What is left is
+what a *submission* needs: verified source, hosting, public repos, and two
+address decisions.
 
 Mark items done in [PROGRESS.md](../PROGRESS.md) as you complete them.
 
 ---
 
-## A. Before I can write any code — **BLOCKING**, needed 2026-09-22/23
+## A. Still needed — before submission (deadline 2026-10-13, 11:59 PM ET)
 
-### A1. Three empty GitHub repos
+### A1. Explorer API key — for verified contract source
 
-Create them yourself — I do not create repos or remotes.
+The contracts are deployed on testnet but **not verified**, so a judge who
+follows an explorer link sees bytecode. The Foundry config that blocked
+verification is fixed. Only the key is missing.
 
-| Repo | Visibility |
-|---|---|
-| `agentx-contracts` | **private** |
-| `agentx-backend` | private (public later if you want) |
-| `agentx-interface` | private (public later if you want) |
+- [ ] Put `EXPLORER_API_KEY=` in **`agentx-contracts/.env`** (not the backend's
+      `.env`). `foundry.toml` reads it for both `monad_testnet` and `monad`.
+- Then `make verify NETWORK=monad_testnet` in `agentx-contracts` (or deploy
+  with `VERIFY=1`).
 
-Give me: the three URLs, and your GitHub username/org for the package scope.
+### A2. Railway account + project
 
-### A2. Monad chain facts — ✅ mostly done
-
-Verified 2026-09-22 by web lookup; recorded in
-[PROGRESS.md → Facts & Config](../PROGRESS.md#-facts--config).
-
-- ✅ Testnet chain ID **10143**, RPC `https://testnet-rpc.monad.xyz`,
-  explorer `https://testnet.monadexplorer.com`, faucet `https://faucet.monad.xyz`
-- ✅ Mainnet chain ID **143**, RPC `https://rpc.monad.xyz`,
-  explorers `monadvision.com` / `monadscan.com`
-
-Still yours to check:
-
-- [ ] Faucet per-day limit
-- [ ] Does `forge verify-contract` need an API key or a custom verifier URL?
-- [ ] Canonical/bridged USDC address on whichever network we target (if none on
-      testnet, we use `MockUSDC` and say so in the submission)
-
-### A2b. 🔴 Testnet or mainnet? — **the one that actually matters**
-
-`hackathon.monad.xyz` renders **"MonadChain (ID: 143)"** — that is mainnet.
-Every plan document assumes testnet.
-
-Confirm with the organisers or the rules page. If mainnet is required:
-
-- `MockUSDC` is out; we use real USDC, and every demo transaction costs money
-- gas is real MON, with no faucet
-- the `AgentAccount` spending caps stop being a design flourish and become the
-  thing between a runaway agent loop and a drained wallet
-- the contracts have to be right the first time
-
-The architecture does not change either way — only the deploy target, the
-token address, and how carefully we fund things. But I need the answer before
-**Sep 28** (M1-19).
-
-### A3. Four funded testnet wallets
-
-Create fresh wallets, fund each from the faucet, and tell me **only the
-addresses** — never the private keys.
-
-| Wallet | Purpose |
-|---|---|
-| `DEPLOYER` | deploys contracts, holds admin role |
-| `FUNDER` | tops up agent wallets with MON for gas |
-| `AGENT_A` | orchestrator / client agent |
-| `AGENT_B` | worker agent |
-
-Fund all four on day one. Faucets rate-limit, and discovering that on Oct 12
-is how hackathon runs end.
-
-### A4. Deadline — ✅ verified 2026-09-22
-
-- Submission deadline **2026-10-13, 11:59 PM ET** (Oct 14, 03:59 UTC)
-- Judging Oct 14–27, winners announced Nov 3
-- Rolling submissions from Sep 1; editable until the deadline; late submissions
-  not accepted
-- Requirement: *"a working product with a public project profile: a demo, a
-  short write-up, and a link to the code"* → **the repos must be public by
-  Oct 13**, which resolves D2
-- Target track: **4 — Trust, Identity & AI Infrastructure** ($30,000). Its
-  description explicitly names "agent trust" and "agent reputation systems"
-
-Still worth you confirming from inside the logged-in portal: video length
-limit and the exact required submission fields.
-
----
-
-## B. Needed by 2026-09-26 — before the backend starts
-
-### B1. Anthropic API key
-
-For the agents' LLM calls. A key with a spend limit set on it; the agents are
-autonomous and I would rather the cap be real.
-
-Put it in Railway env vars yourself as `ANTHROPIC_API_KEY`. For local dev I
-need one too — use a separate key with a low cap so it can be rotated without
-touching production.
-
-### B2. Railway account + project
+For the API, signer and indexer, which are long-running.
 
 - [ ] Railway account, new project `agentx`
 - [ ] Postgres plugin added
-- [ ] Redis plugin added
 - [ ] `agentx-backend` connected
+- [ ] Signer on **private networking only**, with no public domain. Its only
+      caller check is a shared secret, `SIGNER_TOKEN`
+- [ ] Secrets set by you in Railway: `SIGNER_KEYSTORE_JSON` +
+      `SIGNER_KEYSTORE_PASSPHRASE` (decision C1), `DATABASE_URL`, and any
+      model key you choose to add (see B1)
+- [ ] `SIGNER_TOKEN`: one random value, set in **both** the `api` and the
+      `signer` service. Without it the signer binds to `127.0.0.1` and the API
+      in another service cannot reach it
+- [ ] `KEEPER_PRIVATE_KEY` on the signer, if you want expired escrow jobs
+      refunded or auto-approved without anyone stepping in: a **separate**
+      testnet wallet holding only gas, never a key the signer signs agents'
+      transactions with (the two would race for nonces). The signer refuses a
+      raw keeper key on mainnet. Unset, no keeper runs
 - [ ] Railway token, if you want me to configure services via CLI (optional —
       you can click through the dashboard instead)
 
-### B3. Vercel account
+**No Redis plugin.** Redis was removed; nothing in the code uses it. See
+[08 §5](08-configuration.md#5-environment-variables--secrets-and-wiring-only).
+
+### A3. Vercel account
 
 - [ ] Vercel account, `agentx-interface` connected
 - [ ] Root directory set to the repo root (not a subfolder — that is the whole
       point of the split)
+- [ ] `NEXT_PUBLIC_API_URL` pointed at the Railway API
+
+### A4. Make the three repos public — by Oct 13
+
+The rules require *"a demo, a short write-up, and a link to the code"*.
+Decision D2 is already **yes**. This is only the act of flipping visibility on:
+
+- [ ] `agentx-contracts`
+- [ ] `agentx-backend`
+- [ ] `agentx-interface`
+
+Before you flip it: `check-no-secrets` runs in the contracts and backend CI
+(not the interface's), but a last look at each repo's history for keys is
+worth the five minutes.
+
+### A5. Arbiter and fee-recipient — a decision, then an admin transaction
+
+Both are currently the **`DEPLOYER`** address on the live testnet deployment.
+That is fine for the demo, and the submission says so. If you want them
+separate, give me the addresses. There are two ways, depending on whether you
+redeploy:
+
+| Role | Today | On the live contracts | On a fresh deploy |
+|---|---|---|---|
+| Arbiter (`ARBITER_ROLE` on `TaskEscrow`) | `DEPLOYER`, granted in the constructor | `grantRole(ARBITER_ROLE, new)`, then `revokeRole(ARBITER_ROLE, DEPLOYER)`, both from `DEPLOYER` | set `ARBITER_ADDRESS` in `agentx-contracts/.env`; `Deploy.s.sol` grants it the role and revokes the deployer's |
+| Fee recipient | `DEPLOYER`, set in `configure()` | `setParams(currentConfig, newRecipient)` from `DEPLOYER` (`CONFIGURER_ROLE`) | set `FEE_RECIPIENT` in `agentx-contracts/.env` |
+
+Since 2026-09-29 `Deploy.s.sol` reads `ARBITER_ADDRESS` and `FEE_RECIPIENT`
+(empty means the deployer). Before that nothing read them. Filling them in
+does not change contracts already deployed; a redeploy also changes every
+address (the backend picks them up from `deployments/10143.json`), and the
+demo's history on the old contracts stays on the old contracts.
+
+A plain EOA arbiter is acceptable for the MVP as long as the docs say so.
+They do ([04 §9.1](04-how-it-works.md#91-trust-assumptions)). Note that a
+disputed job has no timeout, so an arbiter who never acts leaves its funds
+locked.
 
 ---
 
-## C. Needed by 2026-10-01 — before signing goes live
+## B. Optional — improves the demo, blocks nothing
 
-### C1. Key storage decision
+### B1. A hosted model key
 
-Where the agent session keys live. Standard approach is AWS KMS, but it is an
-AWS account and an afternoon of IAM.
+**No longer required.** `pnpm demo` has run end to end on Monad testnet with
+local Ollama (`llama3` 8B, with `BRAIN_CHAIN=ollama` and
+`BRAIN_CHAIN_ORCHESTRATOR=ollama` — the orchestrator reads the second), and a
+cached replay (`AGENT_MODE=cached`) reproduces a recorded run with no model at
+all. A hosted key would still improve the judgement quality a
+judge sees in the video: an 8B model plans 2–3 steps and its prose is plain.
 
-Options, in order of my recommendation for a 21-day project:
+Any one of these, in `agentx-backend/.env` (and Railway if deployed):
 
-1. **Railway env var holding an encrypted keystore**, decrypted in the signer
-   process with a passphrase in a separate env var. Not ideal, honest, fine for
-   testnet, documented as a limitation.
-2. **AWS KMS.** Correct, and what I specced. Needs an AWS account, a KMS key,
-   and an IAM user for the signer.
+| Variable | Cost | Notes |
+|---|---|---|
+| `GEMINI_API_KEY` | free tier, no card | aistudio.google.com |
+| `GROQ_API_KEY` | free tier, no card | console.groq.com |
+| `ANTHROPIC_API_KEY` | paid | set a **spend limit** on the key; the agents are autonomous |
 
-Tell me which. If AWS: account access or the created `KMS_KEY_ID` + IAM
-credentials placed in Railway by you.
+The provider order is `BRAIN_CHAIN` / `BRAIN_CHAIN_ORCHESTRATOR`. Moving along
+it on an outage is automatic. Do not paste any key in chat.
 
-### C2. Arbiter address
+### B2. Facts only you can check
 
-The multisig or address that resolves disputes. A plain EOA is acceptable for
-the MVP as long as we say so in the docs. Give me the address.
-
-### C3. Fee recipient address
-
-Where protocol fees accrue. Can be the same as `DEPLOYER` for the demo.
+- [ ] Monad testnet faucet per-day limit
+- [ ] Is there a canonical USDC on Monad testnet? (If none — the likely
+      answer — the demo uses `MockUSDC` and the submission says so in one line.)
+- [ ] Is mainnet *required* for judging? `hackathon.monad.xyz` shows
+      "MonadChain (ID: 143)". The code runs on either
+      (D6: network is config, never a code path), so this is a deploy target,
+      not a blocker. If mainnet is required, the canonical USDC address
+      (decision D8) and real MON for gas are needed first.
+- [ ] From inside the logged-in portal: video length limit and the exact
+      required submission fields.
 
 ---
 
-## D. Things you run, at each milestone
+## C. Done
 
-I write the scripts; you run them because you hold the keys.
+| # | Item | Resolution |
+|---|---|---|
+| — | Three GitHub repos | Created by you; all three pushed |
+| — | Monad chain facts | Testnet 10143 / mainnet 143, RPCs, explorers, faucet — verified 2026-09-22, in `agentx-contracts/config/networks.json` |
+| A2b / D6 | Testnet or mainnet | Testnet first, both supported by the same code |
+| — | Funded wallets | `DEPLOYER`, `FUNDER`, `AGENT_A`, `AGENT_B` created by you; addresses only, in PROGRESS.md. The faucet cannot be scripted (bot detection); `DEPLOYER` funds the others with `cast send` |
+| — | Deadline | 2026-10-13, 11:59 PM ET; Track 4 — Trust, Identity & AI Infrastructure |
+| — | Testnet deploy | `TaskEscrow`, `StakeVault`, `AgentAccountFactory`, `MockUSDC` and our own ERC-8004 registries (absent on testnet) — addresses in `agentx-contracts/deployments/10143.json` |
+| C1 | Key storage | Encrypted Web3 keystore in an env var, passphrase in a second one. AWS KMS not built |
+| D1 | Package registry | Git dependency, not GitHub Packages |
+| D2 | Contracts public at submission | Yes (the act itself is A4) |
+| — | Model key (was B1 / blocker B6) | Not needed — local Ollama |
+
+---
+
+## D. Things you run
+
+I write the scripts; you run anything that needs your keys or your quota.
 
 | When | Command | You give me back |
 |---|---|---|
-| Sep 24 | `make deploy-local` | confirmation it worked |
-| Sep 28 | `make deploy-testnet` | the 5 contract addresses + deploy block number |
-| Sep 28 | `make publish` | the published `@agentx/contracts` version |
-| Oct 2 | `./scripts/e2e.sh` | pass/fail + the output if it fails |
-| Oct 5 | `pnpm demo` | pass/fail + the explorer links |
-| Oct 9 | chaos checklist ([roadmap §8](05-roadmap.md#8-m5--harden-and-rehearse--oct-911)) | which items broke |
-| Oct 11 | 3 rehearsal runs + backup video | timing of each run |
+| ✅ done | `make deploy-testnet` (in `agentx-contracts`) | addresses — now generated into `deployments/10143.json` |
+| ✅ done | `pnpm e2e` / `pnpm demo` with `VERIFY_CHAIN_ID=10143` | pass/fail + explorer links. The demo now fails if any step ends `failed` or `timeout` |
+| ✅ done | 3 cached rehearsal runs (`AGENT_MODE=cached`) | 155 s, 109 s, 111 s |
+| after A1 | `make verify NETWORK=monad_testnet` | pass/fail |
+| any time | `make drift NETWORK=monad_testnet` (in `agentx-contracts`) | pass/fail: deployed parameters vs the params file |
+| any live-model run | `AGENT_MODE=record pnpm demo` | ask first — it spends quota if a hosted key is set; free on Ollama |
+| Oct 9 | chaos: `DEMO_CHAOS=no-accept pnpm demo` and `DEMO_CHAOS=mid-job pnpm demo`, then after the work deadline `node scripts/keeper-sweep.mjs <chainJobId>`; plus the rest of the checklist ([roadmap §8](05-roadmap.md#8-m5--harden-and-rehearse--oct-911)) | which items broke |
+| Oct 11 | backup video (from `AGENT_MODE=cached`) | the file |
+
+`make publish` is no longer needed: D1 resolved to a git dependency.
 
 ---
 
 ## E. Decisions only you can make
 
-Answer whenever, but before the milestone that needs them:
-
-| # | Decision | Needed by | My recommendation |
+| # | Decision | Needed by | Status / my recommendation |
 |---|---|---|---|
-| D1 | Package registry: GitHub Packages, or git-dependency fallback? | Sep 23 | Try GitHub Packages for 30 minutes; if it fights you, take the fallback ([06 §4](06-repo-structure.md#the-escape-hatch)) |
-| D2 | Can `agentx-contracts` be public at submission? | Oct 12 | Yes — verified source is already public on the explorer, and judges trust what they can read |
-| D3 | Who pays the protocol fee, worker or client? | Sep 26 | Worker. It keeps quoted prices honest — the client pays exactly the listed price |
-| D4 | Project name final? `AGENTX` — check it is not taken | Sep 25 | Search npm, GitHub, and the hackathon submissions list |
-| D5 | Domain for the demo? | Oct 6 | Optional. A `*.vercel.app` URL is fine and judges do not care |
+| D3 | Who pays the protocol fee, worker or client? | now | **Open, but the contract already implements worker-pays**: the fee comes out of `amount`, so the client pays exactly the listed price. Say "keep it" or ask for a change |
+| D4 | Project name final? `AGENTX` — check it is not taken | before submission | Open. Search npm, GitHub, and the hackathon submissions list |
+| D5 | Domain for the demo? | Oct 6 | Open. Optional — a `*.vercel.app` URL is fine and judges do not care |
+| A5 | Separate arbiter / fee-recipient addresses? | before submission | Open. Defaulting to `DEPLOYER` is acceptable if said plainly |
 
 ---
 
@@ -180,9 +184,9 @@ Stated plainly so there is no ambiguity later:
 
 - ❌ Any private key or seed phrase, including testnet ones. You chose the
   "you run deploys" model — that only works if the key stays with you.
-- ❌ AWS root credentials. A scoped IAM user only, and put it in Railway
-  yourself.
-- ❌ Your Anthropic key pasted into chat. Put it in Railway and local `.env`.
+- ❌ Any API key pasted into chat — model keys, the explorer key, a Railway
+  token. Put them in `.env` or in Railway yourself.
+- ❌ Cloud root credentials of any kind.
 - ❌ Anything from a mainnet wallet, under any circumstances.
 
 If I ever ask for one of these, that is a mistake on my part — do not send it.
@@ -191,10 +195,11 @@ If I ever ask for one of these, that is a mistake on my part — do not send it.
 
 ## G. The short version
 
-If you only do three things today:
+If you only do three things before the deadline:
 
-1. Create the three repos, send me the URLs
-2. Fund four wallets at `https://faucet.monad.xyz`, send me the **addresses**
-3. 🔴 Answer **A2b** — testnet or mainnet?
+1. Add `EXPLORER_API_KEY` to `agentx-contracts/.env`, so the contracts can be
+   verified (A1)
+2. Create the Railway and Vercel accounts (A2, A3)
+3. Make the three repos public by Oct 13 (A4)
 
-That unblocks M0 and M1 — eight days of work.
+And tell me whether the arbiter and fee recipient stay as `DEPLOYER` (A5).

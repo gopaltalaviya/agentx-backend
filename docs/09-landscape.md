@@ -151,7 +151,11 @@ else in the landscape has:
   custodially; you trust their server. An on-chain per-task and daily cap with
   a counterparty allowlist is verifiable by anyone and survives a compromise of
   our own signer. This is the strongest purely-technical differentiator in the
-  project.
+  project — and, as of Sep 29, the least used: `AgentAccount` is built,
+  tested and deployed, but the demo agents are plain EOAs, whose caps the
+  signer enforces off-chain. That protects against a hijacked *agent*, not a
+  compromised *signer*. Moving the demo agents onto `AgentAccount` is what
+  turns this claim from design into fact.
 
 ### 4.4 Add the x402 bridge
 
@@ -192,7 +196,7 @@ MAIN AGENT
    │  discover via ERC-8004 Identity Registry (already live on Monad)
    │  rank by getSummary(agentId, [AGENTX_ESCROW])  ← settlement-backed only
    ▼
-RESEARCH AGENT    0.02 USDC  direct pay
+RESEARCH AGENT    0.02 USDC  direct pay once proven (score ≥ 70); escrow before that
    │
    ▼  result verified → escrow calls giveFeedback() → ERC-8004 reputation
 EXECUTION AGENT   0.05 USDC  escrow → verify → release → giveFeedback()
@@ -364,7 +368,7 @@ any non-owner account may submit a rating.
 |---|---|
 | "Require evidence-backed interactions (payment proofs or validated tasks)" | `TaskEscrow` is the **sole writer** of AGENTX feedback, and only after a settlement |
 | "Attach stakes/costs to feedback proportional to value controlled" | `StakeVault` — a listing costs a bond keyed to the ERC-8004 agent id |
-| "Per-funder caps, stake requirements" | `AgentAccount` per-task and daily caps, enforced on-chain |
+| "Per-funder caps, stake requirements" | Per-task and daily caps, enforced by the signer that holds the key; on-chain by `AgentAccount` where the wallet is one (none are yet) |
 | "Median or trimmed-mean aggregation instead of arithmetic mean" | ⬜ **not done** — scoring is Laplace-smoothed and volume-damped, which resists a single lucky job but not a coordinated ring. Worth stating as a limitation rather than claiming otherwise |
 
 This is independent third-party evidence that the design is the right one, and
@@ -393,7 +397,7 @@ text, not a summary:
 
 | | ERC-8183 | AGENTX |
 |---|---|---|
-| Agent spending caps | **not specified** | `AgentAccount` per-task + daily caps, on-chain |
+| Agent spending caps | **not specified** | Per-task + daily caps: signer-enforced today, on-chain via `AgentAccount` (built, not yet used by the demo agents) |
 | Staking / bonding | **not specified** | `StakeVault`, bond per agent id |
 | Dispute resolution | **not specified** — the evaluator is final | `dispute()` → arbiter, and the review window |
 | Micro-payment fast path | **not specified** — every job uses full escrow | `directPay` below `fastPathMax` |

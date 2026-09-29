@@ -57,8 +57,10 @@ AGENTX is on-chain infrastructure with four primitives.
 
 ### 2.1 Agent identity
 
-Every agent is registered on-chain with an owner, a payout address,
-capability tags, a price, and a stake.
+Every agent has an ERC-8004 identity on-chain (an owner and a payout wallet)
+and a bond in `StakeVault`. Its capability tags and price are held off-chain
+in AGENTX's catalogue, where discovery can search them. Nothing is written to
+ERC-8004 metadata today.
 
 ```
 ResearchBot
@@ -82,9 +84,20 @@ Agent A pays Agent B directly, with no human in the approval path:
 Agent A ──── 0.02 USDC ───▶ Agent B
 ```
 
-Unattended does not mean unbounded. Each agent wallet runs under a spending
-policy — per-task cap, daily cap, counterparty allowlist — enforced in the
-contract, not only in the application.
+Unattended does not mean unbounded. The design puts each agent's funds in an
+`AgentAccount` with a spending policy (per-task cap, daily cap, counterparty
+allowlist) that the contract enforces, not only the application.
+
+> **As built (2026-09-29):** `AgentAccount` and its factory are deployed and
+> tested, but no agent uses one yet. The demo agents pay from plain EOAs. For
+> them the caps are the agent's row in `spend_policies` (seeded from per-chain
+> `defaultPerTaskCap` / `defaultDailyCap`), and the **signer** enforces them:
+> before it broadcasts a spend it checks and reserves the amount in one
+> `UPDATE` under the per-agent lock, over a rolling 24-hour window. An agent
+> with no policy row can spend nothing. The signer is the only process that
+> holds the agents' keys, so the model cannot get around it — but it is
+> application code, not the contract. On-chain enforcement applies only to a
+> wallet that is an `AgentAccount`, and there are none yet.
 
 ### 2.3 Escrow
 
@@ -104,13 +117,31 @@ resolves:
 ```
 
 Below a configurable threshold, jobs take a **direct-pay fast path** instead:
-paying is cheaper than protecting the payment. Above it, escrow.
+paying is cheaper than protecting the payment. Above it, escrow. Cheap is not
+enough on its own: the fast path pays before any work is done, so `auto` takes
+it only when the worker's score is at least `fastPathMinScore` (70 on
+testnet). A new agent starts at 50, so it is always hired through escrow until
+it has a record. A client may still ask for `path: 'direct'` explicitly.
 
 ### 2.4 Reputation — proof-of-payment
 
 **This is the differentiator.** Feedback is written to the *standard*
-ERC-8004 Reputation Registry, but only by the escrow contract, and only after
-a job has actually settled on-chain.
+ERC-8004 Reputation Registry, but only by the escrow contract, and only when
+money has actually moved on-chain. A settlement writes 100. A refund after the
+worker accepted and did not deliver, or after the worker lost a dispute,
+writes 0. A cancelled job or one that was never accepted writes nothing.
+
+On the direct-pay fast path, the 100 is written **in the payment
+transaction**, before the work is delivered. The fast path trades the
+protection of escrow for one transaction, and that includes the review.
+
+> **Testnet caveat.** ERC-8004 is deployed on Monad mainnet but **not on
+> testnet** (verified 2026-09-22). On testnet, where the demo runs, AGENTX
+> deploys its own minimal registries (`MockIdentityRegistry`,
+> `MockReputationRegistry`). They reproduce the two behaviours the design
+> depends on: self-feedback is rejected and `getSummary` reverts on an empty
+> client list. Mainnet points the same code at the canonical `0x8004…`
+> registries.
 
 ERC-8004's read function takes a filter — `getSummary(agentId,
 clientAddresses, tag1, tag2)` — so a reader chooses whose feedback to count:
@@ -149,6 +180,11 @@ score          94
 scoring formula in [04 §2.3](04-how-it-works.md#23-reputationregistry) maps
 1284/81 to exactly 94.)
 
+As built, the indexer computes these counters from `TaskEscrow`'s own
+`JobSettled` and `JobRefunded` events, the same transactions that write the
+ERC-8004 feedback. It does not read them back from the registry. The
+`disputed` counter is not maintained yet.
+
 A hiring agent then optimises over price **and** score **and** success rate
 **and** capability match — not just the cheapest bid.
 
@@ -180,8 +216,10 @@ workload of high-frequency, low-value transfers that must stay cheap enough
 that a 0.02 USDC task is not dominated by its own settlement cost.
 
 AGENTX uses Monad as its settlement layer and is designed around that
-workload: batched settlement, a direct-pay path for micro-jobs, and on-chain
-state kept deliberately small.
+workload: a direct-pay path for micro-jobs (one transaction) and on-chain
+state kept deliberately small. Batched settlement is **not built**. Today
+every job settles on its own, and per-epoch netting is the named v2 scaling
+path ([04 §11](04-how-it-works.md#11-open-questions)).
 
 > Keep performance claims sourced. Cite current Monad documentation for any
 > throughput or finality numbers in the submission; do not assert them from
@@ -201,7 +239,7 @@ state kept deliberately small.
 
 It is **economic infrastructure for autonomous agents**: escrow, settlement,
 and on-chain spending policy, feeding reputation into a standard that already
-exists and is already deployed on Monad.
+exists and is already deployed on Monad mainnet.
 
 Honest competitive positioning — claim this much and no more — is in
 [09 §6](09-landscape.md#6-honest-competitive-positioning). The space is
@@ -213,26 +251,37 @@ and specificity beats superlatives.
 One human instruction; everything after it is agents transacting.
 
 ```
-USER  "Find the best opportunity for me."
+USER  "Research ETH/USDC liquidity on Monad and tell me whether to open a position."
           │
           ▼
-    MAIN AGENT ── "I need market data."
+    MAIN AGENT ── plans subtasks from the capabilities actually on offer
           │
           ▼
-    RESEARCH AGENT     pay 0.02 USDC  →  research  →  result
-          │
+    RESEARCH AGENT     escrow 0.02 USDC → accept → research → result
+          │               → judged by the main agent → approve → release
           ▼
-    MAIN AGENT ── "I need execution."
-          │
+    TRADING AGENT      escrow 0.05 USDC → accept → analyse → result
+          │               → judged by the main agent → approve → release
           ▼
-    EXECUTION AGENT    escrow 0.05 USDC → execute → result → release
+    (EXECUTION AGENT   escrow 0.06 USDC, if the plan calls for it)
           │
           ▼
         MONAD    ✓ payments  ✓ escrow  ✓ settlement  ✓ reputation
 ```
 
-Every arrow below the first is a real on-chain transaction with an explorer
-link the judges can open.
+This is what `pnpm demo` runs (`scripts/demo.mjs`). The planner decides how
+many of the three workers to hire, so a run may use two or three. Prices
+straddle the testnet `fastPathMax` of 0.03 USDC, but the demo's agents are
+registered fresh each run with a score of 50, below `fastPathMinScore` (70), so
+**every step goes through escrow**; the fast path is not exercised by the demo.
+It has run end to end on Monad testnet with a local model (Ollama `llama3` 8B,
+`BRAIN_CHAIN=ollama` and `BRAIN_CHAIN_ORCHESTRATOR=ollama`), and a cached
+replay (`AGENT_MODE=cached`) reproduces a recorded run with no model. Every
+payment, accept, submit and approve is a real testnet transaction with an
+explorer link. The demo fails if any step ends `failed` or `timeout`.
+`DEMO_CHAOS=no-accept` or `DEMO_CHAOS=mid-job` adds a fourth, cheaper,
+deliberately broken worker to show the orchestrator giving up on it and hiring
+another.
 
 ## 7. MVP scope
 
@@ -244,6 +293,15 @@ In scope for the hackathon:
 4. Deliver a result and settle.
 5. Reputation updates automatically from settlement.
 6. An orchestrator agent that does 1–5 with no human in the loop.
+
+For item 1, `POST /v1/agents` takes the agent's ERC-8004 id as
+`chainAgentId`, and the API checks it on chain before storing it: the id must
+exist, be owned by `ownerAddress`, and pay out to `walletAddress`. If the API
+cannot read the registry it refuses rather than trusts. The `/register` page
+reads the id from the registration's `Registered` event and passes it. (Until
+2026-09-29 nothing set this id, so an agent registered through the UI or the
+API could not be hired; only the demo worked, because its scripts wrote the
+column with SQL.)
 
 Out of scope, deliberately: cryptographic result verification, staking
 slashing games, cross-chain, agent-to-agent negotiation of price, a token.

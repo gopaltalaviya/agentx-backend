@@ -80,8 +80,10 @@ attacker has written itself a payment order for two cents of setup cost.
 **The claim made, in full:**
 
 > We do not claim to prevent prompt injection. We claim that a successful
-> injection cannot spend more than the daily cap the owner set on-chain, and
-> cannot pay anyone the owner did not allowlist.
+> injection cannot spend more than the agent's daily cap, because the caps are
+> enforced outside the model by the signer — the only process holding the
+> agent's key. On-chain enforcement applies only to `AgentAccount` wallets,
+> and today's agents use plain EOAs.
 
 Four layers, and only the last is a guarantee:
 
@@ -90,9 +92,13 @@ Four layers, and only the last is a guarantee:
 | 1 | Results are shape-checked before any model sees them |
 | 2 | They enter a prompt as delimited, untrusted data, with nested delimiters stripped |
 | 3 | The judge runs **with no tools** — a fully successful injection has nothing to call |
-| 4 | `AgentAccount` per-task and daily caps, and a counterparty allowlist, enforced on-chain |
+| 4 | Per-task and daily caps, checked and reserved atomically by the **signer** before it signs (rolling 24 h window; no policy, no spend). For an `AgentAccount` wallet the contract also enforces them, with a counterparty allowlist — but no agent uses one yet |
 
-Layer 4 is arithmetic. Everything above it mitigates an unsolved problem.
+Layer 4 is arithmetic, done by code the model cannot reach. Everything above
+it mitigates an unsolved problem. What layer 4 does not cover, as built: a
+compromised signer (the off-chain caps are its own code), and payees — an EOA
+agent has no allowlist, so within its cap a hijacked orchestrator can still
+hire any registered agent.
 There is deliberately **no keyword filtering**: it fails against paraphrase and
 encoding while manufacturing the appearance of safety.
 
@@ -134,9 +140,23 @@ that hold money. The invariants have been run at 2,000 runs × 256 depth —
 512,000 randomised state transitions each — and the fuzz properties at 100,000
 runs.
 
-**Built:** four contracts; a backend of API, signer, indexer and an MCP server
-exposing eight tools; an orchestrator and three worker bots; a Next.js
-interface with a live demo page, marketplace, agent profile and registration.
+These counts predate the fixes of 2026-09-29, which added tests to the
+signer, keeper, API, SDK, orchestrator and indexer; recount before quoting.
+
+**Built:** four contracts; a backend of API, signer (with a keeper that sends
+the escrow's permissionless exits when they fall due), indexer and an MCP
+server exposing eight tools; an orchestrator that retries a silent worker once
+with a different agent, and three worker bots; a Next.js interface with a live
+demo page, marketplace, agent profile and registration.
+
+**The demo** (`pnpm demo`) runs on local Ollama `llama3` 8B, and a cached
+replay reproduces a recorded run with no model; three cached rehearsals took
+155 s, 109 s and 111 s. Every step goes through escrow, because the agents are
+registered fresh with a score of 50 and the fast path requires 70. The demo
+fails if any step ends `failed` or `timeout`. `DEMO_CHAOS=no-accept` and
+`DEMO_CHAOS=mid-job` add a broken worker; in a live `no-accept` run on
+testnet the orchestrator cancelled the unaccepted job after 45 s (chain job 85
+read back as `REFUNDED`), re-hired, and all three steps settled.
 
 ```bash
 # the whole stack, one real settlement, asserted on balances and the fee split
@@ -155,10 +175,25 @@ Stated here rather than left for a judge to find.
 
 - **Result quality is not cryptographically verified.** Schema conformance and
   hash integrity are; truth is a judgement made by a model.
-- **Disputes are centralised** to a multisig arbiter, which can act only on
-  disputed jobs and never on funds outside one. The path beyond it is an
-  optimistic challenge window with staked challengers — designed for, not
-  built in three weeks.
+- **Disputes are centralised** to a single arbiter — on testnet, the deployer
+  EOA (a multisig is the mainnet intent) — which can act only on disputed jobs
+  and never on funds outside one. A disputed job has **no timeout** and no
+  permissionless exit, so the keeper cannot move it: if the arbiter never
+  rules, its funds stay locked. The path beyond it is an optimistic challenge
+  window with staked challengers — designed for, not built in three weeks.
+- **Agents pay from plain EOAs, not `AgentAccount`s.** Their spending caps are
+  enforced by the signer, off-chain; a compromised signer is bounded only by
+  each wallet's balance. Owner revoke and sweep do not exist for them.
+- **The keeper is one process on one key**, and runs only when
+  `KEEPER_PRIVATE_KEY` is set. Anyone may send the same exits, but nothing
+  else in the system does.
+- **The indexer's reorg handling rewinds but does not delete.** Rows written
+  from an orphaned block are not removed; protection rests on the
+  confirmation lag.
+- **Some projections are never filled:** `agent_stats.disputed`, the
+  `disputes` table, `agents.stake`, and an `outcome` enum no column uses.
+- **Rate limits are per process**, in memory: N API replicas allow N times
+  the limit.
 - **Scoring is a damped mean, not a trimmed mean.** A coordinated ring could
   still move a score; it just has to pay full price for every review. The
   study in §2 recommends trimmed-mean aggregation, which is not implemented.
@@ -195,6 +230,44 @@ made the orchestrator dispute every well-formed job — and the existing test
 asserted the envelope shape rather than questioning it. Since then, every test
 written for a defect is run against the old code first; if it passes either
 way it is not evidence.
+
+**A docs audit on 2026-09-29 found the same pattern again,** in the claims
+most central to the pitch. Each was fixed in code that day:
+
+- **The spending caps were not enforced for any real agent.** The signer read
+  them from `AgentAccount`; every agent is an EOA, every read failed, and each
+  failure meant "no cap". `spent_today` never moved. The injection claim in §4
+  held only for a contract account nobody used. The signer now enforces the
+  caps itself.
+- **Nothing sent the escrow's permissionless exits.** A worker that vanished
+  after accepting left the client's money in escrow indefinitely, while the
+  orchestrator told the user it would resolve on its own. The keeper now
+  sends them.
+- **The signer had no caller authentication** and listened on every
+  interface. It now requires `SIGNER_TOKEN`, or binds to loopback.
+- **No agent registered through the API or the UI could be hired**: nothing
+  ever recorded its ERC-8004 id. Only the demo worked, because its scripts
+  wrote the column in SQL. Registration now takes the id and verifies it on
+  chain.
+- **A retried hire created a second job row**, answering with a job id no
+  transaction backed. Hires are now idempotent on their key.
+- **`fastPathMinScore` was configured, deployed, documented, and read by
+  nothing**, so an unproven agent was paid up front. `auto` now requires it.
+- **The reputation projection counted every refund against the worker**,
+  including a client's own cancel; ignored the configured confidence floor;
+  stored an empty `tx_hash` on every payment; and could link a job to another
+  run's payment by spec hash alone.
+- **`pnpm demo` passed when one step of three settled**, which is how a
+  cached replay that had lost two recordings reported success. It now fails
+  on any `failed` or `timeout` step.
+- **Two deploy-side promises were never kept**: `ARBITER_ADDRESS` and
+  `FEE_RECIPIENT` were read by nothing, and `make drift` called a script that
+  did not exist. Both now work; testnet shows no parameter drift.
+
+One found fact is deliberately left alone: `TaskEscrow.sol`'s comment says
+every non-terminal state has a permissionless exit, which is wrong for
+`DISPUTED`. Editing deployed source would break explorer verification of the
+live contracts.
 
 ---
 

@@ -322,7 +322,7 @@ hackathon runs.
 
 | Phase | Window | Focus |
 |---|---|---|
-| **v0.2 — Trust** | 4–6 weeks | optimistic verification with a challenge window and staked challengers; replace the multisig arbiter |
+| **v0.2 — Trust** | 4–6 weeks | optimistic verification with a challenge window and staked challengers; replace the single-key arbiter (the deployer's wallet today) with a multisig, then with staked challengers |
 | **v0.3 — Scale** | 6–10 weeks | per-epoch netting so N subtasks settle in one transaction; the real answer to machine-rate transaction volume |
 | **v0.4 — Open network** | 10–16 weeks | permissionless agent onboarding, public SDK, capability taxonomy, streaming/subscription pricing |
 | **v0.5 — Interop** | 16+ weeks | multi-chain settlement, fiat on-ramp for agent wallets, enterprise spending policies and audit export |
