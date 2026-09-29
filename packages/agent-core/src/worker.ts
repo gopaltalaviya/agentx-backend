@@ -52,6 +52,14 @@ export const confidence = () =>
     z.number().min(0).max(1),
   );
 
+/** The worker could not think about the offer at all. Not a judgement on it. */
+export class TriageUnavailable extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'TriageUnavailable';
+  }
+}
+
 export const TriageDecision = z.object({
   accept: z.boolean(),
   reason: z.string().min(1).max(300).describe('which condition failed, or why you can do this'),
@@ -161,7 +169,14 @@ export class Worker<T> {
       return {status: 'declined', reason: structural.reason};
     }
 
-    const decision = await this.triage(offer.spec);
+    let decision: TriageDecision;
+    try {
+      decision = await this.triage(offer.spec);
+    } catch (err) {
+      this.declined.add(offer.jobId);
+      this.emit({kind: 'failed', jobId: offer.jobId, stage: 'triage', reason: message(err)});
+      return {status: 'failed', stage: 'triage', reason: message(err)};
+    }
     if (!decision.accept) {
       this.declined.add(offer.jobId);
       this.emit({kind: 'declined', jobId: offer.jobId, reason: decision.reason, structural: false});
@@ -283,10 +298,19 @@ export class Worker<T> {
         effort: 'low',
       });
       return value;
-    } catch {
-      // If triage cannot run, decline. Accepting work this worker could not
-      // even think about is how a reputation is lost.
-      return {accept: false, reason: 'could not evaluate the offer'};
+    } catch (err) {
+      // Not a decline.
+      //
+      // This used to return `{accept: false}`, so a worker whose model was
+      // unreachable reported, job after job, that it had considered the work
+      // and chosen not to take it. A decline is a claim about the JOB; this
+      // is a fact about the WORKER, and only one of them is the operator's to
+      // fix. Reading an outage as caution cost an hour on a cached run where
+      // every recording was simply missing.
+      //
+      // It still does not accept — taking work it cannot think about is how a
+      // reputation is lost — but it says which of the two happened.
+      throw new TriageUnavailable(message(err));
     }
   }
 

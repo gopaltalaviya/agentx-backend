@@ -197,12 +197,17 @@ describe('declining, which is the reputation strategy', () => {
   /**
    * Fail closed. A worker that accepts work it could not even evaluate has
    * bet its reputation on a coin flip.
+   *
+   * It used to report this as `declined`, which is what this test asserted —
+   * so an unreachable model looked exactly like a cautious one. The
+   * invariant that matters is that it does not ACCEPT; what it is called is
+   * covered by "when the worker's own brain is the problem" below.
    */
-  it('declines when triage itself fails', async () => {
+  it('never accepts when triage itself fails', async () => {
     const {worker, calls} = build([offer()], new FakeBrain({}, 'triage'));
 
     const [outcome] = await worker.tick();
-    expect(outcome).toMatchObject({status: 'declined'});
+    expect(outcome!.status).not.toBe('delivered');
     expect(calls.accepted).toEqual([]);
   });
 });
@@ -360,5 +365,67 @@ describe('the offer loop', () => {
 
     expect(await worker.tick()).toHaveLength(2);
     expect(calls.submitted.map((s) => s.jobId)).toEqual(['1', '2']);
+  });
+});
+
+describe('when the worker\u2019s own brain is the problem', () => {
+  /**
+   * Triage caught every error and returned `{accept: false, reason: 'could
+   * not evaluate the offer'}` — a DECLINE. So a worker whose model was
+   * unreachable reported, job after job, that it had considered the work and
+   * chosen not to take it.
+   *
+   * Those two are not the same thing and must not look the same. A decline
+   * is a claim about the JOB; this is a fact about the WORKER, and it is the
+   * operator's problem to fix. A cached demo run spent an hour being read as
+   * a cautious model when every recording was simply missing — the same
+   * shape of mistake as the swallowed indexer error, an outage wearing
+   * business logic as a costume.
+   *
+   * The worker still does not accept: taking work it cannot think about is
+   * how a reputation is lost. But it says which of the two happened.
+   */
+  it('reports an unusable brain as a failure, not as a decision about the job', async () => {
+    const {worker, calls, events} = build([offer({})], new FakeBrain({}, 'triage'));
+
+    const [outcome] = await worker.tick();
+
+    expect(outcome!.status).toBe('failed');
+    expect(calls.accepted).toEqual([]);
+    const failure = events.find((e) => e.kind === 'failed');
+    expect(failure).toBeDefined();
+    expect((failure as {stage: string}).stage).toBe('triage');
+  });
+
+  it('carries the underlying reason, so the operator can act on it', async () => {
+    const {worker, events} = build([offer({})], new FakeBrain({}, 'triage'));
+
+    await worker.tick();
+
+    const failure = events.find((e) => e.kind === 'failed') as {reason: string};
+    expect(failure.reason).toMatch(/unavailable/);
+  });
+
+  it('does not retry it on the next poll', async () => {
+    const brain = new FakeBrain({}, 'triage');
+    const {worker} = build([offer({})], brain);
+
+    await worker.tick();
+    await worker.tick();
+
+    expect(brain.prompts).toHaveLength(1);
+  });
+
+  it('still reports a genuine decline as a decline', async () => {
+    const {worker, events} = build(
+      [offer({})],
+      new FakeBrain({triage: {accept: false, reason: 'the input has no market data'}}),
+    );
+
+    const [outcome] = await worker.tick();
+
+    expect(outcome!.status).toBe('declined');
+    expect(events.some((e) => e.kind === 'declined')).toBe(true);
+    expect(events.some((e) => e.kind === 'failed')).toBe(false);
   });
 });

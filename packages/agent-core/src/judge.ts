@@ -19,26 +19,27 @@ export const Verdict = z.object({
   accept: z.boolean().describe('true if this work has earned its payment'),
   reason: z.string().min(1).max(500).describe('one or two sentences, specific to this result'),
   /**
-   * Five points, because that is the scale models answer on.
+   * A word, not a number.
    *
-   * Asked for 0-100, every model tested returned 3.5, 4 or 4.5 — a five-point
-   * rating, paired with an accepting boolean and prose that plainly endorsed
-   * the work. Read as percentages those became rejections, so the client
-   * disputed work it had just been told was good, and the worker's reputation
-   * took the hit for delivering. The scale was ambiguous and the ambiguity
-   * resolved the expensive way.
+   * `quality` used to be a free number on a stated 0-100 scale, and across
+   * eight live judgements one local model used three different ones: 3.5, 4
+   * and 4.5 out of five; 0.85 and 0.425 out of one. Every one of those came
+   * with `accept: true` and prose that endorsed the work — "it has earned its
+   * payment" — and every one was read as a percentage and flipped to a
+   * reject. The client disputed work it had just been told was good, and the
+   * worker's reputation took the hit for delivering it.
    *
-   * A value above 5 can only be a percentage, and is converted rather than
-   * rejected: a judge whose output fails validation is a judge that disputes
-   * everything.
+   * 0.85 cannot be resolved: it is either 85% or a catastrophe out of five,
+   * and nothing in the response says which. A label has no scale to be
+   * confused about, and models are far steadier at choosing a word from a
+   * list than at anchoring an unbounded number. The cross-check it supports
+   * — never pay on a verdict that contradicts itself — is a real guard again
+   * rather than the largest source of wrong outcomes in the system.
    */
-  quality: z
-    .number()
-    .min(0)
-    .max(100)
-    .describe('0 to 5, where 2.5 is the bar for payment; a 0-100 score is read as a percentage')
-    // Normalised on the way out, so everything downstream compares one scale.
-    .transform((v) => (v > 5 ? v / 20 : v)),
+  rating: z
+    .enum(['poor', 'weak', 'adequate', 'good', 'excellent'])
+    .describe('adequate or better earns payment; weak or poor does not'),
+
   /**
    * Surfaced rather than hidden. An agent that tries to instruct its judge is
    * evidence about that agent, and the demo showing a caught attempt is worth
@@ -50,6 +51,15 @@ export const Verdict = z.object({
 });
 
 export type Verdict = z.infer<typeof Verdict>;
+
+/** The rating as a 0-5 number, for ranking and for display. */
+export const QUALITY: Record<Verdict['rating'], number> = {
+  poor: 0,
+  weak: 1.5,
+  adequate: 3,
+  good: 4,
+  excellent: 5,
+};
 
 export interface JudgeInput {
   capability: string;
@@ -67,7 +77,9 @@ export interface JudgeInput {
 export class Judge {
   constructor(private readonly brain: Brain) {}
 
-  async evaluate(input: JudgeInput): Promise<Verdict & {provider: string; cached: boolean}> {
+  async evaluate(
+    input: JudgeInput,
+  ): Promise<Verdict & {quality: number; provider: string; cached: boolean}> {
     const prompt = [
       `Capability commissioned: ${input.capability}`,
       '',
@@ -89,13 +101,15 @@ export class Judge {
       effort: 'medium',
     });
 
-    // Belt and braces: a model that says `accept: true` and then scores the
-    // work at 0.5 out of 5 has contradicted itself, and paying on a
-    // self-contradictory verdict is worse than disputing. The stricter
-    // reading wins.
-    const accept = value.accept && value.quality >= 2.5;
+    // Belt and braces: a model that says `accept: true` and then calls the
+    // work poor has contradicted itself, and paying on a self-contradictory
+    // verdict is worse than disputing. The stricter reading wins.
+    const accept = value.accept && QUALITY[value.rating] >= QUALITY.adequate;
 
-    return {...value, accept, provider, cached};
+    // A number as well, because ranking and the trace want one — derived
+    // here, deterministically, rather than asked of a model that has no
+    // stable idea what scale it is on.
+    return {...value, accept, quality: QUALITY[value.rating], provider, cached};
   }
 }
 

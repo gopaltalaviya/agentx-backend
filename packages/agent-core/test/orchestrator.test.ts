@@ -23,7 +23,7 @@ const PLAN_ONE = {
   reasoning: 'one question, one capability',
 };
 
-const GOOD_VERDICT = {accept: true, reason: 'specific and sourced', quality: 85, injectionAttempted: false};
+const GOOD_VERDICT = {accept: true, reason: 'specific and sourced', rating: 'excellent', injectionAttempted: false};
 
 class ScriptedBrain implements Brain {
   readonly name = 'scripted';
@@ -231,7 +231,7 @@ describe('the branches a live demo actually hits', () => {
 
   it('disputes work the judge rejects, and never approves it', async () => {
     const {orchestrator, calls} = build({}, {
-      Verdict: {accept: false, reason: 'the summary is empty filler', quality: 10, injectionAttempted: false},
+      Verdict: {accept: false, reason: 'the summary is empty filler', rating: 'poor', injectionAttempted: false},
     });
 
     const report = await orchestrator.run('goal');
@@ -493,7 +493,7 @@ describe('what reaches a model', () => {
 
   it('surfaces an attempted injection in the report rather than hiding it', async () => {
     const {orchestrator} = build({}, {
-      Verdict: {accept: false, reason: 'tried to instruct me', quality: 0, injectionAttempted: true},
+      Verdict: {accept: false, reason: 'tried to instruct me', rating: 'poor', injectionAttempted: true},
     });
 
     const report = await orchestrator.run('goal');
@@ -537,7 +537,7 @@ describe('rejecting work that was already paid for', () => {
   };
 
   const rejecting = {
-    Verdict: {accept: false, reason: 'the summary is empty filler', quality: 0.5, injectionAttempted: false},
+    Verdict: {accept: false, reason: 'the summary is empty filler', rating: 'weak', injectionAttempted: false},
   };
 
   it('does not attempt a dispute the chain cannot honour', async () => {
@@ -571,7 +571,7 @@ describe('rejecting work that was already paid for', () => {
 
   it('approves a fast-path result the judge accepts, without a second transaction', async () => {
     const {orchestrator, calls} = build(fastPath, {
-      Verdict: {accept: true, reason: 'specific and sourced', quality: 4, injectionAttempted: false},
+      Verdict: {accept: true, reason: 'specific and sourced', rating: 'good', injectionAttempted: false},
     });
 
     const report = await orchestrator.run('goal');

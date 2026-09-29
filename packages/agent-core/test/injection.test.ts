@@ -32,7 +32,7 @@ class SpyBrain implements Brain {
   readonly name = 'spy';
   lastRequest?: CompletionRequest<unknown>;
 
-  constructor(private readonly reply: unknown = {accept: true, reason: 'fine', quality: 80, injectionAttempted: false}) {}
+  constructor(private readonly reply: unknown = {accept: true, reason: 'fine', rating: 'good', injectionAttempted: false}) {}
 
   async complete<T>(req: CompletionRequest<T>): Promise<CompletionResult<T>> {
     this.lastRequest = req as CompletionRequest<unknown>;
@@ -126,18 +126,18 @@ describe('Judge', () => {
    * wins.
    */
   it('refuses to accept on a self-contradictory verdict', async () => {
-    const spy = new SpyBrain({accept: true, reason: 'empty output', quality: 10, injectionAttempted: false});
+    const spy = new SpyBrain({accept: true, reason: 'empty output', rating: 'poor', injectionAttempted: false});
     const verdict = await new Judge(spy).evaluate({capability: 'x-y', task: {}, result: {}});
     expect(verdict.accept).toBe(false);
   });
 
   it('accepts work that is genuinely good', async () => {
-    const spy = new SpyBrain({accept: true, reason: 'specific and sourced', quality: 85, injectionAttempted: false});
+    const spy = new SpyBrain({accept: true, reason: 'specific and sourced', rating: 'excellent', injectionAttempted: false});
     expect((await new Judge(spy).evaluate({capability: 'x-y', task: {}, result: {}})).accept).toBe(true);
   });
 
   it('surfaces an injection attempt rather than hiding it', async () => {
-    const spy = new SpyBrain({accept: false, reason: 'tried to instruct me', quality: 0, injectionAttempted: true});
+    const spy = new SpyBrain({accept: false, reason: 'tried to instruct me', rating: 'poor', injectionAttempted: true});
     const verdict = await new Judge(spy).evaluate({capability: 'x-y', task: {}, result: {}});
     expect(verdict.injectionAttempted).toBe(true);
     expect(verdict.accept).toBe(false);
@@ -145,7 +145,7 @@ describe('Judge', () => {
 
   it('constrains the verdict shape so a malformed judgement cannot pass', () => {
     expect(Verdict.safeParse({accept: true, reason: 'ok', quality: 500, injectionAttempted: false}).success).toBe(false);
-    expect(Verdict.safeParse({accept: true, reason: '', quality: 80, injectionAttempted: false}).success).toBe(false);
+    expect(Verdict.safeParse({accept: true, reason: '', rating: 'good', injectionAttempted: false}).success).toBe(false);
   });
 });
 
@@ -200,49 +200,50 @@ void z;
 
 describe('the scale the judge scores on', () => {
   /**
-   * `quality` was specified as 0-100 and every model tested answered on a
-   * five-point scale — 3.5, 4, 4.5 in the recordings, each paired with
-   * `accept: true` and prose that plainly endorsed the work.
+   * There is no scale. That is the fix.
    *
-   * The cross-check then read those as 3.5 out of 100 and flipped the verdict
-   * to reject. So the client disputed work it had just been told was good,
-   * the worker took a reputation hit for delivering, and the demo settled
-   * nothing. The model was not wrong; the scale was ambiguous and we picked
-   * the reading that costs the most.
+   * `quality` was a free number, and across eight live judgements one local
+   * model used three different scales for it: 3.5, 4 and 4.5 out of five;
+   * 0.85 and 0.425 out of one. Each of those came with `accept: true` and
+   * prose that plainly endorsed the work — "it has earned its payment",
+   * "a useful and worthy output". Every one was flipped to a reject by the
+   * numeric cross-check, so the client disputed work it had just been told
+   * was good, and the worker's reputation took the hit for delivering.
    *
-   * Five points is what they produce unprompted, so that is what is asked
-   * for. A value above 5 is unambiguously a percentage and is read as one,
-   * which keeps a 0-100 answer from failing validation outright.
+   * 0.85 is unresolvable: it is either 85% or a catastrophe out of five, and
+   * nothing in the response says which. So the judge is asked for a WORD.
+   * A label has no scale to be confused about, and the cross-check it
+   * supports — refusing to pay on a verdict that contradicts itself — is
+   * back to being a real guard instead of the largest source of wrong
+   * outcomes in the system.
    */
-  const judge = (quality: number, accept = true) =>
+  const judge = (rating: string, accept = true) =>
     new Judge(
-      new SpyBrain({accept, reason: 'specific and sourced', quality, injectionAttempted: false}),
+      new SpyBrain({accept, reason: 'specific and sourced', rating, injectionAttempted: false}),
     ).evaluate({capability: 'x-y', task: {}, result: {}});
 
-  it('accepts the five-point scores models actually return', async () => {
-    for (const q of [3.5, 4, 4.5, 5]) {
-      expect((await judge(q)).accept, `quality ${q}`).toBe(true);
+  it('pays for work the judge calls adequate or better', async () => {
+    for (const r of ['adequate', 'good', 'excellent']) {
+      expect((await judge(r)).accept, r).toBe(true);
     }
   });
 
-  it('still reads a percentage as a percentage', async () => {
-    expect((await judge(85)).accept).toBe(true);
-    // 10 out of 100 is bad work on any reading, and was always meant to be.
-    expect((await judge(10)).accept).toBe(false);
+  it('refuses to pay for work the judge calls poor, whatever the boolean says', async () => {
+    for (const r of ['poor', 'weak']) {
+      expect((await judge(r)).accept, r).toBe(false);
+    }
   });
 
-  it('rejects a low score on the five-point scale', async () => {
-    expect((await judge(1)).accept).toBe(false);
-    expect((await judge(2)).accept).toBe(false);
+  it('never pays against the judge’s own verdict', async () => {
+    expect((await judge('excellent', false)).accept).toBe(false);
   });
 
-  it('never accepts against the judge\u2019s own boolean', async () => {
-    expect((await judge(5, false)).accept).toBe(false);
+  it('still reports a number, for ranking and for the trace', async () => {
+    expect((await judge('excellent')).quality).toBeGreaterThan((await judge('adequate')).quality);
+    expect((await judge('poor')).quality).toBe(0);
   });
 
-  it('reports the score on one scale, whichever the model used', async () => {
-    const asFive = await judge(4);
-    const asPercent = await judge(80);
-    expect(asPercent.quality).toBe(asFive.quality);
+  it('rejects a rating that is not one of the words', async () => {
+    await expect(judge('4.5')).rejects.toThrow();
   });
 });
