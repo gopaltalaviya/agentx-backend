@@ -3,26 +3,26 @@
 > **START HERE every session.** This file is the memory that survives a closed
 > terminal. Read it top to bottom before doing anything else.
 
-- Last updated: **2026-09-28** (Session 21 — deep testing, local deck, submission doc, status workbook)
-- Days to deadline: **15** — verified: **2026-10-13, 11:59 PM ET**
+- Last updated: **2026-09-29** (Session 22 — first end-to-end runs; the loop settles on testnet, and replays)
+- Days to deadline: **14** — verified: **2026-10-13, 11:59 PM ET**
 - Target track: **4 — Trust, Identity & AI Infrastructure** ($30,000)
-- Current state: **live on Monad testnet**; every layer built, none of it yet
-  run end to end with a real model
-- Overall: `██████████████████░░` 87% — **100 / 115 tasks**, **348 tests green**
-  (128 contracts · 213 backend · 7 interface)
+- Current state: **live on Monad testnet, end to end.** `pnpm demo` plans,
+  hires, judges and settles real jobs with a local model (Ollama `llama3` 8B),
+  and replays the same run in `cached` mode with no model at all
+- Overall: `██████████████████░░` 87% — **100 / 115 tasks**, **427 tests green**
+  (128 contracts · 292 backend · 7 interface)
 
 ---
 
 ## ⏭ Next actions
 
-### 👤 You — 4 items, one of them blocking
+### 👤 You — 5 items, none blocking any more
 
-1. **🔴 BLOCKING — a model API key** in `agentx-backend/.env`. That file does
-   not exist yet. Free options, no card:
-   `GEMINI_API_KEY=` (aistudio.google.com/apikey) or `GROQ_API_KEY=`.
-   Do not paste it in chat.
-   *Unblocks:* `pnpm demo`, M3's done-condition, 3 chaos items, the backup
-   video — and the first end-to-end proof that the agent loop works at all.
+1. **A hosted model key is now optional, not blocking.** The demo runs end to
+   end on local Ollama (see Session 22). A key in `agentx-backend/.env`
+   (`GEMINI_API_KEY=` or `GROQ_API_KEY=`, free, no card) would still improve
+   the judgement quality a judge sees in the video — an 8B model plans 2–3
+   steps and its prose is plain. Do not paste it in chat.
 2. **Railway** account + project (M2-22). Deferred to M5 by your earlier call.
 3. **Vercel** account for `agentx-interface`.
 4. **Arbiter and fee-recipient addresses** — both currently default to
@@ -34,18 +34,22 @@
 
 ### 🤖 Claude — next, none of it blocked
 
-1. Finish the docs drift audit: `05`, `06`, `08` still unaudited. This has the
-   highest hit rate of anything right now — auditing `04 §5` yesterday found a
-   defect that would have made the demo refuse to pay for every job.
-2. Submission deck outline + the honest-limitations section.
-3. The moment a key lands: `AGENT_MODE=record pnpm demo`, then the three
-   remaining chaos items.
+1. **The two live-run chaos items** — kill a worker mid-job (refund fires,
+   orchestrator retries), and a slow network. Both are now runnable.
+2. **3 timed rehearsal runs** (under 3 minutes) and the **backup video** from
+   `AGENT_MODE=cached` — the cache now replays a full run faithfully.
+3. **Put the real run into the deck and `docs/11-submission.md`** — the demo
+   slide the deck deliberately left out, with the testnet transactions.
+4. Decide whether `pnpm demo` should require every step to settle. Today it
+   passes with 1 of 3 settled, which is how a broken cached replay passed
+   earlier in this session.
+5. Docs 01–04 and 07 still unaudited against the code.
+6. An intermittent failure in `apps/api/test/meta.test.ts` — see Session 22.
 
 ## 🚧 Blockers
 
 | # | Blocked | Blocked by | Since | Owner |
 |---|---|---|---|---|
-| **B6** | `pnpm demo`, M3 done-condition, 3 chaos items, backup video | no model key in `agentx-backend/.env` | Sep 23 | 👤 |
 | B7 | Interface visual verification | Chrome extension not connected in this session | Sep 23 | 👤 |
 | B8 | Deploy + e2e against real hosting (M2-22/23, M5) | Railway + Vercel accounts | Sep 22 | 👤 |
 
@@ -53,12 +57,12 @@
 Cleared: ~~B1 scaffolding~~ · ~~B2 funded wallets~~ · ~~B3 schedule~~ ·
 ~~B4 deploy target~~ · ~~B5 git push~~ · ~~B9 docs and plan unbacked~~
 (moved into `agentx-backend` on Sep 25, which also fixed a README link that
-was broken on GitHub).
+was broken on GitHub) · ~~B6 no model~~ (Sep 29 — local Ollama instead of a
+hosted key; the full path now runs and settles on testnet).
 
-> **B6 is the one that matters.** Every layer is built and tested in
-> isolation, but the orchestrator → worker → judge → settle path has never
-> executed against a real model. The last four defects all lived on exactly
-> that path and all passed their unit tests first.
+> **B6 cleared the way it was predicted to matter.** The first real runs of
+> orchestrator → worker → judge → settle found sixteen defects on exactly
+> that path, none of them caught by the tests passing at the time.
 
 ## 🔌 Cold start — resuming after the terminal closed
 
@@ -150,6 +154,26 @@ DATABASE_URL=postgres://agentx:agentx@127.0.0.1:5442/agentx VERIFY_CHAIN_ID=1014
 Without the env loaded the script falls back to the well-known Anvil key
 `0xf39F…2266`, which has no funds on Monad, and fails on the first write with
 a confusing revert.
+
+### The demo, end to end on testnet — verified 2026-09-29
+
+```bash
+cd agentx-backend
+docker compose up -d && pnpm -r build           # demo imports from dist/
+set -a; . ../agentx-contracts/.env; set +a
+export VERIFY_CHAIN_ID=10143 AGENTX_CONTRACTS_ROOT=../agentx-contracts \
+       DATABASE_URL=postgres://agentx:agentx@127.0.0.1:5442/agentx
+
+# Live, local model, no API quota spent (needs Ollama with llama3 pulled)
+AGENT_MODE=record BRAIN_CHAIN=ollama OLLAMA_MODEL=llama3:latest node scripts/demo.mjs
+
+# Replay that recording — no model at all. This is the backup-video path.
+AGENT_MODE=cached node scripts/demo.mjs
+```
+
+Each run spends a little testnet MON and registers four fresh agents. The
+recording lives in `.agent-cache/` (gitignored). **Any change to a prompt or
+a schema invalidates it** — re-record before relying on `cached`.
 
 ### Environment gotchas — each of these cost real time
 
@@ -469,10 +493,10 @@ are used instead. Two contracts were deleted from the original design.
 
 | | Item | Owner |
 |---|---|---|
-| 🔴 | `pnpm demo` — **never run**. This is M3's done-condition | blocked on the key |
+| ✅ | `pnpm demo` — **runs and settles on Monad testnet** (Sep 29, Ollama `llama3` 8B), and replays in `cached` mode | M3's done-condition |
 | ⬜ | Interface opened in a browser — nothing has checked how it *renders* | 👤 / 🤖 |
-| ⬜ | 3 clean rehearsal runs, timed under 3 minutes | after the key |
-| ⬜ | Backup video recorded in `cached` mode | after the key |
+| ⬜ | 3 clean rehearsal runs, timed under 3 minutes | 🤖 unblocked |
+| ⬜ | Backup video recorded in `cached` mode | unblocked |
 | ⬜ | `e2e.mjs` against Railway rather than localhost | after Railway |
 
 ### 5. Defects found and fixed during hardening
@@ -585,6 +609,57 @@ Append-only. Never rewrite a decision — supersede it with a new row.
 ## 📓 Session log
 
 Newest first. One entry per working session, however short.
+
+### Session 22 — 2026-09-29 (the loop runs end to end · 16 defects on the live path)
+
+**Shipped** — backend `03026e5` `403633a` `b211456` `bc48a27` `c203214` ·
+contracts `164f17c`. 128 + 292 + 7 = **427 tests green**.
+
+(Session 21, 2026-09-28, shipped the local `.pptx` deck, `docs/11-submission.md`,
+the status workbook and signer/DB/AgentAccount tests; it has no entry of its
+own — its commits say what it did.)
+
+**B6 cleared without a hosted key.** Ollama was already on this machine with
+`llama3` 8B, which costs no API quota, so the live path finally ran. It had
+never once settled a job. Sixteen defects on the orchestrator → worker →
+judge → settle path, **none caught by the ~270 tests passing at the time**;
+each fix has a test confirmed failing against the old code first. The full
+list is in the commit bodies; the ones worth remembering:
+
+- **The demo truncated the indexer cursor**, so every run started 1.6M blocks
+  behind at Monad's 100-block log cap. `.catch(() => {})` hid it for five runs.
+- **Workers were registered to `0x1111…` addresses nobody holds a key to**,
+  so every accept reverted `NotAgentWallet`, surfaced as "unknown reason".
+- **A new agent had no spend policy**: the budget read zero and the
+  orchestrator refused to hire, while the signer enforced nothing.
+- **Fast-path jobs are `settled` at creation**, which workers, `submitResult`
+  and `awaitResult` each misread in a different way.
+- **The judge's numeric score** came back on three different scales from one
+  model; read as percentages, good work was disputed and the worker's
+  reputation took the hit. Now a word — poor … excellent — and the number is
+  derived from it.
+- **A worker whose model was down reported every job as a considered
+  decline.** Now a `failed` outcome at stage `triage`.
+- **Recorders sharing one cache file erased each other.** A cached replay of
+  a run that settled 3/3 jobs settled 1/3 — and `pnpm demo` still said
+  *passed*. Fixed; a clean re-record then replayed identically on chain (same
+  plan, same verdicts, same 0.0693 MockUSDC paid).
+
+**Also cleaned up:** debug code from earlier in the day that wrote every
+cache miss into `./artifacts/` from inside the library.
+
+**Open, not chased blind:** `apps/api/test/meta.test.ts > GET /v1/network >
+answers without credentials` failed once in six full-suite runs and never in
+isolation. The failing run's output was not kept. Session 20's flake turned
+out to be a real race, so the next occurrence needs its message recorded
+before anything else.
+
+**Pushing:** backend was left one commit ahead of `origin` by the earlier
+part of the session; pushed with this entry.
+
+**Next** — the two live chaos items, timed rehearsals and the backup video,
+the real run into the deck and submission doc. You: a hosted key is now a
+quality upgrade rather than a blocker.
 
 ### Session 20 — 2026-09-28 (docs 05/08 audit · a real race · CI · interface tests)
 
