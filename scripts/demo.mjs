@@ -386,7 +386,11 @@ try {
       console.log(`  ${describeEvent(e)}`);
     },
   });
-  const report = await orchestrator.run(GOAL, {timeoutMs: 90_000});
+  // Per step. 90s was enough for a hosted model and too tight for a local 8B
+  // one on a laptop: a live chaos run had a healthy worker still generating
+  // when the step gave up. A dead worker is still caught within 45s — it
+  // never accepts — so this only lengthens the wait for a slow LIVE one.
+  const report = await orchestrator.run(GOAL, {timeoutMs: 180_000});
 
   // ── 7. assertions, against the chain ──────────────────────────────────
   console.log('');
