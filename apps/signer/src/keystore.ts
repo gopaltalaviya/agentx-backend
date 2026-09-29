@@ -28,6 +28,12 @@ export interface KeySource {
    * refuses any mismatch rather than broadcasting a certain revert.
    */
   accountFor(agentId: number, wallet?: string): Promise<Account | null>;
+  /**
+   * Every key this source holds. An agent whose wallet is an AgentAccount is
+   * signed for by a SESSION key the account has granted — an address that is
+   * not the wallet — so the signer asks the account which of these it trusts.
+   */
+  all?(): Account[];
   readonly kind: string;
 }
 
@@ -134,6 +140,10 @@ export class EnvKeystoreSource implements KeySource {
     return this.fallback;
   }
 
+  all(): Account[] {
+    return [...this.accounts.values(), ...(this.fallback ? [this.fallback] : [])];
+  }
+
   get agentCount(): number {
     return this.accounts.size || (this.fallback ? 1 : 0);
   }
@@ -185,6 +195,10 @@ export class RawKeySource implements KeySource {
       if (match) return match;
     }
     return this.fallback;
+  }
+
+  all(): Account[] {
+    return [...this.byAddress.values()];
   }
 
   get keyCount(): number {

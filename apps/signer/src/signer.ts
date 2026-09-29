@@ -1,5 +1,14 @@
-import {createPublicClient, createWalletClient, http, type Abi, type Hex, type PublicClient} from 'viem';
-import {eq, and, sql} from 'drizzle-orm';
+import {
+  createPublicClient,
+  createWalletClient,
+  encodeFunctionData,
+  http,
+  type Abi,
+  type Account,
+  type Hex,
+  type PublicClient,
+} from 'viem';
+import {and, eq, gte, isNull, sql} from 'drizzle-orm';
 import type {ChainConfig} from '@agentx/config';
 import {type Db, signerTxs, agents} from '@agentx/db';
 import {AgentxError, ErrorCode} from '@agentx/shared';
@@ -88,28 +97,53 @@ export class SignerService {
     const agent = await this.loadAgent(req.agentId);
     const wallet = agent.walletAddress as Hex;
 
-    const account = await keys.accountFor(req.agentId, wallet);
-    if (!account) {
-      throw new AgentxError(ErrorCode.AGENT_NOT_HIREABLE, `no signing key for agent ${req.agentId}`);
-    }
+    // Two kinds of wallet, two ways to sign.
+    //
+    // An AgentAccount is a contract: the call goes TO the account as
+    // `execute(target, data)`, signed by its owner or a session key it has
+    // granted, and the account makes the call — so `msg.sender` at the escrow
+    // is the account, the registered wallet, and the caps are enforced by the
+    // account itself, on chain. A plain EOA signs for itself.
+    let account: Account | null;
+    let to: Hex = req.target;
+    let data: Hex = req.data;
 
-    // Signing with somebody else's key produces a transaction that is valid,
-    // costs gas, and reverts — `NotAgentWallet`, surfaced as "execution
-    // reverted for an unknown reason" because the revert data is a custom
-    // error. A single shared dev key made that the outcome of every accept,
-    // submitResult and approve in the system. Refusing here says which two
-    // addresses disagree, before any gas is spent.
-    if (account.address.toLowerCase() !== wallet.toLowerCase()) {
-      throw new AgentxError(
-        ErrorCode.AGENT_NOT_HIREABLE,
-        `agent ${req.agentId} is registered to wallet ${wallet}, but the only key available signs as ` +
-          `${account.address} — the chain checks msg.sender against the registered wallet, so this would revert`,
-      );
+    if (capsOnChain) {
+      account = await this.keyTrustedBy(wallet);
+      if (!account) {
+        throw new AgentxError(
+          ErrorCode.AGENT_NOT_HIREABLE,
+          `agent ${req.agentId}'s wallet ${wallet} is an AgentAccount, and no key held here is its owner ` +
+            'or an unexpired session key — the owner must grant one',
+        );
+      }
+      to = wallet;
+      data = encodeFunctionData({abi: EXECUTE_ABI, functionName: 'execute', args: [req.target, req.data]});
+    } else {
+      account = await keys.accountFor(req.agentId, wallet);
+      if (!account) {
+        throw new AgentxError(ErrorCode.AGENT_NOT_HIREABLE, `no signing key for agent ${req.agentId}`);
+      }
+
+      // Signing with somebody else's key produces a transaction that is valid,
+      // costs gas, and reverts — `NotAgentWallet`, surfaced as "execution
+      // reverted for an unknown reason" because the revert data is a custom
+      // error. A single shared dev key made that the outcome of every accept,
+      // submitResult and approve in the system. Refusing here says which two
+      // addresses disagree, before any gas is spent.
+      if (account.address.toLowerCase() !== wallet.toLowerCase()) {
+        throw new AgentxError(
+          ErrorCode.AGENT_NOT_HIREABLE,
+          `agent ${req.agentId} is registered to wallet ${wallet}, but the only key available signs as ` +
+            `${account.address} — the chain checks msg.sender against the registered wallet, so this would revert`,
+        );
+      }
     }
+    const signer = account;
 
     // 3. Gas. Refusing is better than broadcasting a transaction that will
     //    fail and still consume a nonce.
-    const balance = await this.pub.getBalance({address: account.address});
+    const balance = await this.pub.getBalance({address: signer.address});
     if (balance < this.gasFloor) {
       throw new AgentxError(
         ErrorCode.INSUFFICIENT_FUNDS,
@@ -122,9 +156,28 @@ export class SignerService {
     //    the only thing that holds across process restarts and replicas.
     return this.withAgentLock(req.agentId, async () => {
       const nonce = await this.pub.getTransactionCount({
-        address: account.address,
+        address: signer.address,
         blockTag: 'pending',
       });
+
+      // A failed broadcast that never reached the chain still holds its
+      // nonce in our ledger, and the next request — given that same nonce by
+      // the node — collided with it and was refused as "in flight". The
+      // chain's own pending count proves such a nonce was never used (had
+      // the transaction reached even the mempool, the count would be past
+      // it), so the stale claim is released. A retry of that request simply
+      // claims a fresh slot.
+      await db
+        .delete(signerTxs)
+        .where(
+          and(
+            eq(signerTxs.chainId, chain.chainId),
+            eq(signerTxs.agentId, req.agentId),
+            eq(signerTxs.status, 'failed'),
+            isNull(signerTxs.txHash),
+            gte(signerTxs.nonce, nonce),
+          ),
+        );
 
       // Claim the slot BEFORE broadcasting. If we crash between claiming and
       // broadcasting, the row is 'pending' with no hash and is visible for
@@ -191,13 +244,14 @@ export class SignerService {
         }
       }
 
-      const wallet = createWalletClient({account, transport: http(chain.rpcUrl)});
+      const client = createWalletClient({account: signer, transport: http(chain.rpcUrl)});
 
       let txHash: Hex;
       try {
-        txHash = await wallet.sendTransaction({
-          to: req.target,
-          data: req.data,
+        txHash = await client.sendTransaction({
+          // For an AgentAccount this is the account, carrying execute(...).
+          to,
+          data,
           // The slot's nonce, which on a retry is the original one.
           nonce: slot.nonce,
           chain: null,
@@ -214,7 +268,15 @@ export class SignerService {
           .where(eq(signerTxs.id, slot.id))
           .catch(() => undefined);
 
-        throw asActionableError(err, chain.network.nativeCurrency.symbol, account.address);
+        // The caller gets a sentence; the log keeps the whole error. A live
+        // run once failed as "Missing or invalid parameters" and nothing
+        // anywhere recorded what the node had actually said.
+        const e = err as {shortMessage?: string; details?: string; message?: string};
+        this.log.warn(
+          {agentId: req.agentId, to, signer: signer.address, short: e.shortMessage, details: e.details, message: e.message?.slice(0, 2000)},
+          'broadcast failed',
+        );
+        throw asActionableError(err, chain.network.nativeCurrency.symbol, signer.address);
       }
 
       await db
@@ -256,7 +318,10 @@ export class SignerService {
     const agent = await this.loadAgent(req.agentId);
 
     const accountAbi = abis['AgentAccount'];
-    if (!accountAbi || req.spend === 0n) return false;
+    // Read even when nothing is spent: whether the wallet IS an account
+    // decides how every call is signed — approve, dispute and cancel spend
+    // nothing and still have to go through it.
+    if (!accountAbi) return false;
 
     // Read the caps from the chain, not from our cache. The cache exists for
     // fast rejection; the contract is the authority, and a stale cache that
@@ -304,6 +369,35 @@ export class SignerService {
     }
 
     return perTaskCap !== null && dailyRemaining !== null;
+  }
+
+  /**
+   * A key held here that this AgentAccount will accept: its owner, or a
+   * session key it granted that has not expired. Asked of the account every
+   * time rather than cached — a revoke must take effect on the next call.
+   */
+  private async keyTrustedBy(wallet: Hex): Promise<Account | null> {
+    const held = this.deps.keys.all?.() ?? [];
+    if (held.length === 0) return null;
+
+    const owner = await this.pub
+      .readContract({address: wallet, abi: ACCOUNT_KEYS_ABI, functionName: 'owner'})
+      .catch(() => null);
+    const now = BigInt(Math.floor(Date.now() / 1000));
+
+    // Prefer a session key: bounded in time and budget, which is the point.
+    // The owner's key is the fallback, and on a real deployment is not here.
+    let ownerKey: Account | null = null;
+    for (const key of held) {
+      const [expiry] = await this.pub
+        .readContract({address: wallet, abi: ACCOUNT_KEYS_ABI, functionName: 'sessionKeys', args: [key.address]})
+        .catch(() => [0n, 0n, 0n] as const);
+      // A minute of margin: a key that expires while its transaction is in
+      // the mempool reverts, and costs gas doing it.
+      if (expiry > now + 60n) return key;
+      if (owner && owner.toLowerCase() === key.address.toLowerCase()) ownerKey = key;
+    }
+    return ownerKey;
   }
 
   /**
@@ -398,6 +492,36 @@ export class SignerService {
 
 const DAY_SECONDS = 24 * 60 * 60;
 
+/** AgentAccount.execute — the only way a call leaves an account. */
+const EXECUTE_ABI = [
+  {
+    type: 'function',
+    name: 'execute',
+    stateMutability: 'nonpayable',
+    inputs: [
+      {name: 'target', type: 'address'},
+      {name: 'data', type: 'bytes'},
+    ],
+    outputs: [{name: 'result', type: 'bytes'}],
+  },
+] as const;
+
+/** Who an AgentAccount will take a call from. */
+const ACCOUNT_KEYS_ABI = [
+  {type: 'function', name: 'owner', stateMutability: 'view', inputs: [], outputs: [{name: '', type: 'address'}]},
+  {
+    type: 'function',
+    name: 'sessionKeys',
+    stateMutability: 'view',
+    inputs: [{name: 'key', type: 'address'}],
+    outputs: [
+      {name: 'expiry', type: 'uint64'},
+      {name: 'budget', type: 'uint128'},
+      {name: 'spent', type: 'uint128'},
+    ],
+  },
+] as const;
+
 /**
  * Turn a broadcast failure into something the operator can act on.
  *
@@ -409,15 +533,20 @@ const DAY_SECONDS = 24 * 60 * 60;
  */
 function asActionableError(err: unknown, gasSymbol: string, from: string): AgentxError {
   const message = err instanceof Error ? err.message : String(err);
+  // Classify on what the node SAID, not on viem's full message: that carries
+  // the whole request body, and "503" inside a transaction's hex once turned
+  // an empty gas wallet into "the RPC endpoint is unreachable".
+  const e = err as {shortMessage?: string; details?: string};
+  const said = [e.shortMessage, e.details].filter(Boolean).join(' ') || message;
 
-  if (/insufficient funds|exceeds the balance|gas required exceeds/i.test(message)) {
+  if (/insufficient (funds|balance)|exceeds the balance|gas required exceeds/i.test(said)) {
     return new AgentxError(
       ErrorCode.INSUFFICIENT_FUNDS,
       `the agent wallet ${from} has no ${gasSymbol} left for gas — top it up and retry the same request`,
     );
   }
 
-  if (/fetch failed|ECONNREFUSED|ETIMEDOUT|socket hang up|503|502|504/i.test(message)) {
+  if (/fetch failed|ECONNREFUSED|ETIMEDOUT|socket hang up|\b50[234]\b/i.test(said)) {
     return new AgentxError(
       ErrorCode.CHAIN_NOT_ENABLED,
       `the RPC endpoint is unreachable — the transaction was NOT broadcast, so retrying the same request is safe (${message})`,

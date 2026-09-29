@@ -24,7 +24,7 @@
 import {spawn} from 'node:child_process';
 import {randomBytes} from 'node:crypto';
 import {createWriteStream, mkdirSync} from 'node:fs';
-import {createPublicClient, createWalletClient, http, parseAbi} from 'viem';
+import {createPublicClient, createWalletClient, http, parseAbi, toFunctionSelector} from 'viem';
 import {privateKeyToAccount} from 'viem/accounts';
 import {foundry} from 'viem/chains';
 import postgres from 'postgres';
@@ -200,7 +200,37 @@ try {
   // behind them at all. Every accept reverted with `NotAgentWallet`, which
   // viem reports as "execution reverted for an unknown reason", and the
   // escrow path had therefore never once completed.
-  await write(identity, abis['MockIdentityRegistry'], 'register', ['ipfs://orchestrator', DEPLOYER.address]);
+  // ── the orchestrator spends through an AgentAccount ─────────────────
+  // The claim this project rests on is that a hijacked agent cannot spend
+  // past caps its owner set — enforced by a contract, not by our server.
+  // Until now no agent used one. The orchestrator is the only agent that
+  // spends, so it gets an account: the OWNER (the deployer, standing in for
+  // a human) creates it, sets its caps and allowlists, funds it, grants the
+  // escrow an allowance, and gives the signer's hot key a session key that
+  // expires within a day. The hot key can then spend — but only through the
+  // account, only to the escrow, only within the caps.
+  const factory = chain.contracts['AgentAccountFactory'];
+  const accountAbi = abis['AgentAccount'];
+  const salt = `0x${firstId.toString(16).padStart(64, '0')}`;
+  const orchestratorWallet = await pub.readContract({
+    address: factory, abi: abis['AgentAccountFactory'], functionName: 'predictAddress', args: [DEPLOYER.address, salt],
+  });
+  const caps = {perTaskCap: BigInt(chain.params.defaultPerTaskCap), dailyCap: BigInt(chain.params.defaultDailyCap), allowlistOnly: true};
+  await write(factory, abis['AgentAccountFactory'], 'createAccount', [DEPLOYER.address, salt, caps]);
+  await write(orchestratorWallet, accountAbi, 'setAllowedTarget', [escrow, true]);
+  for (const fn of ['createJob', 'directPay', 'approve', 'dispute', 'cancel']) {
+    const item = abis['TaskEscrow'].find((x) => x.type === 'function' && x.name === fn);
+    await write(orchestratorWallet, accountAbi, 'setAllowedSelector', [toFunctionSelector(item), true]);
+  }
+  await write(orchestratorWallet, accountAbi, 'setAllowance', [escrow, 1_000_000_000n]);
+  await write(token, erc20, 'mint', [orchestratorWallet, 1_000_000n]); // 1 MockUSDC to spend
+  const hotKey = `0x${'0a'.repeat(32)}`;
+  const hot = privateKeyToAccount(hotKey);
+  const block = await pub.getBlock({blockTag: 'latest'});
+  await write(orchestratorWallet, accountAbi, 'grantSessionKey', [hot.address, block.timestamp + 23n * 3600n, caps.dailyCap]);
+  ok(`orchestrator spends through AgentAccount ${orchestratorWallet} — caps ${chain.formatToken(caps.perTaskCap)}/task, ${chain.formatToken(caps.dailyCap)}/day, escrow-only, session key ${hot.address.slice(0, 10)}…`);
+
+  await write(identity, abis['MockIdentityRegistry'], 'register', ['ipfs://orchestrator', orchestratorWallet]);
 
   const workerKeys = WORKERS.map(
     (_, i) => `0x${(i + 1).toString(16).padStart(2, '0').repeat(32)}`,
@@ -223,13 +253,23 @@ try {
   // signer's gas floor mid-demo. These wallets are the same every run, so
   // this is paid once, not per run.
   const GAS_TOPUP = 100_000_000_000_000_000n;
-  for (const [i, account] of workerAccounts.entries()) {
+  // Gas comes from FUNDER, whose documented job this is, rather than
+  // draining DEPLOYER, which pays for every registration and bond. This runs
+  // before the signer starts, so it cannot race the keeper for FUNDER's
+  // nonces.
+  const gasPayer = process.env.FUNDER_PRIVATE_KEY
+    ? createWalletClient({account: privateKeyToAccount(process.env.FUNDER_PRIVATE_KEY), chain: viemChain, transport: http(chain.rpcUrl)})
+    : wallet;
+  // The orchestrator's session key needs more: every call it makes goes
+  // through AgentAccount.execute, and Monad reserves the full gas LIMIT —
+  // about 0.054 MON per wrapped call — so 0.1 MON ran dry after two.
+  const topups = [...workerAccounts.map((a) => [a, GAS_TOPUP]), [hot, 500_000_000_000_000_000n]];
+  for (const [account, target] of topups) {
     const balance = await pub.getBalance({address: account.address});
-    if (balance >= GAS_TOPUP) continue;
+    if (balance >= target) continue;
     await pub.waitForTransactionReceipt({
-      hash: await wallet.sendTransaction({to: account.address, value: GAS_TOPUP - balance}),
+      hash: await gasPayer.sendTransaction({to: account.address, value: target - balance}),
     });
-    void i;
   }
   ok(`${WORKERS.length + 1} agents on-chain (ids ${firstId}…${firstId + BigInt(WORKERS.length)}), ${WORKERS.length} workers bonded and funded for gas`);
 
@@ -246,7 +286,8 @@ try {
     // One key PER AGENT, selected by the wallet the agent is registered to.
     // A single shared key signs every transaction as the deployer, which the
     // chain rejects for anything it checks msg.sender on.
-    SIGNER_DEV_PRIVATE_KEYS: workerKeys.join(','),
+    // The workers' own keys, plus the orchestrator account's session key.
+    SIGNER_DEV_PRIVATE_KEYS: [...workerKeys, hotKey].join(','),
     SIGNER_PORT: String(SIGNER_PORT),
     SIGNER_URL: `http://127.0.0.1:${SIGNER_PORT}`,
     // Shared by the API and the signer, fresh per run.
@@ -318,7 +359,7 @@ try {
     return body;
   };
 
-  const orchestratorAgent = await register('Orchestrator', 'orchestration', '0', firstId, DEPLOYER.address);
+  const orchestratorAgent = await register('Orchestrator', 'orchestration', '0', firstId, orchestratorWallet);
   const workerAgents = [];
   for (const [i, w] of WORKERS.entries()) {
     workerAgents.push(
@@ -437,6 +478,16 @@ try {
   paid > 0n
     ? ok(`workers were actually paid ${chain.formatToken(paid)} in total`)
     : fail('no worker balance changed — nothing was really paid');
+
+  // The spending happened inside the account, where the caps live. Read its
+  // own counter back from the chain. It counts every hire that moved money,
+  // including one later cancelled and refunded — a refund arrives as a
+  // deposit, not as negative spend — so the invariant is the cap, not the sum
+  // of the settled steps.
+  const spentOnChain = await pub.readContract({address: orchestratorWallet, abi: accountAbi, functionName: 'spentToday'});
+  spentOnChain > 0n && spentOnChain <= caps.dailyCap
+    ? ok(`the orchestrator's AgentAccount recorded ${chain.formatToken(spentOnChain)} spent, on chain, within its ${chain.formatToken(caps.dailyCap)} daily cap`)
+    : fail(`AgentAccount spentToday is ${spentOnChain} against a daily cap of ${caps.dailyCap}`);
 
   // Wait for the indexer to catch up, then check reputation came from a
   // settlement rather than from our own optimistic write.

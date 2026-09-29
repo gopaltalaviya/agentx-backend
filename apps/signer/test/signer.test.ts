@@ -1,7 +1,7 @@
 import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, it} from 'vitest';
 import {createServer, type Server} from 'node:http';
 import {fileURLToPath} from 'node:url';
-import {encodeAbiParameters, toFunctionSelector, type Hex} from 'viem';
+import {decodeFunctionData, encodeAbiParameters, parseTransaction, toFunctionSelector, type Hex} from 'viem';
 import {privateKeyToAccount} from 'viem/accounts';
 import {sql} from 'drizzle-orm';
 import {loadConfig, loadAbis} from '@agentx/config';
@@ -42,6 +42,12 @@ interface ChainState {
   dayStart: bigint;
   /** A plain EOA: no code, so every contract read returns empty data. */
   eoa?: boolean;
+  /** AgentAccount.owner(). Defaults to the held key. */
+  owner: string;
+  /** AgentAccount.sessionKeys(key).expiry, by lowercased key address. */
+  sessionExpiry: Record<string, bigint>;
+  /** The last broadcast, decoded — where it went and what it carried. */
+  lastTx?: {to: string | undefined; data: Hex | undefined};
   /** When set, eth_sendRawTransaction fails with this message. */
   broadcastError?: string;
   broadcasts: number;
@@ -60,6 +66,8 @@ function reset(): ChainState {
     dailyCap: 500_000n,
     dailyRemaining: 400_000n,
     dayStart: BigInt(Math.floor(Date.now() / 1000)),
+    owner: ACCOUNT.address,
+    sessionExpiry: {},
     broadcasts: 0,
   };
 }
@@ -69,6 +77,8 @@ const uint = (v: bigint) => encodeAbiParameters([{type: 'uint256'}], [v]);
 const SELECTORS = {
   dailyRemaining: toFunctionSelector('function dailyRemaining() view returns (uint128)'),
   dayStart: toFunctionSelector('function dayStart() view returns (uint64)'),
+  owner: toFunctionSelector('function owner() view returns (address)'),
+  sessionKeys: toFunctionSelector('function sessionKeys(address) view returns (uint64,uint128,uint128)'),
 };
 
 /** A JSON-RPC server that answers only what viem asks of this code path. */
@@ -103,6 +113,14 @@ function rpc(method: string, params: unknown[]): unknown {
       const data = String((params[0] as {data?: string}).data ?? '');
       if (data.startsWith(SELECTORS.dailyRemaining)) return uint(state.dailyRemaining);
       if (data.startsWith(SELECTORS.dayStart)) return uint(state.dayStart);
+      if (data.startsWith(SELECTORS.owner)) return encodeAbiParameters([{type: 'address'}], [state.owner as Hex]);
+      if (data.startsWith(SELECTORS.sessionKeys)) {
+        const key = `0x${data.slice(-40)}`.toLowerCase();
+        return encodeAbiParameters(
+          [{type: 'uint64'}, {type: 'uint128'}, {type: 'uint128'}],
+          [state.sessionExpiry[key] ?? 0n, 0n, 0n],
+        );
+      }
       // policy() -> (uint128 perTaskCap, uint128 dailyCap, bool allowlistOnly)
       return encodeAbiParameters(
         [{type: 'uint128'}, {type: 'uint128'}, {type: 'bool'}],
@@ -112,6 +130,10 @@ function rpc(method: string, params: unknown[]): unknown {
     case 'eth_sendRawTransaction':
       if (state.broadcastError) throw new Error(state.broadcastError);
       state.broadcasts++;
+      {
+        const tx = parseTransaction(params[0] as Hex);
+        state.lastTx = {to: tx.to ?? undefined, data: tx.data};
+      }
       // The pending nonce advances, as a real node's does.
       state.nonce++;
       return TX_HASH;
@@ -176,6 +198,7 @@ function makeSigner(
     abis: loadAbis() as never,
     keys: (over.keys ?? {
       accountFor: async () => (over.withKey === false ? null : ACCOUNT),
+      all: () => (over.withKey === false ? [] : [ACCOUNT]),
     }) as never,
     ...(over.gasFloorWei !== undefined ? {gasFloorWei: over.gasFloorWei} : {}),
   });
@@ -415,7 +438,13 @@ describe('signing as the right agent', () => {
   });
 
   it('tells the keystore which wallet it needs, not only which agent', async () => {
+    // A plain wallet signs for itself, so the keystore must produce ITS key.
+    // (An AgentAccount wallet is signed for by a session key instead — below.)
+    state.eoa = true;
     const id = await anAgent();
+    await db.execute(
+      sql`INSERT INTO spend_policies (agent_id, per_task_cap, daily_cap) VALUES (${id}, '100000', '1000000')`,
+    );
     const asked: unknown[] = [];
 
     const signer = makeSigner({
@@ -517,5 +546,147 @@ describe('an EOA agent, which is every agent today', () => {
     const agentId = await anAgent();
     const result = await makeSigner().sign(request(agentId, {spend: 0n}));
     expect(result.replayed).toBe(false);
+  });
+});
+
+/**
+ * An agent whose wallet is an AgentAccount — the contract the project's
+ * headline claim rests on, and which no agent used until now.
+ *
+ * The signer used to sign every call as the wallet itself. For a contract
+ * wallet that is impossible — nobody holds a contract's key — so the call
+ * has to go TO the account, as execute(target, data), signed by a key the
+ * account trusts; the account then makes the call and measures what it
+ * spent against caps no hot key can change.
+ */
+describe('an agent whose wallet is an AgentAccount', () => {
+  const CONTRACT = ('0x' + 'ac'.repeat(20)) as Hex;
+  const HUMAN = '0x' + '0f'.repeat(20);
+
+  async function accountAgent(): Promise<number> {
+    const rows = (await db.execute(
+      sql`INSERT INTO agents (chain_id, owner_address, wallet_address, name, price_per_task)
+          VALUES (31337, ${HUMAN}, ${CONTRACT}, 'Orchestrator', 0) RETURNING id`,
+    )) as unknown as {id: number}[];
+    return rows[0]!.id;
+  }
+
+  const asExecute = () => {
+    const {functionName, args} = decodeFunctionData({
+      abi: [
+        {
+          type: 'function',
+          name: 'execute',
+          stateMutability: 'nonpayable',
+          inputs: [
+            {name: 'target', type: 'address'},
+            {name: 'data', type: 'bytes'},
+          ],
+          outputs: [{type: 'bytes'}],
+        },
+      ],
+      data: state.lastTx!.data!,
+    });
+    return {functionName, target: String(args[0]).toLowerCase(), data: args[1]};
+  };
+
+  beforeEach(() => {
+    state.owner = HUMAN;
+    state.sessionExpiry = {[ACCOUNT.address.toLowerCase()]: BigInt(Math.floor(Date.now() / 1000) + 3600)};
+  });
+
+  it('sends execute(target, data) to the account, signed by a live session key', async () => {
+    const agentId = await accountAgent();
+    const req = request(agentId);
+
+    await makeSigner().sign(req);
+
+    expect(state.lastTx!.to!.toLowerCase()).toBe(CONTRACT);
+    const call = asExecute();
+    expect(call.functionName).toBe('execute');
+    expect(call.target).toBe(req.target.toLowerCase());
+    expect(call.data).toBe(req.data);
+  });
+
+  /** approve, dispute and cancel spend nothing and must still come from the account. */
+  it('routes a call that spends nothing through the account too', async () => {
+    const agentId = await accountAgent();
+    await makeSigner().sign(request(agentId, {spend: 0n}));
+    expect(state.lastTx!.to!.toLowerCase()).toBe(CONTRACT);
+  });
+
+  it('refuses when no key held here is trusted by the account', async () => {
+    const agentId = await accountAgent();
+    state.sessionExpiry = {[ACCOUNT.address.toLowerCase()]: BigInt(Math.floor(Date.now() / 1000) - 10)};
+
+    const err = await expectRefusal(makeSigner().sign(request(agentId)), ErrorCode.AGENT_NOT_HIREABLE);
+    expect(err.message).toMatch(/session key/);
+    expect(state.broadcasts).toBe(0);
+  });
+
+  /** The chain holds these caps; a second, off-chain ledger would only drift from it. */
+  it('leaves the cap to the account rather than to a policy row', async () => {
+    const agentId = await accountAgent(); // no spend_policies row at all
+    const result = await makeSigner().sign(request(agentId, {spend: 20_000n}));
+    expect(result.replayed).toBe(false);
+  });
+
+  it('still refuses, before any gas, a spend the account would revert', async () => {
+    const agentId = await accountAgent();
+    await expectRefusal(makeSigner().sign(request(agentId, {spend: 150_000n})), ErrorCode.BUDGET_EXCEEDED);
+    expect(state.broadcasts).toBe(0);
+  });
+});
+
+describe('after a broadcast that failed', () => {
+  /**
+   * A failed broadcast keeps its row — and its nonce — so a retry of the SAME
+   * request reuses that nonce. But the chain never saw it, so the next
+   * DIFFERENT request is given the same pending nonce, collides with the
+   * failed row on (agent, nonce), and was refused as "a request with this key
+   * is in flight". A live run lost a whole step to it: one gas shortfall
+   * blocked every later hire by that agent.
+   */
+  it('lets the next request use the nonce the chain never saw', async () => {
+    const agentId = await anAgent();
+    const signer = makeSigner();
+
+    state.broadcastError = 'insufficient funds for gas';
+    await signer.sign(request(agentId)).catch(() => undefined);
+
+    state.broadcastError = undefined;
+    const next = await signer.sign(request(agentId));
+    expect(next.replayed).toBe(false);
+    expect(state.broadcasts).toBe(1);
+  });
+
+  it('still lets the failed request itself be retried', async () => {
+    const agentId = await anAgent();
+    const signer = makeSigner();
+    const req = request(agentId, {idempotencyKey: 'retry-me-001'});
+
+    state.broadcastError = 'insufficient funds for gas';
+    await signer.sign(req).catch(() => undefined);
+    await signer.sign(request(agentId)).catch(() => undefined); // a different request fails too
+    state.broadcastError = undefined;
+
+    expect((await signer.sign(req)).replayed).toBe(false);
+  });
+});
+
+describe('what a failed broadcast is reported as', () => {
+  /** The node's words were "Signer had insufficient balance"; we said the RPC was unreachable. */
+  it('names an empty gas wallet as that, whatever the node calls it', async () => {
+    const agentId = await anAgent();
+    state.broadcastError = 'Signer had insufficient balance';
+    await expectRefusal(makeSigner().sign(request(agentId)), ErrorCode.INSUFFICIENT_FUNDS);
+  });
+
+  /** "503" appeared inside the transaction's own hex, and matched the outage pattern. */
+  it('does not read an outage into the hex of the transaction itself', async () => {
+    const agentId = await anAgent();
+    state.broadcastError = 'execution reverted: 0x4d11988c00005035030eb20edae3';
+    const err = await expectRefusal(makeSigner().sign(request(agentId)), ErrorCode.INVALID_STATE);
+    expect(err.message).not.toMatch(/unreachable/);
   });
 });
