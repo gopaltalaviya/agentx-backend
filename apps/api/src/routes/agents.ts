@@ -1,7 +1,7 @@
 import type {FastifyInstance} from 'fastify';
 import {and, eq, lte, gte, sql} from 'drizzle-orm';
 import {z} from 'zod';
-import {agents, agentCapabilities, agentStats, apiKeys, type Db} from '@agentx/db';
+import {agents, agentCapabilities, agentStats, apiKeys, spendPolicies, type Db} from '@agentx/db';
 import {AgentxError, BaseUnits, Capability, ErrorCode} from '@agentx/shared';
 import type {ChainConfig} from '@agentx/config';
 import {authenticate, generateApiKey, hashApiKey, resolveChainId} from '../auth.js';
@@ -171,6 +171,23 @@ export async function registerAgentRoutes(app: FastifyInstance, deps: RouteDeps)
         body.capabilities.map((capability) => ({agentId: agent!.id, capability})),
       );
       await tx.insert(agentStats).values({agentId: agent!.id});
+
+      // A starting spend policy, from this chain's configured defaults.
+      //
+      // Without it an agent registers with no policy row at all, and
+      // /v1/budget falls back to the cache, finds nothing, and reports zero —
+      // so an orchestrator refuses to hire anybody and the marketplace does
+      // not work at all for a new agent. Meanwhile the signer, reading a
+      // wallet that is a plain EOA rather than an AgentAccount, enforces
+      // nothing. Those two disagreeing is worse than either alone.
+      //
+      // The on-chain caps still win wherever an AgentAccount exists; this is
+      // the floor for everyone else.
+      await tx.insert(spendPolicies).values({
+        agentId: agent!.id,
+        perTaskCap: String(chains[chainId]!.params.defaultPerTaskCap),
+        dailyCap: String(chains[chainId]!.params.defaultDailyCap),
+      });
 
       const key = generateApiKey();
       await tx.insert(apiKeys).values({

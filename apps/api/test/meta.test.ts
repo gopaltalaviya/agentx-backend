@@ -147,6 +147,31 @@ describe('GET /v1/network', () => {
 });
 
 describe('GET /v1/budget', () => {
+  /**
+   * The bug the first live demo run found. A newly registered agent had no
+   * spend policy, so the budget read fell back to a cache with nothing in it
+   * and reported zero — and the orchestrator, correctly refusing to hire
+   * beyond its budget, refused to hire at all. The marketplace did not work
+   * for anyone who had just joined it.
+   */
+  it('gives a newly registered agent a usable budget, not zero', async () => {
+    const {apiKey} = await register();
+    reading = null; // no AgentAccount on chain, as for any EOA-backed agent
+
+    const body = (await app.inject({method: 'GET', url: '/v1/budget', headers: auth(apiKey)})).json();
+    expect(BigInt(body.perTaskCap), 'per-task cap must not be zero').toBeGreaterThan(0n);
+    expect(BigInt(body.dailyRemaining), 'a new agent must be able to spend something').toBeGreaterThan(0n);
+    expect(BigInt(body.maxSingleSpend)).toBeGreaterThan(0n);
+  });
+
+  it('takes the starting policy from chain config, not from a literal', async () => {
+    const {apiKey} = await register();
+    reading = null;
+    const body = (await app.inject({method: 'GET', url: '/v1/budget', headers: auth(apiKey)})).json();
+    expect(body.perTaskCap).toBe(String(config.chain(31337).params.defaultPerTaskCap));
+    expect(body.dailyCap).toBe(String(config.chain(31337).params.defaultDailyCap));
+  });
+
   it('requires a key — a budget is not public information', async () => {
     const res = await app.inject({method: 'GET', url: '/v1/budget'});
     expect(res.statusCode).toBeGreaterThanOrEqual(400);
@@ -193,8 +218,10 @@ describe('GET /v1/budget', () => {
     const {agentId, apiKey} = await register();
     reading = null;
     await db.execute(
-      sql`INSERT INTO spend_policies (agent_id, per_task_cap, daily_cap, spent_today)
-          VALUES (${agentId}, '40000', '400000', '150000')`,
+      // Registration now creates the row, so a test that wants different
+      // numbers updates it rather than inserting a second one.
+      sql`UPDATE spend_policies SET per_task_cap='40000', daily_cap='400000', spent_today='150000'
+          WHERE agent_id = ${agentId}`,
     );
 
     const body = (await app.inject({method: 'GET', url: '/v1/budget', headers: auth(apiKey)})).json();
@@ -219,8 +246,8 @@ describe('GET /v1/budget', () => {
   it('never reports a negative remainder when spending has overrun the cache', async () => {
     const {agentId, apiKey} = await register();
     await db.execute(
-      sql`INSERT INTO spend_policies (agent_id, per_task_cap, daily_cap, spent_today)
-          VALUES (${agentId}, '40000', '100000', '150000')`,
+      sql`UPDATE spend_policies SET per_task_cap='40000', daily_cap='100000', spent_today='150000'
+          WHERE agent_id = ${agentId}`,
     );
 
     const body = (await app.inject({method: 'GET', url: '/v1/budget', headers: auth(apiKey)})).json();

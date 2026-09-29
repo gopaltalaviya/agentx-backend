@@ -37,10 +37,6 @@ export const Plan = z.object({
           .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/)
           .describe('lowercase kebab-case'),
         input: z.record(z.unknown()).describe('everything the worker needs to start'),
-        requiredFields: z
-          .array(z.string())
-          .max(6)
-          .describe('output field names this subtask must produce for the next step to use'),
         dependsOn: z
           .number()
           .int()
@@ -123,7 +119,16 @@ export class Orchestrator {
     const steps: StepOutcome[] = [];
     let spent = 0n;
 
-    const plan = await this.plan(goal).catch(() => null);
+    // What the marketplace actually sells, before planning what to buy.
+    //
+    // Without this the planner names capabilities from imagination: the first
+    // live run produced data-analysis, position-valuation and trade-advisory,
+    // none of which any agent offers, so three of four subtasks died at
+    // discovery. Capability strings are protocol data — constrained to
+    // kebab-case by a database CHECK — not agent prose, so this adds no
+    // injection surface.
+    const offered = await this.availableCapabilities();
+    const plan = await this.plan(goal, offered).catch(() => null);
     if (!plan || plan.subtasks.length === 0) {
       return {
         goal,
@@ -144,13 +149,26 @@ export class Orchestrator {
     const ceiling = minOf(perStep, BigInt(budget.maxSingleSpend));
 
     for (const [index, subtask] of plan.subtasks.entries()) {
-      // A subtask that needed an earlier result it never got cannot run.
-      const upstream = subtask.dependsOn !== undefined ? steps[subtask.dependsOn] : undefined;
-      if (subtask.dependsOn !== undefined && upstream?.status !== 'settled') {
+      // A dependency must point BACKWARDS, at a step that has already run.
+      //
+      // Nothing stopped a planner saying subtask 1 depends on subtask 1. The
+      // first live run did exactly that, and since `steps[0]` does not exist
+      // while step 0 is being planned, every subtask waited on something that
+      // could never have run and the whole plan died without hiring anyone.
+      //
+      // A self-reference or a forward reference is not a dependency anybody
+      // can satisfy, so it is dropped rather than treated as unmet — the
+      // subtask simply runs on its own input, which is what the planner
+      // evidently meant for the first one.
+      const declared = subtask.dependsOn;
+      const dependsOn = declared !== undefined && declared < index ? declared : undefined;
+
+      const upstream = dependsOn !== undefined ? steps[dependsOn] : undefined;
+      if (dependsOn !== undefined && upstream?.status !== 'settled') {
         steps.push({
           capability: subtask.capability,
           status: 'failed',
-          detail: `needed the result of step ${subtask.dependsOn + 1}, which ${upstream?.status ?? 'did not run'}`,
+          detail: `needed the result of step ${dependsOn + 1}, which ${upstream?.status ?? 'did not run'}`,
         });
         this.emit({
           kind: 'skipped',
@@ -170,10 +188,21 @@ export class Orchestrator {
             // output, so the worker will wrap it as untrusted in turn.
             ...(upstream?.result ? {previousResult: upstream.result} : {}),
           },
-          outputSchema:
-            subtask.requiredFields.length > 0
-              ? {type: 'object', required: subtask.requiredFields}
-              : undefined,
+          // No outputSchema from the planner.
+          //
+          // It used to ask the planner for the field names a subtask must
+          // produce, which is a guess about a worker it has not chosen yet
+          // and whose schema it cannot see. The first live run had a planner
+          // answer ["eth","usdc","monad"] — topic words — so every worker
+          // correctly refused work it could not satisfy and nothing was ever
+          // hired. The coupling was brittle by construction, not badly
+          // prompted: no planner can know what fields an unknown worker
+          // emits.
+          //
+          // The worker's own schema governs delivery, the API enforces any
+          // schema a client does state, and the judge assesses whether the
+          // result actually answers the task. A client that knows exactly
+          // what shape it needs can still say so.
           deadlineSeconds: 120,
         },
         ceiling,
@@ -339,14 +368,34 @@ export class Orchestrator {
 
   // ── model calls ────────────────────────────────────────────────────────
 
-  private async plan(goal: string): Promise<Plan> {
+  /** The distinct capabilities on offer right now, from discovery. */
+  private async availableCapabilities(): Promise<string[]> {
+    const agents = await this.opts.client.discover({limit: 50}).catch(() => []);
+    return [...new Set(agents.flatMap((a) => a.capabilities))].sort();
+  }
+
+  private async plan(goal: string, offered: string[]): Promise<Plan> {
+    const menu =
+      offered.length === 0
+        ? ''
+        : [
+            '',
+            '',
+            'The ONLY capabilities any agent offers are:',
+            ...offered.map((c) => `  - ${c}`),
+            '',
+            'Use these exact strings. A capability outside this list matches no',
+            'agent, so that subtask buys nothing and wastes the budget. If the',
+            'goal cannot be served by these, return an empty list and say why.',
+          ].join('\n');
+
     const {value} = await this.opts.brain.complete({
       schema: Plan,
       schemaName: 'Plan',
       system: PLANNER_SYSTEM,
       // The goal comes from the user, not from another agent, so it is not
       // wrapped. Everything an agent produced is.
-      prompt: `The goal:\n${goal}\n\nPlan the work.`,
+      prompt: `The goal:\n${goal}${menu}\n\nPlan the work.`,
       maxTokens: 1_500,
       effort: 'medium',
     });

@@ -141,6 +141,8 @@ export interface JobSummary {
   specHash: string;
   /** Which side the caller is on. */
   role: 'worker' | 'client';
+  /** False when the work still needs doing, whatever the payment state is. */
+  hasResult: boolean;
   clientAgentId: string;
   workerAgentId: string;
   createdAt: string;

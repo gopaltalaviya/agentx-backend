@@ -113,8 +113,8 @@ export async function registerMetaRoutes(app: FastifyInstance, deps: MetaRouteDe
 
     const perTaskCap = onChain?.perTaskCap ?? BigInt(cached?.perTaskCap ?? '0');
     const dailyCap = onChain?.dailyCap ?? BigInt(cached?.dailyCap ?? '0');
-    const dailyRemaining =
-      onChain?.dailyRemaining ?? max0(dailyCap - BigInt(cached?.spentToday ?? '0'));
+    const spentToday = BigInt(cached?.spentToday ?? '0');
+    const dailyRemaining = onChain?.dailyRemaining ?? max0(dailyCap - spentToday);
 
     return {
       agentId: String(caller.agentId),
@@ -140,7 +140,7 @@ export async function registerMetaRoutes(app: FastifyInstance, deps: MetaRouteDe
       tokenBalance: onChain ? onChain.tokenBalance.toString() : null,
       tokenSymbol: chain.network.paymentToken.symbol,
       walletAddress: agent?.walletAddress ?? null,
-      resetsInSeconds: resetsIn(onChain?.dayStart, cached?.dayStart),
+      resetsInSeconds: resetsIn(onChain?.dayStart, cached?.dayStart, spentToday),
     };
   });
 }
@@ -156,7 +156,17 @@ const min = (a: bigint, b: bigint) => (a < b ? a : b);
  * sit and wait; told 19h when it is 3h, it will hire elsewhere at a worse
  * price. So this follows the contract's clock.
  */
-function resetsIn(onChainDayStart: bigint | undefined, cachedDayStart: Date | undefined): number {
+function resetsIn(
+  onChainDayStart: bigint | undefined,
+  cachedDayStart: Date | undefined,
+  spentToday: bigint,
+): number {
+  // On-chain, dayStart is only set by a spend. The cached row carries a
+  // timestamp from the moment the agent registered, so without this an agent
+  // that has spent nothing is told to wait a day for a budget it already has
+  // in full.
+  if (onChainDayStart === undefined && spentToday === 0n) return 0;
+
   const startMs =
     onChainDayStart !== undefined
       ? Number(onChainDayStart) * 1000

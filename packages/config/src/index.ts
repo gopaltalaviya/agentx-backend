@@ -64,6 +64,18 @@ const ParamsSchema = z.object({
   workWindowSeconds: z.number().int().positive(),
   reviewWindowSeconds: z.number().int().positive(),
   confidenceFloor: z.number().int().positive(),
+  /**
+   * What a newly registered agent may spend before its owner configures
+   * anything. Off-chain only — the on-chain authority is AgentAccount, and an
+   * agent paid from a plain EOA has no contract to read.
+   *
+   * It must not default to zero. A zero budget reads as "you may spend
+   * nothing", so an orchestrator refuses to hire anyone and the marketplace
+   * is broken on arrival — while the signer, finding no AgentAccount, would
+   * happily have signed. Reporting and enforcement must not disagree.
+   */
+  defaultPerTaskCap: z.string().regex(/^\d+$/),
+  defaultDailyCap: z.string().regex(/^\d+$/),
 });
 
 const DeploymentSchema = z.object({
@@ -247,6 +259,9 @@ export function loadConfig(opts: LoadOptions = {}): AgentxConfig {
       params: Object.freeze({
         minStake: BigInt(params.data.minStake),
         fastPathMax: BigInt(params.data.fastPathMax),
+        // Money, so bigint like the rest — never a JS number.
+        defaultPerTaskCap: BigInt(params.data.defaultPerTaskCap),
+        defaultDailyCap: BigInt(params.data.defaultDailyCap),
         withdrawDelaySeconds: params.data.withdrawDelaySeconds,
         fastPathMinScore: params.data.fastPathMinScore,
         protocolFeeBps: params.data.protocolFeeBps,

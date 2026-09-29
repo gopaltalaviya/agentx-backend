@@ -69,6 +69,16 @@ export type Outcome =
 export class Worker<T> {
   private readonly requiredKeys: Set<string>;
 
+  /**
+   * Jobs this worker has already refused.
+   *
+   * A decline leaves the job in `created`, so without this the very next poll
+   * offers it again — and again. The first live run produced eighteen
+   * identical refusals of one job in a few seconds, each costing a model call
+   * on the judgement path. A decision already taken is not re-taken.
+   */
+  private readonly declined = new Set<string>();
+
   constructor(private readonly opts: WorkerOptions<T>) {
     this.requiredKeys = keysOf(opts.output);
   }
@@ -84,11 +94,21 @@ export class Worker<T> {
    * accepts racing for it is a stuck transaction at exactly the wrong moment.
    */
   async tick(): Promise<Outcome[]> {
-    const offers = await this.opts.client.listJobs({role: 'worker', state: 'created'});
+    // Not filtered by state.
+    //
+    // A fast-path job is `settled` from the instant it is created, because
+    // the client has already paid — but the work still has to be done. A
+    // worker polling only for `created` never saw those at all, so the client
+    // paid and then waited for a result nobody was producing. What decides
+    // whether there is work here is `hasResult`, not the payment state.
+    const offers = await this.opts.client.listJobs({role: 'worker', limit: 25});
     const outcomes: Outcome[] = [];
 
     for (const offer of offers) {
       if (offer.spec.capability !== this.opts.capability) continue;
+      if (offer.hasResult) continue;
+      if (offer.state === 'refunded' || offer.state === 'disputed') continue;
+      if (this.declined.has(offer.jobId)) continue;
       outcomes.push(await this.handle(offer));
     }
     return outcomes;
@@ -120,18 +140,22 @@ export class Worker<T> {
 
     const structural = this.canSatisfy(offer.spec);
     if (!structural.ok) {
+      this.declined.add(offer.jobId);
       this.emit({kind: 'declined', jobId: offer.jobId, reason: structural.reason, structural: true});
       return {status: 'declined', reason: structural.reason};
     }
 
     const decision = await this.triage(offer.spec);
     if (!decision.accept) {
+      this.declined.add(offer.jobId);
       this.emit({kind: 'declined', jobId: offer.jobId, reason: decision.reason, structural: false});
       return {status: 'declined', reason: decision.reason};
     }
 
     try {
-      await this.opts.client.accept(offer.jobId);
+      // Only an escrow job is accepted. A fast-path job was paid on creation
+      // and is already terminal on chain; calling accept on it would revert.
+      if (offer.state === 'created') await this.opts.client.accept(offer.jobId);
     } catch (err) {
       // Losing the race to accept is normal — the job may have expired or been
       // cancelled between listing and now. Not a failure of this worker.
@@ -201,9 +225,17 @@ export class Worker<T> {
 
   /** Should this job be taken at all? */
   private async triage(spec: JobSpec): Promise<TriageDecision> {
+    const required = Array.isArray(spec.outputSchema?.['required'])
+      ? (spec.outputSchema['required'] as string[])
+      : [];
+
     const prompt = [
       `You are: ${this.opts.role}`,
       `You offer exactly one capability: ${this.opts.capability}`,
+      `You always produce these fields: ${[...this.requiredKeys].join(', ')}`,
+      required.length > 0
+        ? `This job additionally requires: ${required.join(', ')}`
+        : 'This job states no required output shape, so your own schema governs.',
       '',
       'The job offer:',
       // The spec was written by another agent. Wrapped for the same reason a

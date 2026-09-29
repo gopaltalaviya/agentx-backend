@@ -101,6 +101,7 @@ function offer(over: Partial<JobSpec> = {}, jobId = '1'): JobSummary {
     } as JobSpec,
     specHash: '0x',
     role: 'worker',
+    hasResult: false,
     clientAgentId: '1',
     workerAgentId: '2',
     createdAt: new Date().toISOString(),

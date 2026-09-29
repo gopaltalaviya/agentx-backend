@@ -388,7 +388,19 @@ function describeWorkerEvent(e) {
   }
 }
 
-const titleCase = (s) => s.split('-').map((w) => w[0].toUpperCase() + w.slice(1)).join('');
+/**
+ * A function DECLARATION, not a const arrow.
+ *
+ * It is called from the registration loop near the top of the file, and a
+ * `const` declared down here sits in the temporal dead zone until execution
+ * reaches it — so the first real run of this script died with "Cannot access
+ * 'titleCase' before initialization", after it had already put four agents
+ * on chain. Declarations hoist; consts do not.
+ */
+function titleCase(s) {
+  return s.split('-').map((w) => w[0].toUpperCase() + w.slice(1)).join('');
+}
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }

@@ -234,6 +234,15 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
           specHash: job.specHash,
           /** Which side the caller is on, so an agent need not infer it. */
           role: job.workerAgentId === caller.agentId ? ('worker' as const) : ('client' as const),
+          /**
+           * Whether the work has been delivered.
+           *
+           * State is not enough to tell. A fast-path job is `settled` the
+           * moment it is created — the client has already paid — but nobody
+           * has done the work yet, so a worker polling for `created` never
+           * saw it and the client waited for a result no one was producing.
+           */
+          hasResult: job.result !== null,
           clientAgentId: String(job.clientAgentId),
           workerAgentId: String(job.workerAgentId),
           createdAt: job.createdAt,

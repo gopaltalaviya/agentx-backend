@@ -298,6 +298,58 @@ describe('what a delivered result actually is', () => {
   });
 });
 
+describe('a worker can find the work it was hired for', () => {
+  /**
+   * A fast-path job is paid on creation. The worker still has to do the work,
+   * so it must be findable — this is the listing a worker polls.
+   */
+  it('lists a fast-path job to its worker, marked as not yet delivered', async () => {
+    const client = await register('Client');
+    const worker = await register('Worker');
+
+    const hire = await app.inject({
+      method: 'POST',
+      url: '/v1/jobs',
+      headers: {...auth(client.apiKey), 'idempotency-key': `fast-${Date.now()}`},
+      payload: {
+        workerAgentId: String(worker.agentId),
+        maxPrice: '50000',
+        path: 'direct',
+        spec: {capability: 'market-research', input: {q: 1}, deadlineSeconds: 120},
+      },
+    });
+    expect(hire.statusCode, hire.body).toBe(201);
+    expect(hire.json().path).toBe('direct');
+
+    const listed = (await app.inject({
+      method: 'GET',
+      url: '/v1/jobs?role=worker&limit=25',
+      headers: auth(worker.apiKey),
+    })).json();
+
+    expect(listed.count, 'the worker must see the job it was hired for').toBe(1);
+    expect(listed.jobs[0].hasResult).toBe(false);
+    expect(listed.jobs[0].spec.capability).toBe('market-research');
+  });
+
+  it('stops listing it once the work is delivered', async () => {
+    const {jobId, worker} = await hiredJob();
+    await app.inject({
+      method: 'POST',
+      url: `/v1/jobs/${jobId}/result`,
+      headers: auth(worker.apiKey),
+      payload: {output: {summary: 'done'}, producedAt: new Date().toISOString()},
+    });
+
+    const listed = (await app.inject({
+      method: 'GET',
+      url: '/v1/jobs?role=worker&limit=25',
+      headers: auth(worker.apiKey),
+    })).json();
+    expect(listed.jobs[0].hasResult).toBe(true);
+  });
+});
+
 describe('the daily cap', () => {
   /**
    * The cap is enforced on-chain and the signer refuses first so the caller
