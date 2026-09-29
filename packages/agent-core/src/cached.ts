@@ -17,6 +17,11 @@ interface CacheEntry {
   recordedAt: string;
   /** Kept for a human reading the file; never used for lookup. */
   promptPreview: string;
+  /**
+   * The whole prompt, for diffing against a miss. A changed prompt means a
+   * changed key, and a preview is too short to show which line moved.
+   */
+  fullPrompt?: string;
 }
 
 /**
@@ -102,14 +107,12 @@ export class CachedBrain implements Brain {
  */
 export class RecordingBrain implements Brain {
   readonly name: string;
-  private cache: Record<string, CacheEntry>;
 
   constructor(
     private readonly inner: Brain,
     private readonly path: string,
   ) {
     this.name = `recording(${inner.name})`;
-    this.cache = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {};
   }
 
   async complete<T>(req: CompletionRequest<T>): Promise<CompletionResult<T>> {
@@ -117,17 +120,28 @@ export class RecordingBrain implements Brain {
     const result = await this.inner.complete(req);
     const key = await cacheKey(req);
 
-    this.cache[key] = {
+    // Read the file again at write time rather than holding a copy from
+    // construction. Several recorders share one file — the demo gives each
+    // worker its own — and rewriting from a private snapshot erased whatever
+    // the others had recorded since. The read and the write are synchronous
+    // with no await between them, so within one process nothing can land in
+    // the gap.
+    const cache: Record<string, CacheEntry> = existsSync(this.path)
+      ? JSON.parse(readFileSync(this.path, 'utf8'))
+      : {};
+
+    cache[key] = {
       value: result.value,
       provider: result.provider,
       model: result.model,
       latencyMs: Date.now() - started,
       recordedAt: new Date().toISOString(),
       promptPreview: req.prompt.slice(0, 120),
+      fullPrompt: req.prompt,
     };
 
     mkdirSync(dirname(this.path), {recursive: true});
-    writeFileSync(this.path, JSON.stringify(this.cache, null, 2) + '\n');
+    writeFileSync(this.path, JSON.stringify(cache, null, 2) + '\n');
     return result;
   }
 

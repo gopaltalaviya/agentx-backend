@@ -169,6 +169,28 @@ describe('cached replay', () => {
     const result = await chain.complete(req);
     expect(result.cached).toBe(true);
   });
+
+  /**
+   * The demo runs three workers, each with its own recording brain, all on
+   * `worker.json`. Each loaded the file once and rewrote the whole of it on
+   * every call, so the last writer won and the others' recordings vanished.
+   * A cached replay of the first live run that ever settled all three jobs
+   * missed two of them — and a stale recording that survived the clobbering
+   * changed a result, which changed the judge's prompt, which missed too.
+   */
+  it('keeps what another recorder wrote to the same file', async () => {
+    const path = join(dir, 'shared.json');
+    const first = new RecordingBrain(new StubBrain('research', 'ok'), path);
+    const second = new RecordingBrain(new StubBrain('trading', 'ok'), path);
+    const other = {...req, prompt: 'Should I open a position?'};
+
+    await first.complete(req);
+    await second.complete(other);
+
+    const replay = new CachedBrain(path, {replayTiming: false});
+    await expect(replay.complete(req)).resolves.toMatchObject({provider: 'cached(research)'});
+    await expect(replay.complete(other)).resolves.toMatchObject({provider: 'cached(trading)'});
+  });
 });
 
 describe('buildBrain configuration', () => {
