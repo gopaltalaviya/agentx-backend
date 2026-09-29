@@ -14,6 +14,7 @@
  *   VERIFY_CHAIN_ID=10143 pnpm demo
  *   AGENT_MODE=record pnpm demo     # spend once, replay free forever after
  *
+ *   DEMO_VIA_API=1 pnpm demo        # run it through POST /v1/runs, as the interface does
  *   DEMO_CHAOS=no-accept pnpm demo  # a 4th worker that never accepts
  *   DEMO_CHAOS=mid-job pnpm demo    # a 4th worker that accepts, then dies
  *
@@ -431,7 +432,35 @@ try {
   // one on a laptop: a live chaos run had a healthy worker still generating
   // when the step gave up. A dead worker is still caught within 45s — it
   // never accepts — so this only lengthens the wait for a slow LIVE one.
-  const report = await orchestrator.run(GOAL, {timeoutMs: 180_000});
+  let report;
+  if (process.env.DEMO_VIA_API) {
+    // The way the interface runs it: POST /v1/runs with the orchestrator's
+    // key, the API's own executor doing the work, the durable trace read
+    // back afterwards. Otherwise the runs API is only ever exercised by
+    // tests with a stubbed executor.
+    const started = await fetch(`${base}/v1/runs`, {
+      method: 'POST',
+      headers: {'content-type': 'application/json', authorization: `Bearer ${orchestratorAgent.apiKey}`},
+      body: JSON.stringify({goal: GOAL}),
+    });
+    if (!started.ok) throw new Error(`POST /v1/runs: ${started.status} ${await started.text()}`);
+    const {runId} = await started.json();
+    let run;
+    for (;;) {
+      run = await (await fetch(`${base}/v1/runs/${runId}`)).json();
+      if (run.state !== 'running') break;
+      await sleep(1000);
+    }
+    for (const e of run.events) {
+      const event = {kind: e.kind, ...e.payload};
+      events.push(event);
+      if (e.kind !== 'finished' && e.kind !== 'failed') console.log(`  ${describeEvent(event)}`);
+    }
+    report = {plan: run.steps.length > 0 ? {} : null, steps: run.steps, answer: run.answer};
+    ok(`run ${runId} executed by the API (${run.state}) — its trace is at /runs/${runId}`);
+  } else {
+    report = await orchestrator.run(GOAL, {timeoutMs: 180_000});
+  }
 
   // ── 7. assertions, against the chain ──────────────────────────────────
   console.log('');
