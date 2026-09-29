@@ -226,7 +226,7 @@ function card(s, o) {
     s.addText(what, {x: M + 6.0, y, w: CW - 6.0, h: 0.5, fontFace: BODY, fontSize: 13, color: MUTED, margin: 0, isTextBox: true, valign: 'middle'});
   });
 
-  const stats = [['495', 'tests green across\nthree repositories'], ['100%', 'branch coverage on the two\ncontracts that hold money'], ['8', 'MCP tools, so any agent\ncan transact directly']];
+  const stats = [['498', 'tests green across\nthree repositories'], ['100%', 'branch coverage on the two\ncontracts that hold money'], ['8', 'MCP tools, so any agent\ncan transact directly']];
   const cw = 3.85, gap = 0.36;
   stats.forEach(([big, label], i) => {
     const x = M + i * (cw + gap);

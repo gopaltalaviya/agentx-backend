@@ -3,15 +3,16 @@
 > **START HERE every session.** This file is the memory that survives a closed
 > terminal. Read it top to bottom before doing anything else.
 
-- Last updated: **2026-09-29** (Session 23 — "complete everything": keeper, retry, caps, chaos, deck, interface)
+- Last updated: **2026-09-29** (Session 24 — orchestrator on AgentAccount; 7/7 chaos; reorgs; run history)
 - Days to deadline: **14** — verified: **2026-10-13, 11:59 PM ET**
 - Target track: **4 — Trust, Identity & AI Infrastructure** ($30,000)
-- Current state: **live on Monad testnet, end to end, and survives broken
-  workers.** `pnpm demo` plans, hires, judges and settles real jobs with a
-  local model; replays in 157 s with no model; both chaos modes pass live; the
-  keeper refunds stranded escrow on chain; the interface renders in a browser
-- Overall: `██████████████████░░` 90% — **103 / 115 tasks**, **486 tests green**
-  (128 contracts · 351 backend · 7 interface)
+- Current state: **live on Monad testnet, end to end; the spending agent's
+  caps are on chain.** The orchestrator pays through an `AgentAccount` that
+  refused a compromised signer three ways; all seven chaos items pass; the
+  keeper refunds stranded escrow; runs are recorded and browsable; the
+  interface renders in a browser
+- Overall: `██████████████████░░` 90% — **104 / 115 tasks**, **498 tests green**
+  (128 contracts · 363 backend · 7 interface)
 
 ---
 
@@ -36,14 +37,17 @@
    and `FEE_RECIPIENT` on a fresh deploy. For the live contracts it would be a
    role transfer; say if you want it.
 
-### 🤖 Claude — nothing blocked, all optional
+### 🤖 Claude — nothing left that is mine to do before the deadline
 
-1. Phone-hotspot chaos run (the last of seven).
-2. Move the demo agents onto `AgentAccount`, so the on-chain cap claim is
-   fact rather than design. Today the signer enforces caps for EOAs.
-3. Runs history page; reorg deletion in the indexer (documented limitation).
-4. The intermittent `meta.test.ts` failure (Session 22) has not recurred in
-   eight full runs since; still open.
+Done in Session 24: the phone-hotspot chaos item, the orchestrator on
+`AgentAccount`, reorg handling, the run history page. What remains is
+optional and post-hackathon:
+
+1. `AgentAccount`s for the workers — they never spend today, so this only
+   matters if one ever pays another agent.
+2. x402 facilitator (stretch, cut first); ERC-8183 Job interface (post-hack).
+3. The intermittent `meta.test.ts` failure (Session 22) has not recurred in
+   ten full runs since; still open.
 
 ## 🚧 Blockers
 
@@ -117,11 +121,11 @@ cd ../agentx-contracts && forge build
 
 # 3. Prove it is all still green
 FOUNDRY_PROFILE=ci forge test              # expect 128 passed
-cd ../agentx-backend && npx tsc -b && npx vitest run   # expect 351 passed
+cd ../agentx-backend && npx tsc -b && npx vitest run   # expect 363 passed
 cd ../agentx-interface && npx tsc --noEmit && npx next build
 ```
 
-Expected totals as of 2026-09-29: **128 contracts + 351 backend + 7 interface = 486**.
+Expected totals as of 2026-09-29: **128 contracts + 363 backend + 7 interface = 498**.
 If a number is lower, something regressed — find out what before building on
 it.
 
@@ -555,7 +559,7 @@ the adversarial pass.
 | M2 | Backend spine | Sep 29 – Oct 2 | 🟡 in progress | 21 / 25 |
 | M3 | Agents + MCP | Oct 3–5 | 🟡 in progress | 14 / 15 |
 | M4 | Frontend | Oct 6–8 | 🟡 in progress | 9 / 11 |
-| M5 | Harden | Oct 9–11 | 🟡 in progress | 5 / 7 |
+| M5 | Harden | Oct 9–11 | 🟡 in progress | 6 / 7 |
 | M6 | Submit | Oct 12–13 | 🟡 in progress | 5 / 8 |
 
 Status key: ⬜ not started · 🟡 in progress · ✅ done · 🔴 blocked · ⏭ deferred · ❌ cut
@@ -631,12 +635,59 @@ Append-only. Never rewrite a decision — supersede it with a new row.
 | Sep 29 | M3 | **The fast path must be earned** — `fastPathMinScore` enforced for `auto`. Consequence accepted: fresh demo agents always go through escrow | ✅ |
 | Sep 29 | M5 | **A keeper sends the escrow's permissionless exits**, in the signer, on its own gas-only key | ✅ |
 | Sep 29 | M5 | **Deployed contract source is not edited, even comments** — it would break explorer verification of the live contracts. Wrong comments are corrected in the docs instead | ✅ |
+| Sep 29 | M5 | **The spending agent's caps live in its own wallet.** The orchestrator pays through an `AgentAccount`; workers, which never spend, stay EOAs. The owner key is not held by the signer in principle — in the demo it is DEPLOYER, standing in | ✅ |
+| Sep 29 | M5 | **A reorg that drops an applied transaction halts the indexer for an operator** rather than rewriting the append-only event log | ✅ |
 
 ---
 
 ## 📓 Session log
 
 Newest first. One entry per working session, however short.
+
+### Session 24 — 2026-09-29 (orchestrator on AgentAccount · 7/7 chaos · reorgs · run history)
+
+**Shipped** — backend `aa2bc83` `eeccf86` `f33aba2` `56bba1d` `30b8346`
+`416f6c3` (and this entry) · interface `29bae34`. 128 + 363 + 7 =
+**498 tests green**. Every new test failed on the old code first.
+
+**The on-chain cap claim is now fact, for the agent that spends.** The
+orchestrator pays through an `AgentAccount` the owner (DEPLOYER, standing in
+for a human) creates each run: 0.1 per task, 1 per day, allowlisted to the
+escrow's five client functions, an owner-granted allowance, and a session
+key for the signer's hot key under a day long. The signer detects an account
+wallet on every call and sends `execute(target, data)` to it. Live: 3/3
+settled, the account's own `spentToday` 0.13. **As a compromised signer
+holding that session key** (`eth_call`, no gas): a 0.2 hire →
+`PerTaskCapExceeded(200000, 100000)`; USDC to `0xdEaD` →
+`TargetNotAllowed(token)`; a self-granted allowance → `NotOwner()`. Not
+covered, and said so everywhere: payees within the escrow, the three worker
+EOAs, and the deployer standing in for the human owner.
+
+**Found on the way** — Monad reserves the full gas LIMIT (~0.054 MON per
+wrapped call), so the hot key gets 0.5 MON and top-ups now come from FUNDER,
+not DEPLOYER (down to 1.25 MON from 6.8 this morning); the node's "Signer
+had insufficient balance" was reported as "RPC unreachable" because `503`
+matched inside the tx hex — classification now reads only the node's words,
+and the raw error is finally logged; a failed broadcast's nonce claim
+blocked every later request as "in flight" — released when the chain's
+pending count proves the nonce unused.
+
+**Chaos 7/7** — `scripts/slow-rpc.mjs` puts a slow, lossy link under
+everything: 600–1800 ms + 5% failures passed in 287 s; 1500–4000 ms + 15%
+failures in 464 s. Nothing assumed a fast network.
+
+**Reorgs** — a re-mined settlement (same tx, new logIndex) was credited
+twice; now deduplicated by (tx, job, kind). A dropped one was kept forever;
+`job_events` is append-only by design, so the indexer now checks every
+receipt in the rewind window and halts, naming the orphans, rather than
+indexing on state the chain no longer backs.
+
+**Run history** — `/runs` and `/runs/[id]`. `DEMO_VIA_API=1` runs the demo
+through `POST /v1/runs`; the first live run through it settled 3/3 via the
+AgentAccount and is what the screenshot shows.
+
+**Cold start additions** — `DEMO_VIA_API=1`; the demo needs FUNDER in the
+env for top-ups (it has 9+ MON); `scripts/slow-rpc.mjs` for network chaos.
 
 ### Session 23 — 2026-09-29 ("complete everything": keeper, retry, caps, chaos, deck, interface)
 

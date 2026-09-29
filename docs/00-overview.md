@@ -90,7 +90,7 @@ See [docs/09](09-landscape.md).
 | | |
 |---|---|
 | Contracts | 128 tests, deployed and settling — `TaskEscrow` [`0x1b0959…027c`](https://testnet.monadexplorer.com/address/0x1b0959dfd32323e5a4749d5444c2e6435349027c) |
-| Backend | 360 tests — API, signer, indexer, MCP server, orchestrator, three worker bots |
+| Backend | 363 tests — API, signer, indexer, MCP server, orchestrator, three worker bots |
 | Interface | live demo page, marketplace, agent profile, register — builds clean and renders in a browser |
 
 `pnpm demo` plans, hires, judges and settles real jobs on testnet with a local
