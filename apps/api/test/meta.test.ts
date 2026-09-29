@@ -243,6 +243,25 @@ describe('GET /v1/budget', () => {
     expect(res.json().source).toBe('cache');
   });
 
+  /**
+   * The signer rolls the window over after 24 hours, and so must the report
+   * of it. This read `daily_cap - spent_today` whatever the window's age, so
+   * an agent that spent yesterday was told today's budget was already used —
+   * and an orchestrator that trusts my_budget stops hiring for no reason.
+   */
+  it('reports a full budget once the 24-hour window has passed', async () => {
+    const {agentId, apiKey} = await register();
+    reading = null;
+    await db.execute(
+      sql`UPDATE spend_policies SET per_task_cap='40000', daily_cap='400000', spent_today='390000',
+          day_start = now() - interval '25 hours' WHERE agent_id = ${agentId}`,
+    );
+
+    const body = (await app.inject({method: 'GET', url: '/v1/budget', headers: auth(apiKey)})).json();
+    expect(body.dailyRemaining).toBe('400000');
+    expect(body.resetsInSeconds).toBe(0);
+  });
+
   it('never reports a negative remainder when spending has overrun the cache', async () => {
     const {agentId, apiKey} = await register();
     await db.execute(

@@ -87,6 +87,8 @@ export type WorkerEvent =
 
 export type Outcome =
   | {status: 'declined'; reason: string}
+  /** Wants the job; the API asked it to retry the accept. Tried again next poll. */
+  | {status: 'waiting'; jobId: string; reason: string}
   | {status: 'delivered'; jobId: string}
   | {status: 'failed'; stage: string; reason: string};
 
@@ -102,6 +104,13 @@ export class Worker<T> {
    * on the judgement path. A decision already taken is not re-taken.
    */
   private readonly declined = new Set<string>();
+
+  /**
+   * Jobs this worker decided to take and has not yet been allowed to accept.
+   * Kept so a retry goes straight to accept rather than asking the model the
+   * same question again.
+   */
+  private readonly willing = new Set<string>();
 
   constructor(private readonly opts: WorkerOptions<T>) {
     this.requiredKeys = keysOf(opts.output);
@@ -160,6 +169,11 @@ export class Worker<T> {
   }
 
   async handle(offer: JobSummary): Promise<Outcome> {
+    if (!this.willing.has(offer.jobId)) return this.consider(offer);
+    return this.take(offer);
+  }
+
+  private async consider(offer: JobSummary): Promise<Outcome> {
     this.emit({kind: 'offer', jobId: offer.jobId, capability: offer.spec.capability});
 
     const structural = this.canSatisfy(offer.spec);
@@ -183,6 +197,11 @@ export class Worker<T> {
       return {status: 'declined', reason: decision.reason};
     }
 
+    this.willing.add(offer.jobId);
+    return this.take(offer);
+  }
+
+  private async take(offer: JobSummary): Promise<Outcome> {
     try {
       // Decided by PATH, not by state.
       //
@@ -195,14 +214,25 @@ export class Worker<T> {
       // job is created and does not lie.
       if (offer.path === 'escrow') await this.opts.client.accept(offer.jobId);
     } catch (err) {
+      // "Not confirmed on-chain yet — retry in a moment" is the API's answer
+      // until the indexer links a fresh escrow job, and it says so with a
+      // retry-after. This used to be treated like losing the race: marked
+      // declined, never looked at again, while the client waited and then
+      // cancelled. Keep the job; the next poll tries the accept again.
+      if (err instanceof AgentxError && err.retryAfter !== undefined) {
+        return {status: 'waiting', jobId: offer.jobId, reason: message(err)};
+      }
+
       // Losing the race to accept is ordinary — the job may have expired or
       // been cancelled between the listing and now. It is not this worker's
       // fault, but it must be VISIBLE, and it must not be retried on every
       // poll for the rest of the run.
+      this.willing.delete(offer.jobId);
       this.declined.add(offer.jobId);
       this.emit({kind: 'failed', jobId: offer.jobId, stage: 'accept', reason: message(err)});
       return {status: 'failed', stage: 'accept', reason: message(err)};
     }
+    this.willing.delete(offer.jobId);
     if (offer.path === 'escrow') this.emit({kind: 'accepted', jobId: offer.jobId});
 
     const startedAt = Date.now();

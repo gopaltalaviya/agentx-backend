@@ -217,7 +217,12 @@ try {
   // worker that silently never accepts, and the signer's gas floor would
   // refuse before broadcasting — correctly, but the demo would just look
   // slow.
-  const GAS_TOPUP = 20_000_000_000_000_000n; // 0.02 MON
+  // 0.1 MON. It was 0.02, which covered the fast path; now an unproven
+  // worker is always hired through escrow — accept AND submit, two
+  // transactions a job — and a live chaos run ran a worker below the
+  // signer's gas floor mid-demo. These wallets are the same every run, so
+  // this is paid once, not per run.
+  const GAS_TOPUP = 100_000_000_000_000_000n;
   for (const [i, account] of workerAccounts.entries()) {
     const balance = await pub.getBalance({address: account.address});
     if (balance >= GAS_TOPUP) continue;
@@ -505,9 +510,15 @@ async function silentWorker(w, agent) {
   while (!stopped.signal.aborted) {
     const [offer] = await client.listJobs({role: 'worker', state: 'created'}).catch(() => []);
     if (offer) {
-      await client.accept(offer.jobId);
-      console.log(`    [${w.capability} — broken] accepted job ${offer.jobId}, and dies`);
-      return;
+      try {
+        await client.accept(offer.jobId);
+        console.log(`    [${w.capability} — broken] accepted job ${offer.jobId}, and dies`);
+        return;
+      } catch {
+        // "not confirmed on-chain yet" until the indexer links the job, which
+        // the real Worker waits out too. Everything else about this worker is
+        // broken; accepting has to work, or it cannot die mid-job.
+      }
     }
     await sleep(700);
   }

@@ -113,7 +113,10 @@ export async function registerMetaRoutes(app: FastifyInstance, deps: MetaRouteDe
 
     const perTaskCap = onChain?.perTaskCap ?? BigInt(cached?.perTaskCap ?? '0');
     const dailyCap = onChain?.dailyCap ?? BigInt(cached?.dailyCap ?? '0');
-    const spentToday = BigInt(cached?.spentToday ?? '0');
+    // The window rolls over 24 hours after it opened, as the signer's does.
+    // Without this, yesterday's spending was reported as today's.
+    const windowOpen = cached ? Date.now() - cached.dayStart.getTime() < DAY_MS : false;
+    const spentToday = windowOpen ? BigInt(cached?.spentToday ?? '0') : 0n;
     const dailyRemaining = onChain?.dailyRemaining ?? max0(dailyCap - spentToday);
 
     return {

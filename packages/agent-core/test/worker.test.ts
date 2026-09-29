@@ -69,12 +69,17 @@ interface Calls {
 function fakeClient(
   offers: JobSummary[],
   calls: Calls,
-  over: {acceptThrows?: unknown} = {},
+  over: {acceptThrows?: unknown; acceptThrowsOnce?: unknown} = {},
 ): AgentxClient {
+  let thrownOnce = false;
   return {
     listJobs: async () => offers,
     accept: async (jobId: string) => {
       if (over.acceptThrows) throw over.acceptThrows;
+      if (over.acceptThrowsOnce && !thrownOnce) {
+        thrownOnce = true;
+        throw over.acceptThrowsOnce;
+      }
       calls.accepted.push(jobId);
       return {jobId, chainId: 10143, state: 'accepted', txHash: '0x', explorerUrl: 'u'};
     },
@@ -112,7 +117,7 @@ function offer(over: Partial<JobSpec> = {}, jobId = '1'): JobSummary {
 function build(
   offers: JobSummary[],
   brain: Brain,
-  over: {acceptThrows?: unknown} = {},
+  over: {acceptThrows?: unknown; acceptThrowsOnce?: unknown} = {},
 ): {worker: Worker<z.infer<typeof Output>>; calls: Calls; events: WorkerEvent[]} {
   const calls: Calls = {accepted: [], submitted: []};
   const events: WorkerEvent[] = [];
@@ -427,5 +432,51 @@ describe('when the worker\u2019s own brain is the problem', () => {
     expect(outcome!.status).toBe('declined');
     expect(events.some((e) => e.kind === 'declined')).toBe(true);
     expect(events.some((e) => e.kind === 'failed')).toBe(false);
+  });
+});
+
+describe('an accept the API says to retry', () => {
+  /**
+   * "The job is not confirmed on-chain yet — retry in a moment" is the API's
+   * answer until the indexer links an escrow job, a second or two after the
+   * hire. The worker treated it like losing the race for the job: marked it
+   * declined and never looked at it again. A live chaos run showed it — a
+   * healthy worker abandoned a job it wanted, the client cancelled it 45s
+   * later, and the step failed with nobody at fault but the worker's reading
+   * of an error that said, in words, to retry.
+   */
+  const notYet = new AgentxError(ErrorCode.INVALID_STATE, 'the job is not confirmed on-chain yet — retry in a moment', 2);
+
+  it('tries again on the next poll, and delivers', async () => {
+    const {worker, calls} = build([offer({})], new FakeBrain(), {acceptThrowsOnce: notYet});
+
+    await worker.tick();
+    expect(calls.accepted).toEqual([]);
+    await worker.tick();
+
+    expect(calls.accepted).toEqual(['1']);
+    expect(calls.submitted.map((s) => s.jobId)).toEqual(['1']);
+  });
+
+  it('does not ask the model again about a job it already decided to take', async () => {
+    const brain = new FakeBrain();
+    const {worker} = build([offer({})], brain, {acceptThrowsOnce: notYet});
+
+    await worker.tick();
+    const afterFirst = brain.prompts.length;
+    await worker.tick();
+
+    // One more call — producing the work — not a second triage.
+    expect(brain.prompts.length).toBe(afterFirst + 1);
+  });
+
+  it('still gives up on a refusal that is not transient', async () => {
+    const lost = new AgentxError(ErrorCode.INVALID_STATE, 'job is "refunded", this action needs "created"');
+    const {worker, calls} = build([offer({})], new FakeBrain(), {acceptThrowsOnce: lost});
+
+    await worker.tick();
+    await worker.tick();
+
+    expect(calls.accepted).toEqual([]);
   });
 });
