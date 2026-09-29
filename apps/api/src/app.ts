@@ -1,4 +1,5 @@
 import Fastify, {type FastifyInstance} from 'fastify';
+import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import type {ChainConfig} from '@agentx/config';
 import type {Db} from '@agentx/db';
@@ -23,6 +24,8 @@ export interface AppDeps {
   readIdentity?: IdentityReader;
   /** Omitted, the API serves everything except starting a run. */
   runExecutor?: RunExecutor;
+  /** Browser origins allowed to call the API. Omitted, any origin may. */
+  corsOrigins?: string[];
   logger?: boolean;
 }
 
@@ -43,6 +46,20 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   // A second bus, not a shared namespace: job 7 and run 7 are unrelated, and
   // one map keyed by number would deliver each other's events.
   const runBus = new EventBus();
+
+  // The interface lives on another origin (Vercel vs Railway; two ports
+  // locally), and with no CORS headers every browser request was refused —
+  // the first real render of the interface said "API unreachable" on every
+  // page. Any origin is safe to allow because auth is a bearer key, never a
+  // cookie: credentials are not allowed, so a hostile page can do nothing
+  // here it could not do with curl. CORS_ORIGINS narrows it anyway.
+  await app.register(cors, {
+    origin: deps.corsOrigins && deps.corsOrigins.length > 0 ? deps.corsOrigins : '*',
+    credentials: false,
+    methods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['authorization', 'content-type', 'idempotency-key', 'last-event-id'],
+    exposedHeaders: ['x-trace-id', 'retry-after'],
+  });
 
   await app.register(rateLimit, {
     max: 600,

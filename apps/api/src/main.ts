@@ -26,6 +26,7 @@ const app = await buildApp({
   defaultChainId: config.defaultChainId,
   readBudget: makeBudgetReader(config),
   readIdentity: makeIdentityReader(config),
+  corsOrigins: (process.env['CORS_ORIGINS'] ?? '').split(',').map((o) => o.trim()).filter(Boolean),
   ...(runExecutor ? {runExecutor} : {}),
   submit: makeSignerSubmit({
     signerUrl: process.env['SIGNER_URL'] ?? 'http://127.0.0.1:7070',
