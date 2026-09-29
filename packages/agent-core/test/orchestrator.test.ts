@@ -1,6 +1,6 @@
 import {describe, expect, it} from 'vitest';
 import {AgentxError, ErrorCode} from '@agentx/shared';
-import type {AgentxClient} from '@agentx/sdk';
+import {NotAccepted, type AgentxClient} from '@agentx/sdk';
 import {
   Orchestrator,
   UNTRUSTED_OPEN,
@@ -578,5 +578,129 @@ describe('rejecting work that was already paid for', () => {
 
     expect(report.steps[0]!.status).toBe('settled');
     expect(calls.approved).toEqual([]);
+  });
+});
+
+describe('a worker that goes silent', () => {
+  /**
+   * The chaos item "kill a worker mid-job". The step used to end at the first
+   * silent worker even when another agent offered the same capability, so
+   * one crashed process cost the user the whole subtask.
+   */
+  const OTHER = {...CANDIDATE, agentId: 8, pricePerTask: '15000', priceDisplay: '0.015 USDC'};
+  const THIRD = {...CANDIDATE, agentId: 9, pricePerTask: '10000', priceDisplay: '0.01 USDC'};
+
+  /** Selects the first candidate it is actually shown, as a model would. */
+  class FirstOfferedBrain extends ScriptedBrain {
+    override async complete<T>(req: CompletionRequest<T>): Promise<CompletionResult<T>> {
+      if (req.schemaName === 'Selection') {
+        this.seen.push(req as CompletionRequest<unknown>);
+        const list = JSON.parse(req.prompt.slice(req.prompt.indexOf('['), req.prompt.lastIndexOf(']') + 1));
+        const value = req.schema.parse({agentId: list[0].agentId, reason: 'first offered'});
+        return {value, provider: 'scripted', model: 'scripted', cached: false};
+      }
+      return super.complete(req);
+    }
+  }
+
+  function scenario(opts: {
+    candidates: (typeof CANDIDATE)[];
+    silent: (agentId: number) => 'never-accepts' | 'accepts-then-silent' | 'delivers';
+    cancelFails?: boolean;
+  }) {
+    const hires: {agentId: number; maxPrice: string}[] = [];
+    const cancelled: string[] = [];
+    const byJob = new Map<string, number>();
+    const {client, calls} = fakeClient({
+      discover: async () => opts.candidates,
+      hire: async (args: {workerAgentId: number; maxPrice: string}) => {
+        calls.hired++;
+        hires.push({agentId: args.workerAgentId, maxPrice: args.maxPrice});
+        const jobId = String(100 + hires.length);
+        byJob.set(jobId, args.workerAgentId);
+        const price = opts.candidates.find((c) => c.agentId === args.workerAgentId)!.pricePerTask;
+        return {jobId, chainJobId: jobId, state: 'created', path: 'escrow', amount: price, amountDisplay: price, txHash: '0x', explorerUrl: 'x'};
+      },
+      awaitResult: async (jobId: string, o: {timeoutMs: number; acceptWithinMs?: number}) => {
+        const behaviour = opts.silent(byJob.get(jobId)!);
+        if (behaviour === 'never-accepts') throw new NotAccepted(jobId, o.acceptWithinMs ?? 0);
+        if (behaviour === 'accepts-then-silent') {
+          throw new AgentxError(ErrorCode.DEADLINE_PASSED, `job ${jobId} was still "accepted"`);
+        }
+        return {jobId, state: 'submitted', path: 'escrow', result: {summary: 'ETH/USDC depth is healthy at 0.3% slippage.'}};
+      },
+      cancel: async (jobId: string) => {
+        if (opts.cancelFails) throw new AgentxError(ErrorCode.INVALID_STATE, 'job is "accepted"');
+        cancelled.push(jobId);
+        return {jobId, explorerUrl: 'x'};
+      },
+    });
+    const events: OrchestratorEvent[] = [];
+    const orchestrator = new Orchestrator({client, brain: new FirstOfferedBrain(), log: (e) => events.push(e)});
+    return {orchestrator, calls, hires, cancelled, events};
+  }
+
+  it('cancels an offer nobody accepted and hires someone else', async () => {
+    const {orchestrator, hires, cancelled, calls, events} = scenario({
+      candidates: [CANDIDATE, OTHER],
+      silent: (id) => (id === 7 ? 'never-accepts' : 'delivers'),
+    });
+
+    const report = await orchestrator.run('how deep is ETH/USDC?');
+
+    expect(hires.map((h) => h.agentId)).toEqual([7, 8]);
+    expect(cancelled).toEqual(['101']);
+    expect(report.steps[0]).toMatchObject({status: 'settled', agentId: 8, jobId: '102'});
+    expect(report.steps[0]!.retriedAfter).toMatch(/never accepted/);
+    expect(calls.approved).toEqual(['102']);
+    expect(events.map((e) => e.kind)).toContain('retrying');
+  });
+
+  it('hires someone else when a worker accepts and then goes silent, minus what is still locked', async () => {
+    const {orchestrator, hires, cancelled} = scenario({
+      candidates: [CANDIDATE, OTHER],
+      silent: (id) => (id === 7 ? 'accepts-then-silent' : 'delivers'),
+    });
+
+    const report = await orchestrator.run('how deep is ETH/USDC?');
+
+    expect(report.steps[0]).toMatchObject({status: 'settled', agentId: 8});
+    // An accepted job cannot be cancelled; the keeper refunds it later.
+    expect(cancelled).toEqual([]);
+    // The second hire's ceiling excludes the 20000 still in escrow.
+    expect(BigInt(hires[1]!.maxPrice)).toBe(BigInt(hires[0]!.maxPrice) - 20_000n);
+  });
+
+  it('never hires the same agent twice', async () => {
+    const {orchestrator, hires} = scenario({candidates: [CANDIDATE], silent: () => 'never-accepts'});
+
+    const report = await orchestrator.run('how deep is ETH/USDC?');
+
+    expect(hires.map((h) => h.agentId)).toEqual([7]);
+    expect(report.steps[0]).toMatchObject({status: 'timeout'});
+  });
+
+  it('stops after a second silent worker rather than walking the whole market', async () => {
+    const {orchestrator, hires} = scenario({candidates: [CANDIDATE, OTHER, THIRD], silent: () => 'never-accepts'});
+
+    const report = await orchestrator.run('how deep is ETH/USDC?');
+
+    expect(hires).toHaveLength(2);
+    expect(report.steps[0]).toMatchObject({status: 'timeout'});
+  });
+
+  /** If the worker accepted in the gap, a second hire would pay twice for one subtask. */
+  it('does not hire again when the cancel fails', async () => {
+    const {orchestrator, hires} = scenario({
+      candidates: [CANDIDATE, OTHER],
+      silent: () => 'never-accepts',
+      cancelFails: true,
+    });
+
+    const report = await orchestrator.run('how deep is ETH/USDC?');
+
+    expect(hires).toHaveLength(1);
+    expect(report.steps[0]).toMatchObject({status: 'failed'});
+    expect(report.steps[0]!.detail).toMatch(/cancel failed/);
   });
 });

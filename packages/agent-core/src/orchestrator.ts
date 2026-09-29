@@ -1,6 +1,6 @@
 import {z} from 'zod';
 import {AgentxError, ErrorCode, type JobSpec} from '@agentx/shared';
-import type {AgentSummary, AgentxClient} from '@agentx/sdk';
+import {NotAccepted, type AgentSummary, type AgentxClient} from '@agentx/sdk';
 import type {Brain} from './brain.js';
 import {Judge, validateShape, type Verdict} from './judge.js';
 import {PLANNER_SYSTEM, SELECTOR_SYSTEM, SYNTHESIS_SYSTEM, wrapUntrusted} from './prompts.js';
@@ -85,6 +85,8 @@ export interface StepOutcome {
   explorerUrl?: string;
   verdict?: Verdict;
   result?: Record<string, unknown>;
+  /** Set when this outcome came from a second worker: why the first one did not deliver. */
+  retriedAfter?: string;
 }
 
 export interface RunReport {
@@ -105,6 +107,7 @@ export type OrchestratorEvent =
   | {kind: 'judged'; jobId: string; accept: boolean; quality: number; injectionAttempted: boolean}
   | {kind: 'settled'; jobId: string; explorerUrl: string}
   | {kind: 'disputed'; jobId: string; reason: string}
+  | {kind: 'retrying'; capability: string; jobId: string; reason: string}
   | {kind: 'skipped'; capability: string; status: StepStatus; detail: string};
 
 export interface OrchestratorOptions {
@@ -277,14 +280,63 @@ export class Orchestrator {
       });
     }
 
-    const chosen = await this.select(spec, candidates);
-    if (!chosen) {
-      return this.skip({
-        ...base,
-        status: 'no-candidate',
-        detail: 'no candidate was worth hiring at this price',
+    // A worker that goes silent is a fact about that worker, not about the
+    // subtask. Giving up on the step lost the work whenever a second agent
+    // offered the same capability; retrying the same one would repeat the
+    // silence. So: once more, with someone else, never with the same agent.
+    const tried = new Set<number>();
+    let remaining = ceiling;
+    let previous: StepOutcome | undefined;
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      const pool = candidates.filter(
+        (c) => !tried.has(c.agentId) && BigInt(c.pricePerTask) <= remaining,
+      );
+      if (pool.length === 0) break;
+
+      const chosen = await this.select(spec, pool);
+      if (!chosen) break;
+      tried.add(chosen.agentId);
+
+      const outcome = await this.attempt(spec, chosen, remaining, timeoutMs);
+      if (!('retry' in outcome)) {
+        return previous ? {...outcome, retriedAfter: previous.detail} : outcome;
+      }
+
+      previous = outcome.retry;
+      // Money a silent worker still holds in escrow is not available to the
+      // next one until the keeper's refund lands.
+      if (outcome.locked) remaining -= outcome.locked;
+      this.emit({
+        kind: 'retrying',
+        capability: spec.capability,
+        jobId: outcome.retry.jobId!,
+        reason: outcome.retry.detail,
       });
     }
+
+    if (previous) return this.skip(previous);
+    return this.skip({
+      ...base,
+      status: 'no-candidate',
+      detail: 'no candidate was worth hiring at this price',
+    });
+  }
+
+  /**
+   * Hire one worker and see the job through to settlement or dispute.
+   *
+   * Returns `{retry}` rather than a final outcome when the worker never
+   * delivered and someone else might: the caller decides whether anyone is
+   * left to ask.
+   */
+  private async attempt(
+    spec: JobSpec,
+    chosen: AgentSummary,
+    ceiling: bigint,
+    timeoutMs: number,
+  ): Promise<StepOutcome | {retry: StepOutcome; locked: bigint}> {
+    const base = {capability: spec.capability};
 
     let receipt;
     try {
@@ -294,7 +346,7 @@ export class Orchestrator {
         maxPrice: ceiling.toString(),
       });
     } catch (err) {
-      // The cap is enforced on-chain and will not move. Reporting it is the
+      // The cap is enforced outside this process and will not move. Reporting it is the
       // job; retrying it is not.
       if (err instanceof AgentxError && err.code === ErrorCode.BUDGET_EXCEEDED) {
         return this.skip({...base, status: 'budget-exceeded', detail: err.message});
@@ -320,21 +372,53 @@ export class Orchestrator {
 
     let job;
     try {
-      job = await this.opts.client.awaitResult(receipt.jobId, {timeoutMs});
+      job = await this.opts.client.awaitResult(receipt.jobId, {
+        timeoutMs,
+        acceptWithinMs: Math.min(ACCEPT_WITHIN_MS, timeoutMs),
+      });
     } catch (err) {
+      if (err instanceof NotAccepted) {
+        // Nobody started, so the client may cancel: an immediate on-chain
+        // refund rather than one that waits out the accept window.
+        try {
+          await this.opts.client.cancel(receipt.jobId);
+        } catch (cancelErr) {
+          // Most likely the worker accepted in the gap. The job is theirs
+          // now; hiring a second agent for it would pay twice.
+          return this.skip({
+            ...common,
+            status: 'failed',
+            detail: `worker was slow to accept and the cancel failed: ${message(cancelErr)}`,
+          });
+        }
+        return {
+          retry: {...common, status: 'timeout', detail: `agent ${chosen.agentId} never accepted — cancelled and refunded`},
+          locked: 0n,
+        };
+      }
       if (err instanceof AgentxError && err.code === ErrorCode.DEADLINE_PASSED) {
-        // Not a lost payment: the on-chain deadline expires into a
-        // permissionless refund. Say so, rather than implying money is gone.
-        return this.skip({
-          ...common,
-          status: 'timeout',
-          detail: 'the worker did not deliver in time — the job expires on-chain into a refund',
-        });
+        // Not a lost payment: the keeper sends the permissionless refund once
+        // the on-chain work deadline passes. Say so, rather than implying the
+        // money is gone.
+        return {
+          retry: {
+            ...common,
+            status: 'timeout',
+            detail: `agent ${chosen.agentId} did not deliver in time — the escrow refunds it at the work deadline`,
+          },
+          locked: BigInt(receipt.amount),
+        };
       }
       return this.skip({...common, status: 'failed', detail: message(err)});
     }
 
     if (!job.result) {
+      if (job.state === 'refunded') {
+        return {
+          retry: {...common, status: 'timeout', detail: `job ${receipt.jobId} was refunded without a result`},
+          locked: 0n,
+        };
+      }
       return this.skip({...common, status: 'failed', detail: `job ended as ${job.state} with no result`});
     }
 
@@ -559,6 +643,12 @@ function divide(total: bigint, parts: number): bigint {
 }
 
 const minOf = (a: bigint, b: bigint) => (a < b ? a : b);
+
+/** One worker, then one other. A third silent worker says more about the network than the workers. */
+const MAX_ATTEMPTS = 2;
+
+/** How long an escrow offer may sit unaccepted before the client cancels and asks someone else. */
+const ACCEPT_WITHIN_MS = 45_000;
 
 function message(err: unknown): string {
   if (err instanceof AgentxError) return err.message;

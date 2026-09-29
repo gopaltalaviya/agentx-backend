@@ -1,5 +1,5 @@
 import {describe, expect, it} from 'vitest';
-import {AgentxClient, AgentxError, ErrorCode} from '../src/index.js';
+import {AgentxClient, AgentxError, ErrorCode, NotAccepted} from '../src/index.js';
 
 /**
  * `@agentx/sdk` — the client every agent imports. It had no tests.
@@ -287,6 +287,33 @@ describe('awaitResult', () => {
     }
     expect((error as AgentxError).code).toBe(ErrorCode.DEADLINE_PASSED);
     expect((error as AgentxError).message).toMatch(/recoverable|expiry/i);
+  });
+
+  /**
+   * A worker that is offline never accepts, and waiting out the whole
+   * timeout for it wastes the run. Nobody has started, so the caller can
+   * cancel for an immediate refund — but only if it is told which case this is.
+   */
+  it('gives up early on an offer nobody accepts, and says so distinctly', async () => {
+    const f = fakeFetch(() => ({status: 200, body: {jobId: '1', state: 'created'}}));
+    let error: unknown;
+    try {
+      await client(f.impl).awaitResult('1', {timeoutMs: 60_000, acceptWithinMs: 5, pollMs: 1});
+    } catch (err) {
+      error = err;
+    }
+    expect(error).toBeInstanceOf(NotAccepted);
+    // Still a deadline, so a caller that only knows timeouts handles it.
+    expect((error as AgentxError).code).toBe(ErrorCode.DEADLINE_PASSED);
+  });
+
+  it('does not give up on an accepted job just because it was slow to be accepted', async () => {
+    const f = fakeFetch((call) => ({
+      status: 200,
+      body: call < 3 ? {jobId: '1', state: 'accepted'} : {jobId: '1', state: 'submitted', result: {ok: true}},
+    }));
+    const job = await client(f.impl).awaitResult('1', {timeoutMs: 5_000, acceptWithinMs: 0, pollMs: 2});
+    expect(job.result).toEqual({ok: true});
   });
 });
 

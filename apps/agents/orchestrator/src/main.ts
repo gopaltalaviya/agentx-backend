@@ -73,6 +73,8 @@ function print(event: OrchestratorEvent): void {
       return console.log(`  settle    job ${event.jobId} paid\n            ${event.explorerUrl}`);
     case 'disputed':
       return console.log(`  dispute   job ${event.jobId}: ${event.reason}`);
+    case 'retrying':
+      return console.log(`  retry     job ${event.jobId}: ${event.reason} — asking another agent`);
     case 'skipped':
       return console.log(`  skip      ${event.capability}: ${event.status} — ${event.detail}`);
   }

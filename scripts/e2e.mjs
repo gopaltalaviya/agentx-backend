@@ -13,6 +13,7 @@
  */
 
 import {spawn} from 'node:child_process';
+import {randomBytes} from 'node:crypto';
 import {createPublicClient, createWalletClient, http, parseAbi} from 'viem';
 import {privateKeyToAccount} from 'viem/accounts';
 import {foundry} from 'viem/chains';
@@ -102,6 +103,8 @@ try {
     SIGNER_DEV_PRIVATE_KEY: DEPLOYER.address ? process.env.DEPLOYER_PRIVATE_KEY ?? '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80' : '',
     SIGNER_PORT: String(SIGNER_PORT),
     SIGNER_URL: `http://127.0.0.1:${SIGNER_PORT}`,
+    // Shared by the API and the signer, fresh per run.
+    SIGNER_TOKEN: randomBytes(24).toString('hex'),
     PORT: String(API_PORT),
     LOG_LEVEL: 'warn',
   };
@@ -148,12 +151,13 @@ try {
         walletAddress,
         ownerAddress: DEPLOYER.address,
         chainId: CHAIN_ID,
+        // Verified by the API against the identity registry before it is
+        // stored — the same path the /register page takes.
+        chainAgentId: String(chainAgentId),
       }),
     });
     const body = await res.json();
     if (!res.ok) throw new Error(`register ${name}: ${JSON.stringify(body)}`);
-    // Bind the row to its on-chain identity, as the indexer would on Registered.
-    await sql`UPDATE agents SET chain_agent_id = ${chainAgentId} WHERE id = ${body.agentId}`;
     return body;
   };
 
@@ -173,6 +177,15 @@ try {
     : fail(`priceDisplay was "${found[0]?.priceDisplay}"`);
 
   // ── 5. hire ───────────────────────────────────────────────────────────
+  // The indexer starts at the head, not at the deployment block. The cursor
+  // was deleted above, and from the deployment block it would need to walk
+  // 1.6 million blocks at Monad's 100-block log cap before reaching this
+  // run's transaction. For a long time it never did, and this script still
+  // passed: the indexer linked the job to an OLD run's payment with the same
+  // spec hash. Linking now checks the parties, which exposed it.
+  const indexer = new Indexer({db, chain, abis});
+  await indexer.seedCursorToHead();
+
   const workerBalanceBefore = await pub.readContract({
     address: token, abi: erc20, functionName: 'balanceOf', args: [WORKER_WALLET],
   });
@@ -181,10 +194,13 @@ try {
     workerAgentId: workerAgent.agentId,
     spec: {capability: 'market-research', input: {question: 'ETH/USDC depth on Monad'}, deadlineSeconds: 120},
     maxPrice: '50000',
+    // Asked for explicitly: this worker is new, and `auto` only pays up
+    // front for a worker whose score has earned it (fastPathMinScore).
+    path: 'direct',
   });
 
   receipt.path === 'direct'
-    ? ok(`hired on the fast path (0.02 <= fastPathMax), tx ${receipt.txHash.slice(0, 12)}…`)
+    ? ok(`hired on the fast path, as asked, tx ${receipt.txHash.slice(0, 12)}…`)
     : fail(`expected the direct path, got "${receipt.path}"`);
   ok(`explorer: ${receipt.explorerUrl}`);
 
@@ -193,10 +209,19 @@ try {
     workerAgentId: workerAgent.agentId,
     spec: {capability: 'market-research', input: {question: 'ETH/USDC depth on Monad'}, deadlineSeconds: 120},
     maxPrice: '50000',
+    // Asked for explicitly: this worker is new, and `auto` only pays up
+    // front for a worker whose score has earned it (fastPathMinScore).
+    path: 'direct',
   });
   replay.txHash === receipt.txHash
     ? ok('an identical hire replayed the original transaction instead of paying twice')
     : fail(`a retry produced a SECOND payment: ${replay.txHash} != ${receipt.txHash}`);
+  // And a second JOB: it used to insert a new row per retry, backed by no
+  // transaction, while the money side replayed correctly.
+  const [{n: jobRows}] = await sql`SELECT count(*)::int AS n FROM jobs`;
+  replay.jobId === receipt.jobId && jobRows === 1
+    ? ok('and returned the original job, not a new one')
+    : fail(`the retry answered job ${replay.jobId} (original ${receipt.jobId}); ${jobRows} job rows exist`);
 
   // ── 7. the money actually moved ───────────────────────────────────────
   const txReceipt = await pub.waitForTransactionReceipt({hash: receipt.txHash});
@@ -212,7 +237,6 @@ try {
     : fail(`worker received ${paid}, expected ${20000n - fee}`);
 
   // ── 8. the indexer picks it up ────────────────────────────────────────
-  const indexer = new Indexer({db, chain, abis});
   for (let i = 0; i < 300; i++) {
     const at = await indexer.tick();
     if (at >= txReceipt.blockNumber) break;

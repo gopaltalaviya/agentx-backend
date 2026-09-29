@@ -14,11 +14,15 @@
  *   VERIFY_CHAIN_ID=10143 pnpm demo
  *   AGENT_MODE=record pnpm demo     # spend once, replay free forever after
  *
+ *   DEMO_CHAOS=no-accept pnpm demo  # a 4th worker that never accepts
+ *   DEMO_CHAOS=mid-job pnpm demo    # a 4th worker that accepts, then dies
+ *
  * Exit codes: 0 all assertions passed, 1 an assertion failed, 3 no brain is
  * reachable (nothing was spent and nothing was proven).
  */
 
 import {spawn} from 'node:child_process';
+import {randomBytes} from 'node:crypto';
 import {createWriteStream, mkdirSync} from 'node:fs';
 import {createPublicClient, createWalletClient, http, parseAbi} from 'viem';
 import {privateKeyToAccount} from 'viem/accounts';
@@ -116,6 +120,20 @@ const WORKERS = [
   },
 ];
 
+// ── chaos: a worker that is registered, bonded and cheap, and broken ────
+// Priced under the real trade-analysis agent so a sensible selector picks it
+// first. The run must still deliver: by cancelling an offer nobody accepted,
+// or by giving up on an accepted job that never arrives and asking the other
+// agent. The second leaves money in escrow until the work deadline, which the
+// keeper refunds — `scripts/keeper-sweep.mjs` checks that after the fact.
+const CHAOS = process.env.DEMO_CHAOS;
+if (CHAOS && CHAOS !== 'no-accept' && CHAOS !== 'mid-job') {
+  throw new Error(`DEMO_CHAOS must be no-accept or mid-job, not "${CHAOS}"`);
+}
+if (CHAOS) {
+  WORKERS.push({...WORKERS[1], price: '40000', silent: CHAOS});
+}
+
 console.log(`\nAGENTX demo — ${chain.name} (${chain.chainId})`);
 console.log(`  escrow   ${chain.contracts['TaskEscrow']}`);
 console.log(`  mode     AGENT_MODE=${process.env.AGENT_MODE ?? 'cached'}`);
@@ -208,7 +226,7 @@ try {
     });
     void i;
   }
-  ok(`4 agents on-chain (ids ${firstId}…${firstId + 3n}), 3 workers bonded and funded for gas`);
+  ok(`${WORKERS.length + 1} agents on-chain (ids ${firstId}…${firstId + BigInt(WORKERS.length)}), ${WORKERS.length} workers bonded and funded for gas`);
 
   // ── 2. services ───────────────────────────────────────────────────────
   const env = {
@@ -226,6 +244,11 @@ try {
     SIGNER_DEV_PRIVATE_KEYS: workerKeys.join(','),
     SIGNER_PORT: String(SIGNER_PORT),
     SIGNER_URL: `http://127.0.0.1:${SIGNER_PORT}`,
+    // Shared by the API and the signer, fresh per run.
+    SIGNER_TOKEN: randomBytes(24).toString('hex'),
+    // The keeper, on a key the signer never uses, so the two cannot race
+    // for nonces. FUNDER only ever tops up wallets, and not during a run.
+    ...(process.env.FUNDER_PRIVATE_KEY ? {KEEPER_PRIVATE_KEY: process.env.FUNDER_PRIVATE_KEY, KEEPER_INTERVAL_MS: '10000'} : {}),
     PORT: String(API_PORT),
     LOG_LEVEL: 'warn',
   };
@@ -280,11 +303,13 @@ try {
         walletAddress,
         ownerAddress: DEPLOYER.address,
         chainId: CHAIN_ID,
+        // Verified by the API against the identity registry before it is
+        // stored — the same path the /register page takes.
+        chainAgentId: String(chainAgentId),
       }),
     });
     const body = await res.json();
     if (!res.ok) throw new Error(`register ${name}: ${JSON.stringify(body)}`);
-    await sql`UPDATE agents SET chain_agent_id = ${chainAgentId} WHERE id = ${body.agentId}`;
     return body;
   };
 
@@ -327,6 +352,7 @@ try {
 
   // ── 5. the workers ────────────────────────────────────────────────────
   const workers = WORKERS.map((w, i) => {
+    if (w.silent) return silentWorker(w, workerAgents[i]);
     const worker = new Worker({
       client: new AgentxClient({baseUrl: base, apiKey: workerAgents[i].apiKey, chainId: CHAIN_ID}),
       brain: buildBrain({role: 'worker'}),
@@ -346,10 +372,14 @@ try {
   );
 
   console.log(`\n  goal: ${GOAL}\n`);
+  const events = [];
   const orchestrator = new Orchestrator({
     client,
     brain: orchestratorBrain,
-    log: (e) => console.log(`  ${describeEvent(e)}`),
+    log: (e) => {
+      events.push(e);
+      console.log(`  ${describeEvent(e)}`);
+    },
   });
   const report = await orchestrator.run(GOAL, {timeoutMs: 90_000});
 
@@ -366,8 +396,18 @@ try {
   }
 
   report.steps.length > 0
-    ? ok(`the plan produced ${report.steps.length} step(s), all of them resolved`)
+    ? ok(`the plan produced ${report.steps.length} step(s)`)
     : fail('the plan produced no steps');
+
+  // A judge rejecting work, or no agent offering a capability, is the system
+  // deciding. `failed` and `timeout` are the system breaking — a missing
+  // recording, a result nobody could read, a transaction that did not land.
+  // This used to pass as long as ONE step settled, which is how a cached
+  // replay that lost two of three recordings reported "Demo passed".
+  const broken = report.steps.filter((s) => s.status === 'failed' || s.status === 'timeout');
+  broken.length === 0
+    ? ok('every step ended in a decision, none in a failure')
+    : fail(`${broken.length} step(s) broke rather than decided: ${broken.map((s) => `${s.capability} (${s.status}: ${s.detail})`).join('; ')}`);
 
   const settled = report.steps.filter((s) => s.status === 'settled');
   settled.length > 0
@@ -397,6 +437,40 @@ try {
     ? ok(`reputation written from settlement: ${stats.map((s) => `agent ${s.agent_id} completed=${s.completed} score=${s.score}`).join(', ')}`)
     : fail('no reputation was written — settlement did not reach the projection');
 
+  if (CHAOS) {
+    const silentId = workerAgents[WORKERS.length - 1].agentId;
+    const retried = events.find((e) => e.kind === 'retrying');
+    const [stranded] = await sql`SELECT id, chain_job_id, state FROM jobs WHERE worker_agent_id = ${silentId}`;
+    if (!stranded) {
+      fail('chaos was not exercised: the selector never hired the broken worker — re-run');
+    } else {
+      retried
+        ? ok(`the broken worker's job ${stranded.id} was abandoned and the step re-hired: ${retried.reason}`)
+        : fail('the broken worker was hired but the step was never retried');
+      const step = report.steps.find((s) => s.capability === WORKERS[1].capability);
+      step?.status === 'settled' && step.agentId !== silentId
+        ? ok(`${step.capability} still delivered, by agent ${step.agentId}`)
+        : fail(`${WORKERS[1].capability} did not recover: ${step?.status} — ${step?.detail}`);
+      if (CHAOS === 'no-accept') {
+        stranded.state === 'refunded'
+          ? ok(`job ${stranded.id} was cancelled and refunded immediately`)
+          : fail(`job ${stranded.id} should be refunded, is ${stranded.state}`);
+      } else {
+        const onChain = await pub.readContract({
+          address: escrow,
+          abi: abis['TaskEscrow'],
+          functionName: 'getJob',
+          args: [BigInt(stranded.chain_job_id)],
+        });
+        ok(
+          `job ${stranded.id} (chain ${stranded.chain_job_id}) is ${stranded.state}, held in escrow until ` +
+            `${new Date(Number(onChain.workDeadline) * 1000).toISOString()} — then run: ` +
+            `node scripts/keeper-sweep.mjs ${stranded.chain_job_id}`,
+        );
+      }
+    }
+  }
+
   for (const step of report.steps) {
     const mark = step.status === 'settled' ? '·' : '!';
     console.log(`  ${mark} ${step.capability}: ${step.status} — ${step.detail}`);
@@ -421,6 +495,24 @@ async function reputationWritten() {
   return rows.length > 0;
 }
 
+/**
+ * A worker that is registered and hireable, and broken. `no-accept` is a
+ * process that died before it saw the offer; `mid-job` accepted, then died.
+ */
+async function silentWorker(w, agent) {
+  if (w.silent === 'no-accept') return;
+  const client = new AgentxClient({baseUrl: `http://127.0.0.1:${API_PORT}`, apiKey: agent.apiKey, chainId: CHAIN_ID});
+  while (!stopped.signal.aborted) {
+    const [offer] = await client.listJobs({role: 'worker', state: 'created'}).catch(() => []);
+    if (offer) {
+      await client.accept(offer.jobId);
+      console.log(`    [${w.capability} — broken] accepted job ${offer.jobId}, and dies`);
+      return;
+    }
+    await sleep(700);
+  }
+}
+
 function describeEvent(e) {
   switch (e.kind) {
     case 'planned':
@@ -439,6 +531,8 @@ function describeEvent(e) {
       return `settle    job ${e.jobId} paid\n            ${e.explorerUrl}`;
     case 'disputed':
       return `dispute   job ${e.jobId}: ${e.reason}`;
+    case 'retrying':
+      return `retry     job ${e.jobId}: ${e.reason} — asking another agent`;
     case 'skipped':
       return `skip      ${e.capability}: ${e.status} — ${e.detail}`;
     default:

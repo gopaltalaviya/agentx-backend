@@ -148,6 +148,24 @@ export interface JobSummary {
   createdAt: string;
 }
 
+/**
+ * An escrow job no worker accepted in the time the caller allowed.
+ *
+ * Still a `DEADLINE_PASSED`, so code that only knows about timeouts treats it
+ * as one. Distinct because the remedy differs: nobody has started, so the
+ * client may cancel for an immediate refund and hire someone else, rather
+ * than waiting for an on-chain expiry.
+ */
+export class NotAccepted extends AgentxError {
+  constructor(
+    readonly jobId: string,
+    readonly waitedMs: number,
+  ) {
+    super(ErrorCode.DEADLINE_PASSED, `job ${jobId} was not accepted within ${waitedMs}ms`);
+    this.name = 'NotAccepted';
+  }
+}
+
 export interface DiscoverQuery {
   capability?: Capability;
   maxPrice?: BaseUnits;
@@ -285,11 +303,12 @@ export class AgentxClient {
    */
   async awaitResult(
     jobId: string,
-    opts: {timeoutMs?: number; pollMs?: number} = {},
+    opts: {timeoutMs?: number; pollMs?: number; acceptWithinMs?: number} = {},
   ): Promise<JobDetail> {
     const timeout = opts.timeoutMs ?? 120_000;
     const poll = opts.pollMs ?? 1_500;
-    const deadline = Date.now() + timeout;
+    const started = Date.now();
+    const deadline = started + timeout;
 
     for (;;) {
       const job = await this.getJob(jobId);
@@ -306,6 +325,17 @@ export class AgentxClient {
       // coming, so waiting for one is waiting forever.
       if (job.result) return job;
       if (job.state === 'refunded' || job.state === 'disputed') return job;
+
+      // An escrow job nobody has picked up. Waiting out the whole timeout for
+      // a worker that is offline wastes the run; the client can still cancel
+      // for an immediate refund, because nobody has started work.
+      if (
+        opts.acceptWithinMs !== undefined &&
+        job.state === 'created' &&
+        Date.now() - started > opts.acceptWithinMs
+      ) {
+        throw new NotAccepted(jobId, opts.acceptWithinMs);
+      }
 
       if (Date.now() > deadline) {
         // A timeout is not a failure of the protocol: the job still has an
