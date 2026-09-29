@@ -217,7 +217,7 @@ function card(s, o) {
   const rows = [
     ['TaskEscrow', '0x1b0959df…5349027c', 'job state machine, sole writer of feedback'],
     ['StakeVault', '0x03d5429d…fbf534c322', 'bonds per ERC-8004 agent id'],
-    ['AgentAccount', '0x51F75C30…7B82315D', 'on-chain caps for contract wallets (built; demo agents are EOAs)'],
+    ['AgentAccount', '0x51F75C30…7B82315D', 'the orchestrator pays through one: caps enforced on chain'],
   ];
   rows.forEach(([name, addr, what], i) => {
     const y = 2.2 + i * 0.66;
@@ -226,7 +226,7 @@ function card(s, o) {
     s.addText(what, {x: M + 6.0, y, w: CW - 6.0, h: 0.5, fontFace: BODY, fontSize: 13, color: MUTED, margin: 0, isTextBox: true, valign: 'middle'});
   });
 
-  const stats = [['486', 'tests green across\nthree repositories'], ['100%', 'branch coverage on the two\ncontracts that hold money'], ['8', 'MCP tools, so any agent\ncan transact directly']];
+  const stats = [['495', 'tests green across\nthree repositories'], ['100%', 'branch coverage on the two\ncontracts that hold money'], ['8', 'MCP tools, so any agent\ncan transact directly']];
   const cw = 3.85, gap = 0.36;
   stats.forEach(([big, label], i) => {
     const x = M + i * (cw + gap);
@@ -239,15 +239,15 @@ function card(s, o) {
 // ── 5b. it runs ───────────────────────────────────────────────────────────
 {
   const s = slide(
-    'A real run on Monad testnet, 29 September, with a local 8B model. Three jobs planned, hired through escrow, judged and paid; the reputation rows were written by the settlements. Then two broken workers, on purpose.',
+    'A real run on Monad testnet, 29 September, with a local 8B model. The orchestrator paid from its AgentAccount; the account itself recorded 0.13 spent. Three jobs hired through escrow, judged and paid; the reputation rows were written by the settlements. Then two broken workers, on purpose.',
   );
   eyebrow(s, 'It runs', GOOD);
   title(s, 'One goal, three hires, three settlements');
 
   const jobs = [
-    ['market-research', '0.02', 'adequate', '0x199b12b9…', '0xfe38dd9a…'],
-    ['trade-analysis', '0.05', 'adequate', '0x3792e6d8…', '0x3ffc135f…'],
-    ['trade-execution', '0.06', 'good', '0xeb7ad2cd…', '0xc76998a7…'],
+    ['market-research', '0.02', 'good', '0x536efc3e…', '0x9114efd4…'],
+    ['trade-analysis', '0.05', 'good', '0xa8016f64…', '0x67100992…'],
+    ['trade-execution', '0.06', 'good', '0x6b3caa7f…', '0xd3cf65a5…'],
   ];
   const cols = [
     ['Job', 0, 2.9],
@@ -285,7 +285,7 @@ function card(s, o) {
     s.addText(body, {x: x + 0.3, y: 4.8, w: cw - 0.6, h: 0.85, fontFace: BODY, fontSize: 12.5, color: MUTED, margin: 0, isTextBox: true});
   });
 
-  s.addText('Replayed without any model in 157 s. Every hash above is on testnet.monadexplorer.com.', {
+  s.addText('Paid from the orchestrator’s AgentAccount, which recorded 0.13 spent on chain. Replayed without any model in 156 s.', {
     x: M, y: 6.0, w: CW, h: 0.35, fontFace: BODY, fontSize: 12, color: MUTED, margin: 0, isTextBox: true,
   });
 }
@@ -328,7 +328,7 @@ function card(s, o) {
 
   card(s, {x: M, y: 2.1, w: CW, h: 1.2, line: GOOD});
   s.addText(
-    'A successful injection cannot spend more than the per-task and daily caps the owner set. They are enforced outside the model, by the signer that holds the key.',
+    'A successful injection cannot spend more than the caps the owner set, or pay anyone but the escrow. The agent’s wallet is a contract that enforces them — even against our own signer.',
     {x: M + 0.35, y: 2.3, w: CW - 0.7, h: 0.85, fontFace: HEAD, fontSize: 17, color: TEXT, margin: 0, isTextBox: true},
   );
 
@@ -336,7 +336,7 @@ function card(s, o) {
     ['1', 'Shape checked before any model sees it', MUTED],
     ['2', 'Results enter as delimited, untrusted data', MUTED],
     ['3', 'The judge runs with no tools — a successful injection has nothing to call', MUTED],
-    ['4', 'Caps enforced by the signer — and on chain, with an allowlist, for AgentAccount wallets', GOOD],
+    ['4', 'AgentAccount: per-task and daily caps, an escrow-only allowlist, a session key that expires', GOOD],
   ];
   layers.forEach(([n, text, color], i) => {
     const y = 3.55 + i * 0.5;
@@ -345,7 +345,7 @@ function card(s, o) {
   });
 
   s.addText(
-    'Layer four is arithmetic. Everything above it mitigates an unsolved problem. There is deliberately no keyword filtering — it fails against paraphrase while manufacturing the appearance of safety.',
+    'Layer four is arithmetic, and was tested as a compromised signer holding the live session key: an over-cap hire, a transfer to an attacker and a self-granted allowance all reverted on chain. Everything above it mitigates an unsolved problem.',
     {x: M, y: 5.75, w: CW, h: 0.8, fontFace: BODY, fontSize: 13, color: MUTED, margin: 0, isTextBox: true},
   );
 }
@@ -386,7 +386,7 @@ function card(s, o) {
     ['Result quality is not cryptographically verified', 'We check schema conformance and hash integrity. Truth is a judgement, made by a model.'],
     ['Disputes are centralised', 'One arbiter key — the deployer’s, today — acting only on disputed jobs. A disputed job has no timeout.'],
     ['Scoring is a damped mean, not a trimmed mean', 'A colluding ring could still move a score — it just has to pay full price for every review.'],
-    ['Demo agents are plain wallets', 'Their caps are enforced by our signer. AgentAccount puts them on chain; it is built and deployed, not yet used.'],
+    ['Workers are plain wallets', 'They never spend, so they hold no caps. A worker that ever pays another agent should get an AgentAccount too.'],
   ];
   const cw = 5.85, ch = 1.5, gx = 0.4, gy = 0.35;
   limits.forEach(([head, body], i) => {
@@ -410,7 +410,7 @@ function card(s, o) {
     lineSpacing: 50, margin: 0, isTextBox: true,
   });
   s.addText(
-    'Agents hire agents, pay each other on Monad, and every score behind that decision was bought with a settled payment. The caps that bound a compromised agent are enforced outside it.',
+    'Agents hire agents, pay each other on Monad, and every score behind that decision was bought with a settled payment. The caps that bound a compromised agent are on chain, in its own wallet.',
     {x: M, y: 3.3, w: 11.0, h: 1.0, fontFace: BODY, fontSize: 16, color: MUTED, margin: 0, isTextBox: true},
   );
 
