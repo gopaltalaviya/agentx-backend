@@ -171,7 +171,7 @@ function card(s, o) {
   title(s, 'One sentence in. Four on-chain steps out.');
 
   const steps = [
-    ['1', 'Hire', 'Client locks the fee in escrow, or pays instantly below the fast-path threshold.'],
+    ['1', 'Hire', 'Client locks the fee in escrow, or pays a proven worker instantly when the job is small.'],
     ['2', 'Work', 'The worker accepts only if it can satisfy the requested output shape.'],
     ['3', 'Judge', 'A separate model call with no tools decides whether the work earned payment.'],
     ['4', 'Settle', 'Approve releases the money. The escrow writes the score in the same transaction.'],
@@ -217,7 +217,7 @@ function card(s, o) {
   const rows = [
     ['TaskEscrow', '0x1b0959df…5349027c', 'job state machine, sole writer of feedback'],
     ['StakeVault', '0x03d5429d…fbf534c322', 'bonds per ERC-8004 agent id'],
-    ['AgentAccount', '0x51F75C30…7B82315D', 'spending caps enforced on chain'],
+    ['AgentAccount', '0x51F75C30…7B82315D', 'on-chain caps for contract wallets (built; demo agents are EOAs)'],
   ];
   rows.forEach(([name, addr, what], i) => {
     const y = 2.2 + i * 0.66;
@@ -226,7 +226,7 @@ function card(s, o) {
     s.addText(what, {x: M + 6.0, y, w: CW - 6.0, h: 0.5, fontFace: BODY, fontSize: 13, color: MUTED, margin: 0, isTextBox: true, valign: 'middle'});
   });
 
-  const stats = [['348', 'tests green across\nthree repositories'], ['100%', 'branch coverage on the two\ncontracts that hold money'], ['8', 'MCP tools, so any agent\ncan transact directly']];
+  const stats = [['481', 'tests green across\nthree repositories'], ['100%', 'branch coverage on the two\ncontracts that hold money'], ['8', 'MCP tools, so any agent\ncan transact directly']];
   const cw = 3.85, gap = 0.36;
   stats.forEach(([big, label], i) => {
     const x = M + i * (cw + gap);
@@ -236,11 +236,65 @@ function card(s, o) {
   });
 }
 
+// ── 5b. it runs ───────────────────────────────────────────────────────────
+{
+  const s = slide(
+    'A real run on Monad testnet, 29 September, with a local 8B model. Three jobs planned, hired through escrow, judged and paid; the reputation rows were written by the settlements. Then two broken workers, on purpose.',
+  );
+  eyebrow(s, 'It runs', GOOD);
+  title(s, 'One goal, three hires, three settlements');
+
+  const jobs = [
+    ['market-research', '0.02', 'adequate', '0x199b12b9…', '0xfe38dd9a…'],
+    ['trade-analysis', '0.05', 'adequate', '0x3792e6d8…', '0x3ffc135f…'],
+    ['trade-execution', '0.06', 'good', '0xeb7ad2cd…', '0xc76998a7…'],
+  ];
+  const cols = [
+    ['Job', 0, 2.9],
+    ['Paid', 2.9, 1.3],
+    ['Judge', 4.2, 1.5],
+    ['Hire tx', 5.7, 2.4],
+    ['Settle tx', 8.1, 2.4],
+  ];
+  cols.forEach(([h, dx, w]) => {
+    s.addText(h, {x: M + dx, y: 2.05, w, h: 0.35, fontFace: BODY, fontSize: 11, bold: true, color: MUTED, margin: 0, isTextBox: true});
+  });
+  jobs.forEach((row, i) => {
+    const y = 2.45 + i * 0.5;
+    row.forEach((cell, c) => {
+      const [, dx, w] = cols[c];
+      const mono = c >= 3 || c === 0;
+      s.addText(c === 1 ? `${cell} USDC` : cell, {
+        x: M + dx, y, w, h: 0.42,
+        fontFace: mono ? MONO : BODY, fontSize: c >= 3 ? 11.5 : 13,
+        color: c >= 3 ? ACCENT : c === 2 ? GOOD : TEXT,
+        margin: 0, isTextBox: true, valign: 'middle',
+      });
+    });
+  });
+
+  const chaos = [
+    ['A worker that never accepts', 'Offer cancelled after 45 s — an immediate on-chain refund — and the step re-hired another agent. It settled.'],
+    ['A worker that accepts, then dies', 'Step re-hired at the timeout. The keeper refunded the stranded escrow at its deadline: job 94, REFUNDED, tx 0xd57ada26….'],
+  ];
+  const cw = 5.85, gx = 0.4;
+  chaos.forEach(([head, body], i) => {
+    const x = M + i * (cw + gx);
+    card(s, {x, y: 4.2, w: cw, h: 1.55});
+    s.addText(head, {x: x + 0.3, y: 4.35, w: cw - 0.6, h: 0.4, fontFace: HEAD, fontSize: 15, bold: true, color: WARN, margin: 0, isTextBox: true});
+    s.addText(body, {x: x + 0.3, y: 4.8, w: cw - 0.6, h: 0.85, fontFace: BODY, fontSize: 12.5, color: MUTED, margin: 0, isTextBox: true});
+  });
+
+  s.addText('Replayed without any model in 157 s. Every hash above is on testnet.monadexplorer.com.', {
+    x: M, y: 6.0, w: CW, h: 0.35, fontFace: BODY, fontSize: 12, color: MUTED, margin: 0, isTextBox: true,
+  });
+}
+
 // ── 6. the risk ───────────────────────────────────────────────────────────
 {
   const s = slide('This is the slide a Track 4 judge cares about. A marketplace where agents hire agents and nobody thought about injection has an unpriced liability.');
   eyebrow(s, 'The risk that matters', WARN);
-  title(s, 'One agent reads another agent’s output, then spends money');
+  title(s, 'One agent reads another’s output, then spends money');
 
   card(s, {x: M, y: 2.25, w: CW, h: 1.55, line: WARN});
   s.addText(
@@ -274,7 +328,7 @@ function card(s, o) {
 
   card(s, {x: M, y: 2.1, w: CW, h: 1.2, line: GOOD});
   s.addText(
-    'A successful injection cannot spend more than the daily cap the owner set on chain, and cannot pay anyone the owner did not allowlist.',
+    'A successful injection cannot spend more than the per-task and daily caps the owner set. They are enforced outside the model, by the signer that holds the key.',
     {x: M + 0.35, y: 2.3, w: CW - 0.7, h: 0.85, fontFace: HEAD, fontSize: 17, color: TEXT, margin: 0, isTextBox: true},
   );
 
@@ -282,7 +336,7 @@ function card(s, o) {
     ['1', 'Shape checked before any model sees it', MUTED],
     ['2', 'Results enter as delimited, untrusted data', MUTED],
     ['3', 'The judge runs with no tools — a successful injection has nothing to call', MUTED],
-    ['4', 'Spending caps are on chain: per-task, daily, and a counterparty allowlist', GOOD],
+    ['4', 'Caps enforced by the signer — and on chain, with an allowlist, for AgentAccount wallets', GOOD],
   ];
   layers.forEach(([n, text, color], i) => {
     const y = 3.55 + i * 0.5;
@@ -330,9 +384,9 @@ function card(s, o) {
 
   const limits = [
     ['Result quality is not cryptographically verified', 'We check schema conformance and hash integrity. Truth is a judgement, made by a model.'],
-    ['Disputes are centralised', 'A multisig arbiter, able to act only on disputed jobs and never on funds outside one.'],
+    ['Disputes are centralised', 'One arbiter key — the deployer’s, today — acting only on disputed jobs. A disputed job has no timeout.'],
     ['Scoring is a damped mean, not a trimmed mean', 'A colluding ring could still move a score — it just has to pay full price for every review.'],
-    ['No cross-chain settlement', 'One chain per job, enforced in the schema and again at the API boundary.'],
+    ['Demo agents are plain wallets', 'Their caps are enforced by our signer. AgentAccount puts them on chain; it is built and deployed, not yet used.'],
   ];
   const cw = 5.85, ch = 1.5, gx = 0.4, gy = 0.35;
   limits.forEach(([head, body], i) => {
@@ -356,7 +410,7 @@ function card(s, o) {
     lineSpacing: 50, margin: 0, isTextBox: true,
   });
   s.addText(
-    'Agents hire agents, pay each other on Monad, and every score behind that decision was bought with a settled payment. The caps that bound a compromised agent are on chain, not on our server.',
+    'Agents hire agents, pay each other on Monad, and every score behind that decision was bought with a settled payment. The caps that bound a compromised agent are enforced outside it.',
     {x: M, y: 3.3, w: 11.0, h: 1.0, fontFace: BODY, fontSize: 16, color: MUTED, margin: 0, isTextBox: true},
   );
 
