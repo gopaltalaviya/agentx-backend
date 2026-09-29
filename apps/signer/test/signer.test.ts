@@ -161,15 +161,17 @@ const baseConfig = loadConfig({
   env: {ENABLED_CHAIN_IDS: '31337', DEFAULT_CHAIN_ID: '31337'},
 });
 
-function makeSigner(over: {gasFloorWei?: bigint; withKey?: boolean} = {}): SignerService {
+function makeSigner(
+  over: {gasFloorWei?: bigint; withKey?: boolean; keys?: unknown} = {},
+): SignerService {
   const chain = {...baseConfig.chain(31337), rpcUrl} as ReturnType<typeof baseConfig.chain>;
   return new SignerService({
     db,
     chain,
     abis: loadAbis() as never,
-    keys: {
+    keys: (over.keys ?? {
       accountFor: async () => (over.withKey === false ? null : ACCOUNT),
-    } as never,
+    }) as never,
     ...(over.gasFloorWei !== undefined ? {gasFloorWei: over.gasFloorWei} : {}),
   });
 }
@@ -366,5 +368,64 @@ describe('a failed broadcast', () => {
     const err = await expectRefusal(makeSigner().sign(request(id)), ErrorCode.CHAIN_NOT_ENABLED);
     expect(err.message).toMatch(/NOT broadcast/);
     expect(state.broadcasts).toBe(0);
+  });
+});
+
+describe('signing as the right agent', () => {
+  /**
+   * The signer asked the keystore for "a key for agent 7" and used whatever
+   * came back. With a single dev key that is ALWAYS the deployer's — so every
+   * transaction went out from one address regardless of which agent the API
+   * said it was acting for.
+   *
+   * On chain that is not a subtle mismatch. `TaskEscrow.acceptJob` checks
+   * `identityRegistry.getAgentWallet(workerAgentId) == msg.sender`, so every
+   * accept, every submitResult and every approve reverted with
+   * `NotAgentWallet` — reported as "Execution reverted for an unknown
+   * reason", which is what it looks like when the revert data is a custom
+   * error nobody decoded.
+   *
+   * The identity IS the wallet here. Signing on behalf of an agent with a key
+   * that is not its own is not a demo shortcut; it is the signer claiming to
+   * be someone it is not, and the chain is right to refuse.
+   */
+  it('refuses rather than signing with a key that is not the agent\u2019s', async () => {
+    const id = await anAgent();
+    // A key the keystore holds, for somebody else entirely.
+    const stranger = privateKeyToAccount(`0x${'11'.repeat(32)}` as Hex);
+
+    const signer = makeSigner({keys: {accountFor: async () => stranger}});
+
+    const err = await expectRefusal(signer.sign(request(id)), ErrorCode.AGENT_NOT_HIREABLE);
+    expect(err.message).toMatch(/wallet/i);
+    expect(state.broadcasts).toBe(0);
+  });
+
+  it('signs when the key matches the wallet the agent is registered with', async () => {
+    const id = await anAgent();
+    const res = await makeSigner().sign(request(id));
+
+    expect(res.txHash).toBe(TX_HASH);
+    expect(state.broadcasts).toBe(1);
+  });
+
+  it('tells the keystore which wallet it needs, not only which agent', async () => {
+    const id = await anAgent();
+    const asked: unknown[] = [];
+
+    const signer = makeSigner({
+      keys: {
+        accountFor: async (...args: unknown[]) => {
+          asked.push(args);
+          return ACCOUNT;
+        },
+      },
+    });
+
+    await signer.sign(request(id));
+
+    // A keystore holding one key per agent can only pick the right one if it
+    // is told the address it has to match.
+    expect(JSON.stringify(asked).toLowerCase()).toContain(ACCOUNT.address.toLowerCase());
   });
 });

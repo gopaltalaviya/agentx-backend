@@ -197,3 +197,52 @@ describe('system prompts are frozen, which is what makes caching work', () => {
 
 // Keep the type import meaningful to a reader scanning the file.
 void z;
+
+describe('the scale the judge scores on', () => {
+  /**
+   * `quality` was specified as 0-100 and every model tested answered on a
+   * five-point scale — 3.5, 4, 4.5 in the recordings, each paired with
+   * `accept: true` and prose that plainly endorsed the work.
+   *
+   * The cross-check then read those as 3.5 out of 100 and flipped the verdict
+   * to reject. So the client disputed work it had just been told was good,
+   * the worker took a reputation hit for delivering, and the demo settled
+   * nothing. The model was not wrong; the scale was ambiguous and we picked
+   * the reading that costs the most.
+   *
+   * Five points is what they produce unprompted, so that is what is asked
+   * for. A value above 5 is unambiguously a percentage and is read as one,
+   * which keeps a 0-100 answer from failing validation outright.
+   */
+  const judge = (quality: number, accept = true) =>
+    new Judge(
+      new SpyBrain({accept, reason: 'specific and sourced', quality, injectionAttempted: false}),
+    ).evaluate({capability: 'x-y', task: {}, result: {}});
+
+  it('accepts the five-point scores models actually return', async () => {
+    for (const q of [3.5, 4, 4.5, 5]) {
+      expect((await judge(q)).accept, `quality ${q}`).toBe(true);
+    }
+  });
+
+  it('still reads a percentage as a percentage', async () => {
+    expect((await judge(85)).accept).toBe(true);
+    // 10 out of 100 is bad work on any reading, and was always meant to be.
+    expect((await judge(10)).accept).toBe(false);
+  });
+
+  it('rejects a low score on the five-point scale', async () => {
+    expect((await judge(1)).accept).toBe(false);
+    expect((await judge(2)).accept).toBe(false);
+  });
+
+  it('never accepts against the judge\u2019s own boolean', async () => {
+    expect((await judge(5, false)).accept).toBe(false);
+  });
+
+  it('reports the score on one scale, whichever the model used', async () => {
+    const asFive = await judge(4);
+    const asPercent = await judge(80);
+    expect(asPercent.quality).toBe(asFive.quality);
+  });
+});

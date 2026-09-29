@@ -5,6 +5,7 @@ import type {AgentxClient, JobSummary} from '@agentx/sdk';
 import {
   UNTRUSTED_OPEN,
   Worker,
+  confidence,
   type Brain,
   type CompletionRequest,
   type CompletionResult,
@@ -261,6 +262,70 @@ describe('delivering', () => {
     expect(calls.submitted).toEqual([]);
     // Triage ran; producing did not.
     expect(brain.prompts).toHaveLength(1);
+  });
+});
+
+describe('confidence', () => {
+  /**
+   * The first live run had a worker produce a good report with
+   * `confidence: 95`, fail its own schema, and deliver nothing — so the
+   * client had paid and received a refund instead of a result.
+   */
+  it('reads a percentage as the fraction it obviously is', () => {
+    expect(confidence().parse(95)).toBe(0.95);
+    expect(confidence().parse(100)).toBe(1);
+  });
+
+  it('leaves a fraction alone', () => {
+    expect(confidence().parse(0.8)).toBe(0.8);
+    expect(confidence().parse(1)).toBe(1);
+    expect(confidence().parse(0)).toBe(0);
+  });
+
+  it('still refuses something that is not a confidence at all', () => {
+    expect(confidence().safeParse(-1).success).toBe(false);
+    expect(confidence().safeParse(101).success).toBe(false);
+    expect(confidence().safeParse('high').success).toBe(false);
+  });
+});
+
+describe('the fast path', () => {
+  /**
+   * A direct-pay job is settled on chain the moment it is created, but the
+   * API writes `state: created` optimistically until the indexer catches up.
+   * Deciding from state therefore called accept() on an already-terminal job,
+   * the contract reverted, and handle() returned WITHOUT emitting anything —
+   * so the failure was invisible and the job was retried on every poll,
+   * forever. `path` is set at creation and does not lie.
+   */
+  it('does not try to accept a job that was already paid', async () => {
+    const {worker, calls} = build([{...offer(), path: 'direct'}], new FakeBrain());
+
+    const [outcome] = await worker.tick();
+    expect(calls.accepted, 'a fast-path job must not be accepted').toEqual([]);
+    expect(outcome).toMatchObject({status: 'delivered'});
+    expect(calls.submitted).toHaveLength(1);
+  });
+
+  it('still accepts an escrow job', async () => {
+    const {worker, calls} = build([{...offer(), path: 'escrow'}], new FakeBrain());
+    await worker.tick();
+    expect(calls.accepted).toEqual(['1']);
+  });
+
+  /** A failure to accept must be visible, and must not be retried forever. */
+  it('reports a failed accept and gives up on that job', async () => {
+    const {worker, calls, events} = build([{...offer(), path: 'escrow'}], new FakeBrain(), {
+      acceptThrows: new AgentxError(ErrorCode.INVALID_STATE, 'job is no longer created'),
+    });
+
+    await worker.tick();
+    expect(events.some((e) => e.kind === 'failed'), 'the failure must be logged').toBe(true);
+
+    // A second poll must not re-offer it.
+    const second = await worker.tick();
+    expect(second).toEqual([]);
+    expect(calls.submitted).toEqual([]);
   });
 });
 

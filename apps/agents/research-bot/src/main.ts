@@ -1,5 +1,5 @@
 import {z} from 'zod';
-import {runWorker} from '@agentx/agent-core';
+import {runWorker, confidence} from '@agentx/agent-core';
 
 /**
  * research-bot — market research.
@@ -24,11 +24,7 @@ const Research = z.object({
     .min(1)
     .max(5)
     .describe('each a single concrete claim, not a topic heading'),
-  confidence: z
-    .number()
-    .min(0)
-    .max(1)
-    .describe('how much of this you would stake your reputation on'),
+  confidence: confidence().describe('0 to 1; a percentage is read as one'),
   sources: z
     .array(z.string())
     .max(5)

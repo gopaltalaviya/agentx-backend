@@ -338,6 +338,84 @@ describe('spending discipline', () => {
   });
 });
 
+describe('what the worker is told', () => {
+  /**
+   * The defect the first live runs ended on. A planner reasonably emits an
+   * empty `input` for the first subtask — the goal IS the input — and the
+   * orchestrator then hired a worker, paid it, and asked it to do a job
+   * without saying what the job was. The worker declined, correctly, and
+   * nothing ever completed.
+   */
+  it('passes the user goal to every worker it hires', async () => {
+    const specs: {input: Record<string, unknown>}[] = [];
+    const {orchestrator} = build(
+      {
+        hire: async (args: {spec: {input: Record<string, unknown>}}) => {
+          specs.push(args.spec);
+          return {
+            jobId: '9', chainJobId: '9', state: 'created', path: 'escrow',
+            amount: '20000', amountDisplay: '0.02 USDC', txHash: '0x', explorerUrl: 'u',
+          };
+        },
+      },
+      {Plan: {subtasks: [{capability: 'market-research', input: {}}], reasoning: 'the goal is the input'}},
+    );
+
+    await orchestrator.run('how deep is ETH/USDC on Monad?');
+
+    expect(specs[0]!.input['goal']).toBe('how deep is ETH/USDC on Monad?');
+  });
+
+  it('tells the worker where its subtask sits in the plan', async () => {
+    const specs: {input: Record<string, unknown>}[] = [];
+    const {orchestrator} = build(
+      {
+        hire: async (args: {spec: {input: Record<string, unknown>}}) => {
+          specs.push(args.spec);
+          return {
+            jobId: String(specs.length), state: 'created', path: 'escrow',
+            amount: '20000', amountDisplay: '0.02 USDC', txHash: '0x', explorerUrl: 'u',
+          };
+        },
+      },
+      {
+        Plan: {
+          subtasks: [
+            {capability: 'market-research', input: {}},
+            {capability: 'market-research', input: {}},
+          ],
+          reasoning: 'two parts',
+        },
+      },
+    );
+
+    await orchestrator.run('goal');
+    expect(specs[0]!.input['step']).toBe('1 of 2');
+    expect(specs[1]!.input['step']).toBe('2 of 2');
+  });
+
+  /** The planner's own input must survive alongside the added context. */
+  it('does not drop what the planner asked for', async () => {
+    const specs: {input: Record<string, unknown>}[] = [];
+    const {orchestrator} = build(
+      {
+        hire: async (args: {spec: {input: Record<string, unknown>}}) => {
+          specs.push(args.spec);
+          return {
+            jobId: '9', state: 'created', path: 'escrow',
+            amount: '20000', amountDisplay: '0.02 USDC', txHash: '0x', explorerUrl: 'u',
+          };
+        },
+      },
+      {Plan: {subtasks: [{capability: 'market-research', input: {pair: 'ETH/USDC'}}], reasoning: 'r'}},
+    );
+
+    await orchestrator.run('goal');
+    expect(specs[0]!.input['pair']).toBe('ETH/USDC');
+    expect(specs[0]!.input['goal']).toBe('goal');
+  });
+});
+
 describe('dependent subtasks', () => {
   const TWO_STEP = {
     subtasks: [
@@ -421,5 +499,84 @@ describe('what reaches a model', () => {
     const report = await orchestrator.run('goal');
     expect(report.steps[0]!.verdict?.injectionAttempted).toBe(true);
     expect(report.steps[0]!.status).toBe('disputed');
+  });
+});
+
+describe('rejecting work that was already paid for', () => {
+  /**
+   * The fast path pays the worker in full when the job is created. That is
+   * the trade the client makes for skipping escrow, and it means there is
+   * nothing left to withhold: `TaskEscrow` has already transferred, recorded
+   * the feedback and finished with the job.
+   *
+   * The orchestrator still called `dispute` when the judge rejected a
+   * fast-path result, and the contract refused —
+   * `INVALID_STATE: job is "settled", this action needs "submitted"`. The
+   * step was then reported as `failed — dispute failed: ...`, which reads
+   * like a broken system rather than the known limit of a path the client
+   * chose. The result was also discarded, which is the wrong half to throw
+   * away: the money is gone either way.
+   */
+  const fastPath = {
+    hire: async () => ({
+      jobId: '9',
+      chainJobId: '9',
+      state: 'settled',
+      path: 'direct',
+      amount: '20000',
+      amountDisplay: '0.02 USDC',
+      txHash: '0x',
+      explorerUrl: 'https://explorer/tx/0x',
+    }),
+    awaitResult: async () => ({
+      jobId: '9',
+      state: 'settled',
+      path: 'direct',
+      result: {summary: 'thin content that does not answer the question at all'},
+    }),
+  };
+
+  const rejecting = {
+    Verdict: {accept: false, reason: 'the summary is empty filler', quality: 0.5, injectionAttempted: false},
+  };
+
+  it('does not attempt a dispute the chain cannot honour', async () => {
+    const {orchestrator, calls} = build(fastPath, rejecting);
+
+    await orchestrator.run('goal');
+
+    expect(calls.disputed).toEqual([]);
+    expect(calls.approved).toEqual([]);
+  });
+
+  it('says why there is no recourse instead of reporting a broken call', async () => {
+    const {orchestrator} = build(fastPath, rejecting);
+
+    const report = await orchestrator.run('goal');
+    const [step] = report.steps;
+
+    expect(step!.status).not.toBe('failed');
+    expect(step!.detail).toMatch(/paid up front|fast path|no dispute/i);
+    // The judge's own words survive: they are the record of what was wrong.
+    expect(step!.detail).toMatch(/filler/);
+  });
+
+  it('still disputes a rejected ESCROW job, where the money is recoverable', async () => {
+    const {orchestrator, calls} = build({}, rejecting);
+
+    await orchestrator.run('goal');
+
+    expect(calls.disputed.length).toBe(1);
+  });
+
+  it('approves a fast-path result the judge accepts, without a second transaction', async () => {
+    const {orchestrator, calls} = build(fastPath, {
+      Verdict: {accept: true, reason: 'specific and sourced', quality: 4, injectionAttempted: false},
+    });
+
+    const report = await orchestrator.run('goal');
+
+    expect(report.steps[0]!.status).toBe('settled');
+    expect(calls.approved).toEqual([]);
   });
 });

@@ -1,5 +1,5 @@
 import {z} from 'zod';
-import {runWorker} from '@agentx/agent-core';
+import {runWorker, confidence} from '@agentx/agent-core';
 
 /**
  * trading-bot — trade analysis.
@@ -20,7 +20,7 @@ const TradeAnalysis = z.object({
     .min(40)
     .max(1_000)
     .describe('why, in terms of the data you were given'),
-  confidence: z.number().min(0).max(1),
+  confidence: confidence().describe('0 to 1; a percentage is read as one'),
   risks: z
     .array(z.string().min(10))
     .min(1)

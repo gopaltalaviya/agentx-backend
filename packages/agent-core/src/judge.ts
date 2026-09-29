@@ -18,7 +18,27 @@ import {JUDGE_SYSTEM, wrapUntrusted} from './prompts.js';
 export const Verdict = z.object({
   accept: z.boolean().describe('true if this work has earned its payment'),
   reason: z.string().min(1).max(500).describe('one or two sentences, specific to this result'),
-  quality: z.number().min(0).max(100).describe('0-100; below 50 should not be accepted'),
+  /**
+   * Five points, because that is the scale models answer on.
+   *
+   * Asked for 0-100, every model tested returned 3.5, 4 or 4.5 — a five-point
+   * rating, paired with an accepting boolean and prose that plainly endorsed
+   * the work. Read as percentages those became rejections, so the client
+   * disputed work it had just been told was good, and the worker's reputation
+   * took the hit for delivering. The scale was ambiguous and the ambiguity
+   * resolved the expensive way.
+   *
+   * A value above 5 can only be a percentage, and is converted rather than
+   * rejected: a judge whose output fails validation is a judge that disputes
+   * everything.
+   */
+  quality: z
+    .number()
+    .min(0)
+    .max(100)
+    .describe('0 to 5, where 2.5 is the bar for payment; a 0-100 score is read as a percentage')
+    // Normalised on the way out, so everything downstream compares one scale.
+    .transform((v) => (v > 5 ? v / 20 : v)),
   /**
    * Surfaced rather than hidden. An agent that tries to instruct its judge is
    * evidence about that agent, and the demo showing a caught attempt is worth
@@ -69,10 +89,11 @@ export class Judge {
       effort: 'medium',
     });
 
-    // Belt and braces: a model that says `accept: true` with a quality of 10
-    // has contradicted itself, and paying on a self-contradictory verdict is
-    // worse than disputing. The stricter reading wins.
-    const accept = value.accept && value.quality >= 50;
+    // Belt and braces: a model that says `accept: true` and then scores the
+    // work at 0.5 out of 5 has contradicted itself, and paying on a
+    // self-contradictory verdict is worse than disputing. The stricter
+    // reading wins.
+    const accept = value.accept && value.quality >= 2.5;
 
     return {...value, accept, provider, cached};
   }

@@ -157,8 +157,23 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
       },
     });
 
-    if (result.chainJobId) {
-      await db.update(jobs).set({chainJobId: result.chainJobId}).where(eq(jobs.id, job!.id));
+    // What the row says and what the response says must be the same thing.
+    //
+    // A direct-pay job is paid, settled and terminal on chain the moment it
+    // is created — `directPay` transfers, records the feedback and returns.
+    // The response said `settled` while the row stayed `created`, so the API
+    // reported one state and enforced another: every subsequent check read
+    // `created` and refused, including the worker's own delivery.
+    const settledNow = path === 'direct';
+    const creationPatch: Record<string, unknown> = {
+      ...(result.chainJobId ? {chainJobId: result.chainJobId} : {}),
+      ...(settledNow ? {state: 'settled', settledAt: new Date()} : {}),
+    };
+    // An escrow hire whose chain id the indexer has not linked yet leaves
+    // nothing to write here, and drizzle rejects an empty `set` with "No
+    // values to set" — a 500 on the ordinary path.
+    if (Object.keys(creationPatch).length > 0) {
+      await db.update(jobs).set(creationPatch).where(eq(jobs.id, job!.id));
     }
 
     await recordEvent(db, bus, job!.id, chainId, 'job.created', {
@@ -309,9 +324,19 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
    * anything (docs/04 §7.3).
    */
   app.post('/v1/jobs/:id/result', async (request) =>
-    transition(request, 'submitResult', 'accepted', 'submitted', (job, caller, body) => {
+    transition(request, 'submitResult', ['accepted', 'settled'], 'submitted', (job, caller, body) => {
       if (job.workerAgentId !== caller.agentId) {
         throw new AgentxError(ErrorCode.CHAIN_MISMATCH, 'only the assigned worker may submit a result');
+      }
+      // `settled` is open only to the fast path, where it means "paid up
+      // front, still owed the work". On an escrow job it means the client
+      // has already approved and released — accepting a result then would
+      // let a worker replace the thing that was paid for after the fact.
+      if (job.state === 'settled' && job.path !== 'direct') {
+        throw new AgentxError(
+          ErrorCode.INVALID_STATE,
+          'this job is settled — a result cannot be changed after the payment was released',
+        );
       }
       const parsed = JobResult.safeParse(body);
       if (!parsed.success) {
@@ -391,7 +416,7 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
   async function transition(
     request: FastifyRequest,
     kind: 'accept' | 'submitResult' | 'approve' | 'dispute' | 'cancel',
-    from: string,
+    from: string | string[],
     to: string,
     check: (job: typeof jobs.$inferSelect, caller: Caller, body: unknown) => void,
   ) {
@@ -401,8 +426,12 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
     if (job.chainId !== caller.chainId) {
       throw new AgentxError(ErrorCode.CHAIN_MISMATCH, `job is on chain ${job.chainId}`);
     }
-    if (job.state !== from) {
-      throw new AgentxError(ErrorCode.INVALID_STATE, `job is "${job.state}", this action needs "${from}"`);
+    const allowed = Array.isArray(from) ? from : [from];
+    if (!allowed.includes(job.state)) {
+      throw new AgentxError(
+        ErrorCode.INVALID_STATE,
+        `job is "${job.state}", this action needs ${allowed.map((s) => `"${s}"`).join(' or ')}`,
+      );
     }
 
     // Every transition addresses the job by its ON-CHAIN id, which is assigned
@@ -439,7 +468,19 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
         : undefined;
     const resultHash = delivered ? await sha3(canonicalize(delivered)) : undefined;
 
-    const result = await submit({
+    // A direct-pay job is already finished on chain.
+    //
+    // `directPay` transfers, records the feedback and returns in one
+    // transaction; there is no later call to attach a result to, and the
+    // contract would revert on one. So the delivery is recorded off-chain
+    // against the payment that already happened — the client paid up front
+    // and is entitled to the work, and the hash still lets them prove what
+    // they were given.
+    const offChainOnly = kind === 'submitResult' && job.path === 'direct';
+
+    const result = offChainOnly
+      ? {txHash: null as string | null}
+      : await submit({
       agentId: caller.agentId,
       chainId: job.chainId,
       kind,
@@ -455,7 +496,7 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
         // release" would not be true.
         ...(resultHash ? {resultHash} : {}),
       },
-    });
+        });
 
     // Advance the state optimistically, once the transaction is accepted for
     // broadcast.
@@ -468,16 +509,22 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
     //
     // So: the API writes what it believes, the indexer corrects it, and if
     // they ever disagree the chain wins.
-    const patch: Record<string, unknown> = {state: to};
+    // A settled job stays settled: recording its delivery must not walk the
+    // state backwards to `submitted` and un-settle a completed payment.
+    const patch: Record<string, unknown> = offChainOnly ? {} : {state: to};
     if (delivered && resultHash) {
       patch['result'] = delivered;
       patch['resultHash'] = resultHash;
     }
     if (to === 'settled') patch['settledAt'] = new Date();
 
-    await db.update(jobs).set(patch).where(eq(jobs.id, job.id));
+    if (Object.keys(patch).length > 0) {
+      await db.update(jobs).set(patch).where(eq(jobs.id, job.id));
+    }
 
-    await recordEvent(db, bus, job.id, job.chainId, `job.${to}`, {
+    const finalState = offChainOnly ? job.state : to;
+
+    await recordEvent(db, bus, job.id, job.chainId, offChainOnly ? 'job.delivered' : `job.${to}`, {
       jobId: String(job.id),
       txHash: result.txHash,
     });
@@ -485,9 +532,9 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
     return {
       jobId: String(job.id),
       chainId: job.chainId,
-      state: to,
+      state: finalState,
       txHash: result.txHash,
-      explorerUrl: chain.explorerTx(result.txHash),
+      explorerUrl: result.txHash ? chain.explorerTx(result.txHash) : null,
     };
   }
 }

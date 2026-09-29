@@ -19,7 +19,15 @@ import {keccak256, type Account, type Hex} from 'viem';
  */
 export interface KeySource {
   /** The signing account for an agent, or null if this source has no key for it. */
-  accountFor(agentId: number): Promise<Account | null>;
+  /**
+   * The key for this agent.
+   *
+   * `wallet` is the address the agent is REGISTERED to on chain, and the
+   * chain compares it to `msg.sender`. A source holding more than one key
+   * selects on it; a single-key source may ignore it, and the signer then
+   * refuses any mismatch rather than broadcasting a certain revert.
+   */
+  accountFor(agentId: number, wallet?: string): Promise<Account | null>;
   readonly kind: string;
 }
 
@@ -113,8 +121,17 @@ export class EnvKeystoreSource implements KeySource {
     }
   }
 
-  async accountFor(agentId: number): Promise<Account | null> {
-    return this.accounts.get(agentId) ?? this.fallback;
+  async accountFor(agentId: number, wallet?: string): Promise<Account | null> {
+    const byId = this.accounts.get(agentId);
+    if (byId) return byId;
+    if (wallet) {
+      // Keystores are commonly keyed by address rather than by our database
+      // id, and the address is the thing the chain actually checks.
+      for (const account of this.accounts.values()) {
+        if (account.address.toLowerCase() === wallet.toLowerCase()) return account;
+      }
+    }
+    return this.fallback;
   }
 
   get agentCount(): number {
@@ -126,22 +143,51 @@ function isKeystore(value: KeystoreV3 | Record<string, KeystoreV3>): value is Ke
   return (value as KeystoreV3).version === 3;
 }
 
-/** Local development only: a raw key from env, never permitted on mainnet. */
+/**
+ * Local development only: raw keys from env, never permitted on mainnet.
+ *
+ * `SIGNER_DEV_PRIVATE_KEYS` takes a comma-separated list and selects by the
+ * agent's registered wallet address. One key for every agent looks like it
+ * works right up to the first call the chain checks `msg.sender` on — every
+ * accept and every result submission — and then reverts with a custom error
+ * that reads as "unknown reason". Distinct agents need distinct keys.
+ *
+ * `SIGNER_DEV_PRIVATE_KEY` (singular) is still accepted for a single-agent
+ * setup, and is used when no listed key matches.
+ */
 export class RawKeySource implements KeySource {
   readonly kind = 'raw-key-dev-only';
-  private readonly account: Account | null;
+  private readonly byAddress = new Map<string, Account>();
+  private readonly fallback: Account | null;
 
   constructor(env: NodeJS.ProcessEnv = process.env, allowed = false) {
-    const key = env['SIGNER_DEV_PRIVATE_KEY'];
-    if (key && !allowed) {
+    const single = env['SIGNER_DEV_PRIVATE_KEY'];
+    const many = env['SIGNER_DEV_PRIVATE_KEYS'];
+
+    if ((single || many) && !allowed) {
       throw new Error(
-        'SIGNER_DEV_PRIVATE_KEY is set on a non-testnet chain. Raw keys are for local development only.',
+        'SIGNER_DEV_PRIVATE_KEY(S) is set on a non-testnet chain. Raw keys are for local development only.',
       );
     }
-    this.account = key ? privateKeyToAccount(key as `0x${string}`) : null;
+
+    for (const key of (many ?? '').split(',').map((k) => k.trim()).filter(Boolean)) {
+      const account = privateKeyToAccount(key as `0x${string}`);
+      this.byAddress.set(account.address.toLowerCase(), account);
+    }
+
+    this.fallback = single ? privateKeyToAccount(single as `0x${string}`) : null;
+    if (this.fallback) this.byAddress.set(this.fallback.address.toLowerCase(), this.fallback);
   }
 
-  async accountFor(): Promise<Account | null> {
-    return this.account;
+  async accountFor(_agentId: number, wallet?: string): Promise<Account | null> {
+    if (wallet) {
+      const match = this.byAddress.get(wallet.toLowerCase());
+      if (match) return match;
+    }
+    return this.fallback;
+  }
+
+  get keyCount(): number {
+    return this.byAddress.size;
   }
 }

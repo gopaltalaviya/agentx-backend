@@ -19,6 +19,7 @@
  */
 
 import {spawn} from 'node:child_process';
+import {createWriteStream, mkdirSync} from 'node:fs';
 import {createPublicClient, createWalletClient, http, parseAbi} from 'viem';
 import {privateKeyToAccount} from 'viem/accounts';
 import {foundry} from 'viem/chains';
@@ -27,7 +28,7 @@ import {z} from 'zod';
 import {loadConfig, loadAbis} from '@agentx/config';
 import {createDb, closeDb} from '@agentx/db';
 import {AgentxClient} from '@agentx/sdk';
-import {Orchestrator, Worker, buildBrain, describeBrain} from '@agentx/agent-core';
+import {Orchestrator, Worker, buildBrain, describeBrain, confidence} from '@agentx/agent-core';
 import {Indexer} from '../apps/indexer/dist/indexer.js';
 
 const CHAIN_ID = Number(process.env.VERIFY_CHAIN_ID ?? 31337);
@@ -40,6 +41,10 @@ const GOAL =
 
 let failures = 0;
 const ok = (m) => console.log(`  ✓ ${m}`);
+// Visible, but not a failure: an RPC blip mid-run is survivable, and burying
+// it is how a run reports "the agents did not deliver" when the truth was
+// that nothing was reading the chain.
+const warn = (m) => console.error(`  ! ${m}`);
 const fail = (m) => {
   console.error(`  ✗ ${m}`);
   failures++;
@@ -80,23 +85,28 @@ const WORKERS = [
     output: z.object({
       summary: z.string().min(40).max(1_200),
       keyFindings: z.array(z.string().min(10)).min(1).max(5),
-      confidence: z.number().min(0).max(1),
+      confidence: confidence(),
     }),
   },
   {
     capability: 'trade-analysis',
-    price: '25000',
+    // Above fastPathMax (30000) ON PURPOSE, so this hire goes through escrow.
+    // Every price used to sit at or below the threshold, so every demo job
+    // took the fast path and the accept -> deliver -> judge -> approve route
+    // — the one that writes reputation — was never exercised at all. The
+    // params file's own comment always said the demo should cover both.
+    price: '50000',
     role: 'a trading analysis agent that recommends a position with explicit risks',
     output: z.object({
       recommendation: z.enum(['buy', 'sell', 'hold']),
       rationale: z.string().min(40).max(1_000),
-      confidence: z.number().min(0).max(1),
+      confidence: confidence(),
       risks: z.array(z.string().min(10)).min(1).max(4),
     }),
   },
   {
     capability: 'trade-execution',
-    price: '30000',
+    price: '60000',
     role: 'an execution planning agent that produces an ordered plan with an abort condition',
     output: z.object({
       steps: z.array(z.object({action: z.string().min(5)})).min(1).max(6),
@@ -160,15 +170,45 @@ try {
   await write(token, erc20, 'approve', [vault, 1_000_000_000n]);
   await write(token, erc20, 'approve', [escrow, 1_000_000_000n]);
 
-  // The orchestrator, then one identity per worker. Each worker is paid to a
-  // DISTINCT address so the balance assertions measure something real.
+  // The orchestrator, then one identity per worker.
+  //
+  // Each worker holds its OWN key, and the address it is registered to is the
+  // address that key controls. That is not decoration: `TaskEscrow` resolves
+  // a job's worker through the identity registry and requires `msg.sender` to
+  // match, so an agent whose wallet nobody holds the key to can be hired and
+  // paid, but can never accept a job or submit a result.
+  //
+  // These were `0x1111…`, `0x2222…`, `0x3333…` — addresses with no key
+  // behind them at all. Every accept reverted with `NotAgentWallet`, which
+  // viem reports as "execution reverted for an unknown reason", and the
+  // escrow path had therefore never once completed.
   await write(identity, abis['MockIdentityRegistry'], 'register', ['ipfs://orchestrator', DEPLOYER.address]);
-  const workerWallets = WORKERS.map((_, i) => `0x${String(i + 1).repeat(40)}`);
+
+  const workerKeys = WORKERS.map(
+    (_, i) => `0x${(i + 1).toString(16).padStart(2, '0').repeat(32)}`,
+  );
+  const workerAccounts = workerKeys.map((k) => privateKeyToAccount(k));
+  const workerWallets = workerAccounts.map((a) => a.address);
+
   for (const [i, w] of WORKERS.entries()) {
     await write(identity, abis['MockIdentityRegistry'], 'register', [`ipfs://${w.capability}`, workerWallets[i]]);
     await write(vault, abis['StakeVault'], 'deposit', [firstId + BigInt(i + 1), 10_000_000n]);
   }
-  ok(`4 agents on-chain (ids ${firstId}…${firstId + 3n}), 3 workers bonded`);
+
+  // Gas for each worker. A worker that cannot pay for its own accept is a
+  // worker that silently never accepts, and the signer's gas floor would
+  // refuse before broadcasting — correctly, but the demo would just look
+  // slow.
+  const GAS_TOPUP = 20_000_000_000_000_000n; // 0.02 MON
+  for (const [i, account] of workerAccounts.entries()) {
+    const balance = await pub.getBalance({address: account.address});
+    if (balance >= GAS_TOPUP) continue;
+    await pub.waitForTransactionReceipt({
+      hash: await wallet.sendTransaction({to: account.address, value: GAS_TOPUP - balance}),
+    });
+    void i;
+  }
+  ok(`4 agents on-chain (ids ${firstId}…${firstId + 3n}), 3 workers bonded and funded for gas`);
 
   // ── 2. services ───────────────────────────────────────────────────────
   const env = {
@@ -180,16 +220,32 @@ try {
     SIGNER_DEV_PRIVATE_KEY:
       process.env.DEPLOYER_PRIVATE_KEY ??
       '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
+    // One key PER AGENT, selected by the wallet the agent is registered to.
+    // A single shared key signs every transaction as the deployer, which the
+    // chain rejects for anything it checks msg.sender on.
+    SIGNER_DEV_PRIVATE_KEYS: workerKeys.join(','),
     SIGNER_PORT: String(SIGNER_PORT),
     SIGNER_URL: `http://127.0.0.1:${SIGNER_PORT}`,
     PORT: String(API_PORT),
     LOG_LEVEL: 'warn',
   };
 
+  // Every service's output, kept.
+  //
+  // The first `accept` 500 of the run cost an hour because the only record of
+  // it was the client's side of the wire: "failed with 500", no cause. A
+  // filtered stderr handler is a filter over a thing nobody has read yet.
+  const logDir = 'artifacts/demo-logs';
+  mkdirSync(logDir, {recursive: true});
+
   const start = (name, script) => {
     const child = spawn(process.execPath, [script], {env, stdio: ['ignore', 'pipe', 'pipe']});
+    const sink = createWriteStream(`${logDir}/${name}.log`);
+    child.stdout.pipe(sink);
+    child.stderr.pipe(sink);
     child.stderr.on('data', (d) => {
-      if (/error|Error/.test(String(d))) process.stderr.write(`    [${name}] ${d}`);
+      const s = String(d);
+      if (/error|Error|"level":50/.test(s)) process.stderr.write(`    [${name}] ${s}`);
     });
     children.push(child);
   };
@@ -243,9 +299,28 @@ try {
 
   // ── 4. the indexer, running as it would in production ─────────────────
   const indexer = new Indexer({db, chain, abis});
+
+  // Start at the head, because the only events this run cares about are the
+  // ones it is about to create. The cursor was truncated above, so without
+  // this the indexer restarts at the deployment block — 1.6 million blocks
+  // and roughly two hours of backfill behind a demo that lasts ninety
+  // seconds. Every run before this one waited for events that were never
+  // going to arrive.
+  const seededAt = await indexer.seedCursorToHead();
+  ok(`indexer starting at block ${seededAt ?? '(existing cursor)'}`);
+
+  // Errors are REPORTED. `.catch(() => {})` here is what kept the above
+  // invisible through five failed runs.
+  let indexerFailures = 0;
   const indexing = (async () => {
     while (!stopped.signal.aborted) {
-      await indexer.tick().catch(() => {});
+      try {
+        await indexer.tick();
+      } catch (err) {
+        // Once per distinct problem: an RPC blip every 400ms would otherwise
+        // bury the run's own output.
+        if (indexerFailures++ % 10 === 0) warn(`indexer: ${err.message ?? err}`);
+      }
       await sleep(400);
     }
   })();

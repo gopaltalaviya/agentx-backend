@@ -79,9 +79,32 @@ export class SignerService {
     // 2. Policy, mirroring AgentAccount's on-chain checks.
     await this.checkPolicy(req);
 
-    const account = await keys.accountFor(req.agentId);
+    // The agent's registered wallet — the address the CHAIN will check.
+    //
+    // `TaskEscrow` resolves a job's worker and client through the identity
+    // registry and compares the result to `msg.sender`. So the key is not a
+    // detail of custody: it IS the agent's identity, and the keystore has to
+    // be told which address it must produce.
+    const agent = await this.loadAgent(req.agentId);
+    const wallet = agent.walletAddress as Hex;
+
+    const account = await keys.accountFor(req.agentId, wallet);
     if (!account) {
       throw new AgentxError(ErrorCode.AGENT_NOT_HIREABLE, `no signing key for agent ${req.agentId}`);
+    }
+
+    // Signing with somebody else's key produces a transaction that is valid,
+    // costs gas, and reverts — `NotAgentWallet`, surfaced as "execution
+    // reverted for an unknown reason" because the revert data is a custom
+    // error. A single shared dev key made that the outcome of every accept,
+    // submitResult and approve in the system. Refusing here says which two
+    // addresses disagree, before any gas is spent.
+    if (account.address.toLowerCase() !== wallet.toLowerCase()) {
+      throw new AgentxError(
+        ErrorCode.AGENT_NOT_HIREABLE,
+        `agent ${req.agentId} is registered to wallet ${wallet}, but the only key available signs as ` +
+          `${account.address} — the chain checks msg.sender against the registered wallet, so this would revert`,
+      );
     }
 
     // 3. Gas. Refusing is better than broadcasting a transaction that will
@@ -190,15 +213,22 @@ export class SignerService {
    * The same five rules AgentAccount enforces on-chain, checked here so the
    * caller gets an actionable error instead of a bare revert.
    */
+  /** The agent row, or an actionable error naming the chain it is not on. */
+  private async loadAgent(agentId: number) {
+    const {db, chain} = this.deps;
+    const agent = await db.query.agents.findFirst({
+      where: and(eq(agents.id, agentId), eq(agents.chainId, chain.chainId)),
+    });
+    if (!agent) {
+      throw new AgentxError(ErrorCode.CHAIN_MISMATCH, `agent ${agentId} is not on chain ${chain.chainId}`);
+    }
+    return agent;
+  }
+
   private async checkPolicy(req: SignRequest): Promise<void> {
     const {db, chain, abis} = this.deps;
 
-    const agent = await db.query.agents.findFirst({
-      where: and(eq(agents.id, req.agentId), eq(agents.chainId, chain.chainId)),
-    });
-    if (!agent) {
-      throw new AgentxError(ErrorCode.CHAIN_MISMATCH, `agent ${req.agentId} is not on chain ${chain.chainId}`);
-    }
+    const agent = await this.loadAgent(req.agentId);
 
     const accountAbi = abis['AgentAccount'];
     if (!accountAbi || req.spend === 0n) return;

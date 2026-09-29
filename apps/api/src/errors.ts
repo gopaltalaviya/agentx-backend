@@ -94,6 +94,29 @@ export function registerErrorHandler(app: FastifyInstance): void {
       });
     }
 
+    // An error that already knows it is the caller's fault.
+    //
+    // Fastify's own errors carry a `statusCode` — a malformed body, an
+    // unsupported media type, a payload over the limit. Collapsing those into
+    // 500 breaks the one promise a 5xx makes, that the fault is ours, and it
+    // sends whoever is debugging into the wrong half of the system: an empty
+    // POST body rejected with FST_ERR_CTP_EMPTY_JSON_BODY was reported as a
+    // 500 and hunted for in the signer and on chain for a day.
+    const status = (err as {statusCode?: number}).statusCode;
+    if (typeof status === 'number' && status >= 400 && status < 500) {
+      request.log.warn({err, traceId}, 'client error');
+      return reply.status(status).type('application/problem+json').send({
+        type: 'https://agentx.dev/errors/bad-request',
+        title: 'Bad request',
+        status,
+        // The code is Fastify's own (FST_ERR_*) when it has one: the caller
+        // has to be able to tell these apart to fix them.
+        code: (err as {code?: string}).code ?? 'BAD_REQUEST',
+        detail: err.message,
+        traceId,
+      });
+    }
+
     request.log.error({err, traceId}, 'unhandled error');
     // Never leak an internal message to a caller; the traceId is how support
     // connects this response to the log line that has the detail.

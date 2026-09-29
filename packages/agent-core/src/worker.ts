@@ -36,6 +36,22 @@ import {validateShape} from './judge.js';
  * transaction to pay for, and silence costs the worker nothing but the offer.
  */
 
+/**
+ * A confidence between 0 and 1, accepting the percentage models keep emitting.
+ *
+ * Asking for 0..1 and rejecting anything else is correct but loses real work:
+ * the first live run had a worker produce a perfectly good report with
+ * `confidence: 95`, fail its own schema, and deliver nothing — so the client
+ * had paid and got a refund instead of a result. A value above 1 and at most
+ * 100 is unambiguously a percentage, so it is read as one. Anything else still
+ * fails, because it is not a confidence.
+ */
+export const confidence = () =>
+  z.preprocess(
+    (v) => (typeof v === 'number' && v > 1 && v <= 100 ? v / 100 : v),
+    z.number().min(0).max(1),
+  );
+
 export const TriageDecision = z.object({
   accept: z.boolean(),
   reason: z.string().min(1).max(300).describe('which condition failed, or why you can do this'),
@@ -153,15 +169,26 @@ export class Worker<T> {
     }
 
     try {
-      // Only an escrow job is accepted. A fast-path job was paid on creation
-      // and is already terminal on chain; calling accept on it would revert.
-      if (offer.state === 'created') await this.opts.client.accept(offer.jobId);
+      // Decided by PATH, not by state.
+      //
+      // A fast-path job is paid and terminal on chain the moment it is
+      // created, but the API writes `state: created` optimistically until the
+      // indexer catches up. Reading state therefore meant calling accept() on
+      // an already-settled job: the contract reverted, this method returned
+      // without emitting anything, and the job came back on the very next
+      // poll — an invisible failure retried forever. `path` is fixed when the
+      // job is created and does not lie.
+      if (offer.path === 'escrow') await this.opts.client.accept(offer.jobId);
     } catch (err) {
-      // Losing the race to accept is normal — the job may have expired or been
-      // cancelled between listing and now. Not a failure of this worker.
+      // Losing the race to accept is ordinary — the job may have expired or
+      // been cancelled between the listing and now. It is not this worker's
+      // fault, but it must be VISIBLE, and it must not be retried on every
+      // poll for the rest of the run.
+      this.declined.add(offer.jobId);
+      this.emit({kind: 'failed', jobId: offer.jobId, stage: 'accept', reason: message(err)});
       return {status: 'failed', stage: 'accept', reason: message(err)};
     }
-    this.emit({kind: 'accepted', jobId: offer.jobId});
+    if (offer.path === 'escrow') this.emit({kind: 'accepted', jobId: offer.jobId});
 
     const startedAt = Date.now();
     let output: T;

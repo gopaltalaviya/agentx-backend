@@ -293,7 +293,19 @@ export class AgentxClient {
 
     for (;;) {
       const job = await this.getJob(jobId);
-      if (job.state === 'settled' || job.state === 'refunded') return job;
+
+      // The RESULT is what is being waited for. The state only says whether
+      // one can still arrive.
+      //
+      // `settled` alone is not enough: a direct-pay job is settled the moment
+      // it is created, because the client paid up front, and the work has not
+      // started. Returning there made the caller report a job it had just
+      // hired as having ended without delivering.
+      //
+      // `refunded` and `disputed` are the other way round — no result is
+      // coming, so waiting for one is waiting forever.
+      if (job.result) return job;
+      if (job.state === 'refunded' || job.state === 'disputed') return job;
 
       if (Date.now() > deadline) {
         // A timeout is not a failure of the protocol: the job still has an
@@ -369,7 +381,15 @@ export class AgentxClient {
     path: string,
     opts: {body?: unknown; idempotencyKey?: string; auth?: boolean},
   ): Promise<T> {
-    const headers: Record<string, string> = {'content-type': 'application/json'};
+    // Declared only when there IS a body.
+    //
+    // `accept` and `cancel` post nothing, and a `content-type:
+    // application/json` on an empty body is exactly what Fastify rejects —
+    // FST_ERR_CTP_EMPTY_JSON_BODY. So no worker could accept an escrow job:
+    // every escrow hire timed out into a refund, and reputation, which is
+    // only written by a settlement, was never written at all.
+    const headers: Record<string, string> = {};
+    if (opts.body !== undefined) headers['content-type'] = 'application/json';
     if (opts.auth !== false) headers['authorization'] = `Bearer ${this.apiKey}`;
     if (opts.idempotencyKey) headers['idempotency-key'] = opts.idempotencyKey;
 

@@ -9,3 +9,6 @@ coverage/
 
 # recorded agent completions (regenerate with AGENT_MODE=record)
 .agent-cache/
+
+# demo service logs (regenerate by running the demo)
+artifacts/

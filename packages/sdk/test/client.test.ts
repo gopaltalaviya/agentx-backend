@@ -246,10 +246,20 @@ describe('credentials', () => {
 });
 
 describe('awaitResult', () => {
+  /**
+   * The settled job carries a result, because on the escrow path it cannot
+   * not: settled means the client approved, and approving something that was
+   * never delivered is not a state the contract can reach. The old fixture
+   * settled with `result` absent, which described a job that cannot exist —
+   * and that fiction is what let `awaitResult` return on the state alone.
+   */
   it('polls until the job reaches a terminal state', async () => {
     const f = fakeFetch((call) => ({
       status: 200,
-      body: {jobId: '1', state: call < 3 ? 'accepted' : 'settled'},
+      body:
+        call < 3
+          ? {jobId: '1', state: 'accepted'}
+          : {jobId: '1', state: 'settled', result: {summary: 'delivered'}},
     }));
     const job = await client(f.impl).awaitResult('1', {timeoutMs: 5_000, pollMs: 1});
     expect(job.state).toBe('settled');
@@ -302,5 +312,106 @@ describe('query building', () => {
     await client(f.impl).discover({});
     expect(f.calls[0]!.url).not.toContain('capability=');
     expect(f.calls[0]!.url).not.toContain('minScore=');
+  });
+});
+
+describe('a POST with nothing to say', () => {
+  /**
+   * `accept` has no body. It was still sent with
+   * `content-type: application/json`, and Fastify rejects exactly that
+   * combination — `FST_ERR_CTP_EMPTY_JSON_BODY`, "Body cannot be empty when
+   * content-type is set to 'application/json'".
+   *
+   * So no worker could ever accept an escrow job. Every escrow hire in the
+   * demo timed out, was refunded, and no reputation was ever written — the
+   * one claim the project exists to make, defeated by a header on an empty
+   * request.
+   */
+  it('does not declare a JSON body it is not sending', async () => {
+    const f = fakeFetch(() => ({status: 200, body: {jobId: '1', state: 'accepted'}}));
+    await client(f.impl).accept('1');
+
+    const {init} = f.calls[0]!;
+    expect(init!.body).toBeUndefined();
+    const headers = init!.headers as Record<string, string>;
+    expect(headers['content-type']).toBeUndefined();
+  });
+
+  it('still authenticates and carries the idempotency key', async () => {
+    const f = fakeFetch(() => ({status: 200, body: {jobId: '1', state: 'accepted'}}));
+    await client(f.impl).accept('1');
+
+    const headers = f.calls[0]!.init!.headers as Record<string, string>;
+    expect(headers['authorization']).toBe('Bearer ax_test');
+  });
+
+  it('keeps the content type on a POST that does have a body', async () => {
+    const f = fakeFetch(() => ({status: 200, body: {jobId: '1', state: 'submitted'}}));
+    await client(f.impl).submitResult('1', {output: {summary: 'x'}});
+
+    const headers = f.calls[0]!.init!.headers as Record<string, string>;
+    expect(headers['content-type']).toBe('application/json');
+    expect(f.calls[0]!.init!.body).toContain('summary');
+  });
+});
+
+describe('waiting for work, not for a state', () => {
+  /**
+   * `awaitResult` returned as soon as the job reached `settled`.
+   *
+   * On the escrow path that is right — settled means the client approved,
+   * which means a result exists. On the fast path it is exactly backwards: a
+   * direct-pay job is settled the instant it is created, because the client
+   * has already paid. So the orchestrator hired a worker, polled once,
+   * found a settled job with no result, and reported "job ended as settled
+   * with no result" about work that had not been started yet.
+   *
+   * What is being waited for is the RESULT. The state is how you know it is
+   * never coming.
+   */
+  const job = (over: Record<string, unknown>) => ({
+    jobId: '1',
+    chainId: 10143,
+    state: 'settled',
+    path: 'direct',
+    result: null,
+    ...over,
+  });
+
+  it('keeps waiting on a job that is paid but not yet delivered', async () => {
+    const f = fakeFetch((call) => ({
+      status: 200,
+      body: call < 3 ? job({}) : job({result: {summary: 'done'}}),
+    }));
+
+    const settled = await client(f.impl).awaitResult('1', {timeoutMs: 5_000, pollMs: 1});
+
+    expect(settled.result).toEqual({summary: 'done'});
+    expect(f.calls.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('returns at once when the result is already there', async () => {
+    const f = fakeFetch(() => ({status: 200, body: job({result: {summary: 'done'}})}));
+
+    await client(f.impl).awaitResult('1', {timeoutMs: 5_000, pollMs: 1});
+
+    expect(f.calls.length).toBe(1);
+  });
+
+  it('returns a refund immediately — there is no result coming', async () => {
+    const f = fakeFetch(() => ({status: 200, body: job({state: 'refunded'})}));
+
+    const out = await client(f.impl).awaitResult('1', {timeoutMs: 5_000, pollMs: 1});
+
+    expect(out.state).toBe('refunded');
+    expect(f.calls.length).toBe(1);
+  });
+
+  it('times out rather than waiting forever on a job nobody is working', async () => {
+    const f = fakeFetch(() => ({status: 200, body: job({})}));
+
+    await expect(client(f.impl).awaitResult('1', {timeoutMs: 30, pollMs: 1})).rejects.toThrow(
+      /still "settled"|remains recoverable/,
+    );
   });
 });

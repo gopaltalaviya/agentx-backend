@@ -26,6 +26,8 @@ let submitted: string[] = [];
 /** The payload the API handed the signer, so the on-chain args can be asserted. */
 let lastPayload: Record<string, unknown> | null = null;
 let chainJobSeq = 0;
+/** When true the signer answers without an id, as it does before a receipt. */
+let withholdChainJobId = false;
 
 const config = loadConfig({
   contractsRoot: fileURLToPath(new URL('../../../../agentx-contracts', import.meta.url)),
@@ -46,7 +48,10 @@ beforeAll(async () => {
       // A DISTINCT id per job, as the chain would assign. Returning a
       // constant made the second hire in any test collide on
       // jobs_chain_job_uk — a mock that cannot happen in production.
-      return {txHash: `0x${'ab'.repeat(32)}`, chainJobId: String(++chainJobSeq)};
+      const chainJobId = String(++chainJobSeq);
+      return withholdChainJobId
+        ? {txHash: `0x${'ab'.repeat(32)}`}
+        : {txHash: `0x${'ab'.repeat(32)}`, chainJobId};
     },
   });
 });
@@ -58,6 +63,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   submitBehaviour = null;
+  withholdChainJobId = false;
   submitted = [];
   lastPayload = null;
   await db.execute(
@@ -332,6 +338,40 @@ describe('a worker can find the work it was hired for', () => {
     expect(listed.jobs[0].spec.capability).toBe('market-research');
   });
 
+  /**
+   * The escrow path is the interesting one — accept, deliver, judge, approve,
+   * and only then is reputation written. A job priced above fastPathMax must
+   * reach the worker as `created`, waiting to be accepted, rather than being
+   * paid on creation.
+   */
+  it('routes a price above the fast-path threshold through escrow', async () => {
+    const client = await register('Client');
+    const worker = await register('Worker');
+    await db.execute(sql`UPDATE agents SET price_per_task = '50000' WHERE id = ${worker.agentId}`);
+
+    const hire = await app.inject({
+      method: 'POST',
+      url: '/v1/jobs',
+      headers: {...auth(client.apiKey), 'idempotency-key': `escrow-${Date.now()}`},
+      payload: {
+        workerAgentId: String(worker.agentId),
+        maxPrice: '80000',
+        spec: {capability: 'market-research', input: {q: 1}, deadlineSeconds: 120},
+      },
+    });
+    expect(hire.statusCode, hire.body).toBe(201);
+    expect(hire.json().path, 'above fastPathMax must use escrow').toBe('escrow');
+    expect(hire.json().state).toBe('created');
+
+    const listed = (await app.inject({
+      method: 'GET',
+      url: '/v1/jobs?role=worker&limit=25',
+      headers: auth(worker.apiKey),
+    })).json();
+    expect(listed.jobs[0].state).toBe('created');
+    expect(listed.jobs[0].hasResult).toBe(false);
+  });
+
   it('stops listing it once the work is delivered', async () => {
     const {jobId, worker} = await hiredJob();
     await app.inject({
@@ -436,5 +476,216 @@ describe('the daily cap', () => {
     for (const row of rows) expect(row.state).toBe('created');
     const events = (await db.execute(sql`SELECT count(*)::int AS n FROM job_events`)) as unknown as {n: number}[];
     expect(events[0]!.n).toBe(0);
+  });
+});
+
+describe('what a client error is reported as', () => {
+  /**
+   * The error handler laundered every unrecognised error into a 500.
+   *
+   * Fastify's own 4xx errors carry a `statusCode`, and dropping it turns "you
+   * sent a malformed request" into "the server is broken" — which points
+   * whoever is debugging at the wrong half of the system. It cost a day here:
+   * an empty-body POST was rejected with `FST_ERR_CTP_EMPTY_JSON_BODY` (400),
+   * reported to the caller as a 500, and hunted for in the signer and the
+   * chain rather than in the request.
+   *
+   * A 5xx is a promise that the fault is ours. It has to be true.
+   */
+  it('reports a malformed request as 4xx, not 500', async () => {
+    const {apiKey} = await register('Client');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/jobs',
+      headers: {...auth(apiKey), 'content-type': 'application/json'},
+      payload: '',
+    });
+
+    expect(res.statusCode, res.body).toBeLessThan(500);
+    expect(res.statusCode).toBeGreaterThanOrEqual(400);
+  });
+
+  it('names the caller-side fault instead of an opaque INTERNAL', async () => {
+    const {apiKey} = await register('Client');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/jobs',
+      headers: {...auth(apiKey), 'content-type': 'application/json'},
+      payload: '{"not closed"',
+    });
+
+    const body = res.json() as {code?: string; detail?: string; traceId?: string};
+    expect(res.statusCode, res.body).toBeLessThan(500);
+    expect(body.code).not.toBe('INTERNAL');
+    // The traceId is how a report is tied back to a log line; a 4xx needs it
+    // as much as a 5xx does.
+    expect(body.traceId).toBeTruthy();
+  });
+
+  it('still returns 500 for a genuine server fault', async () => {
+    const {apiKey} = await register('Client');
+    const worker = await register('Worker');
+    submitBehaviour = () => {
+      throw new Error('the signer exploded in a way nobody anticipated');
+    };
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/jobs',
+      headers: {...auth(apiKey), 'idempotency-key': `key-${Date.now()}`},
+      payload: {
+        workerAgentId: String(worker.agentId),
+        maxPrice: '50000',
+        path: 'escrow',
+        spec: {capability: 'market-research', input: {q: 1}, deadlineSeconds: 120},
+      },
+    });
+
+    expect(res.statusCode).toBe(500);
+    expect((res.json() as {code: string}).code).toBe('INTERNAL');
+  });
+});
+
+describe('the direct-pay path, after the money has moved', () => {
+  /**
+   * A fast-path job is paid in full when it is created. There is no accept
+   * and no approve — the client has decided the job is small enough that a
+   * round trip through escrow costs more than the work.
+   *
+   * The work still has to be delivered, and two things stopped it. The
+   * database row stayed in `created` while the API told the caller `settled`,
+   * so the state the system reported and the state it held disagreed from the
+   * first moment. And `submitResult` required `accepted`, a state a direct
+   * job never reaches, so the worker's result was refused with a 409 five
+   * times over and then thrown away — the client paid and got nothing, which
+   * is the one outcome the marketplace exists to prevent.
+   */
+  async function directJob() {
+    const client = await register('Client');
+    const worker = await register('Worker');
+
+    const hire = await app.inject({
+      method: 'POST',
+      url: '/v1/jobs',
+      headers: {...auth(client.apiKey), 'idempotency-key': `key-${Date.now()}-${Math.random()}`},
+      payload: {
+        workerAgentId: String(worker.agentId),
+        maxPrice: '20000',
+        path: 'direct',
+        spec: {capability: 'market-research', input: {question: 'depth?'}, deadlineSeconds: 120},
+      },
+    });
+    expect(hire.statusCode, hire.body).toBe(201);
+    const {jobId} = hire.json() as {jobId: string};
+    // The chain assigns the id; the indexer links it. Stand in for that.
+    await db.execute(sql`UPDATE jobs SET chain_job_id = ${jobId} WHERE id = ${Number(jobId)}`);
+    return {jobId, worker};
+  }
+
+  it('records the job as settled, matching what it told the caller', async () => {
+    const {jobId} = await directJob();
+
+    const rows = (await db.execute(
+      sql`SELECT state FROM jobs WHERE id = ${Number(jobId)}`,
+    )) as unknown as {state: string}[];
+    expect(rows[0]!.state).toBe('settled');
+  });
+
+  it('accepts the worker\u2019s result on a job that was paid up front', async () => {
+    const {jobId, worker} = await directJob();
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/jobs/${jobId}/result`,
+      headers: auth(worker.apiKey),
+      payload: {output: {summary: 'liquidity is thin', confidence: 0.6}, producedAt: new Date().toISOString()},
+    });
+
+    expect(res.statusCode, res.body).toBe(200);
+
+    const rows = (await db.execute(
+      sql`SELECT result, result_hash FROM jobs WHERE id = ${Number(jobId)}`,
+    )) as unknown as {result: Record<string, unknown> | null; result_hash: string | null}[];
+    expect(rows[0]!.result).toMatchObject({summary: 'liquidity is thin'});
+    expect(rows[0]!.result_hash).toMatch(/^0x[0-9a-f]{64}$/);
+  });
+
+  it('sends no transaction for it — the chain is already finished with this job', async () => {
+    const {jobId, worker} = await directJob();
+    submitted = [];
+
+    await app.inject({
+      method: 'POST',
+      url: `/v1/jobs/${jobId}/result`,
+      headers: auth(worker.apiKey),
+      payload: {output: {summary: 'liquidity is thin'}, producedAt: new Date().toISOString()},
+    });
+
+    // `directPay` is terminal on chain and records the feedback itself. There
+    // is no later call to attach a result to, and emitting one would revert.
+    expect(submitted).toEqual([]);
+  });
+
+  it('still refuses a result on an escrow job that was never accepted', async () => {
+    const client = await register('Client');
+    const worker = await register('Worker');
+    const hire = await app.inject({
+      method: 'POST',
+      url: '/v1/jobs',
+      headers: {...auth(client.apiKey), 'idempotency-key': `key-${Date.now()}-${Math.random()}`},
+      payload: {
+        workerAgentId: String(worker.agentId),
+        maxPrice: '50000',
+        path: 'escrow',
+        spec: {capability: 'market-research', input: {q: 1}, deadlineSeconds: 120},
+      },
+    });
+    const {jobId} = hire.json() as {jobId: string};
+    await db.execute(sql`UPDATE jobs SET chain_job_id = ${jobId} WHERE id = ${Number(jobId)}`);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/v1/jobs/${jobId}/result`,
+      headers: auth(worker.apiKey),
+      payload: {output: {summary: 'x'}, producedAt: new Date().toISOString()},
+    });
+
+    expect(res.statusCode).toBe(409);
+  });
+});
+
+describe('hiring before the chain has answered', () => {
+  /**
+   * The signer returns as soon as a transaction is BROADCAST, so it usually
+   * has no on-chain job id to report — the id exists only once the contract
+   * runs, and the indexer supplies it a moment later. For an escrow hire
+   * that leaves nothing at all to write back: no id, and no state change
+   * either, since an escrow job starts in `created`.
+   *
+   * Drizzle rejects an empty `set` with "No values to set", so the most
+   * ordinary hire in the system answered 500 — and the orchestrator, which
+   * treats a 500 as fatal, abandoned the step.
+   */
+  it('does not fail the hire when there is nothing to write back', async () => {
+    withholdChainJobId = true;
+    const client = await register('Client');
+    const worker = await register('Worker');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/jobs',
+      headers: {...auth(client.apiKey), 'idempotency-key': `key-${Date.now()}-${Math.random()}`},
+      payload: {
+        workerAgentId: String(worker.agentId),
+        maxPrice: '50000',
+        path: 'escrow',
+        spec: {capability: 'market-research', input: {q: 1}, deadlineSeconds: 120},
+      },
+    });
+
+    expect(res.statusCode, res.body).toBe(201);
+    expect((res.json() as {chainJobId: string | null}).chainJobId).toBeNull();
   });
 });

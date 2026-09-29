@@ -352,6 +352,46 @@ export class Indexer {
     `);
   }
 
+  /**
+   * Start here, not at the deployment block.
+   *
+   * With no cursor `tick()` begins at `startBlock` and backfills every block
+   * since. That is right for production — the history IS the record — and
+   * catastrophic for anything that needs to see a transaction it just sent.
+   * On Monad testnet the deployment sits ~1.6 million blocks behind the head
+   * and `eth_getLogs` is capped at 100 blocks a call: about two hours of
+   * backfill before the indexer reaches the present.
+   *
+   * The demo truncated the cursor on startup and then waited ninety seconds
+   * for its own events. They were never going to arrive. Nothing settled, no
+   * reputation was ever written, and five runs were misread as the agents
+   * failing.
+   *
+   * An existing cursor is left alone. A restart that skipped its backlog
+   * would drop real payments on the floor — this is for a FIRST start only,
+   * and it is the same thing an operator wants when adding a chain whose
+   * history they do not need.
+   *
+   * @returns the block seeded to, or null if a cursor already existed.
+   */
+  async seedCursorToHead(): Promise<bigint | null> {
+    if (await this.readCursor()) return null;
+
+    const head = await this.client.getBlockNumber();
+    // Seed BELOW the safe head, so the first tick has a range to read rather
+    // than an empty one — and so a transaction sent a moment ago is still
+    // ahead of the cursor rather than behind it.
+    const from = head > this.reorgDepth ? head - this.reorgDepth : 0n;
+    const block = await this.client.getBlock({blockNumber: from});
+
+    await this.writeCursor('TaskEscrow', from, block.hash as string);
+    this.log.info(
+      {chainId: this.deps.chain.chainId, block: from.toString()},
+      'seeded the cursor at the head; history before this block is not indexed',
+    );
+    return from;
+  }
+
   private async readCursor() {
     const {db, chain} = this.deps;
     return db.query.indexerCursor.findFirst({

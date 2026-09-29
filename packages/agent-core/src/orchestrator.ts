@@ -63,6 +63,13 @@ export const Synthesis = z.object({
 export type StepStatus =
   | 'settled'
   | 'disputed'
+  /**
+   * Judged bad, and nothing can be done about it: a fast-path job whose
+   * payment is already final. Distinct from `disputed`, where the money is
+   * still recoverable, and from `failed`, which would blame the system for a
+   * trade-off the client made deliberately.
+   */
+  | 'unrecoverable'
   | 'no-candidate'
   | 'budget-exceeded'
   | 'timeout'
@@ -183,6 +190,22 @@ export class Orchestrator {
         {
           capability: subtask.capability,
           input: {
+            // The goal, verbatim, on every job.
+            //
+            // A planner reasonably emits an empty `input` for the first
+            // subtask, because the goal IS the input — and the first live
+            // runs did exactly that. The orchestrator then hired a worker,
+            // paid it, and asked it to do a job without saying what the job
+            // was. The worker declined, correctly, and nothing ever
+            // completed. Reading the recording is what showed this: three of
+            // four triage decisions were accept, and the one refusal was the
+            // job whose input was `{}`.
+            //
+            // This comes from the user rather than from an agent, so it adds
+            // no injection surface — and the worker wraps the whole spec as
+            // untrusted regardless.
+            goal,
+            step: `${index + 1} of ${plan.subtasks.length}`,
             ...subtask.input,
             // The upstream result travels as input. It is another agent's
             // output, so the worker will wrap it as untrusted in turn.
@@ -348,6 +371,29 @@ export class Orchestrator {
     });
 
     if (!verdict.accept) {
+      // The fast path has no recourse, and saying so is the honest report.
+      //
+      // A direct-pay job transferred the money when it was created; the
+      // contract is finished with it and refuses a dispute. Calling one
+      // anyway produced `INVALID_STATE: job is "settled", this action needs
+      // "submitted"` and a step reported as `failed`, which reads as a broken
+      // system rather than as the limit of a path the client chose in
+      // exchange for skipping escrow.
+      //
+      // The result is kept. The money is spent either way, and a downstream
+      // step is better served by disappointing work plus a warning than by
+      // nothing at all.
+      if (job.path === 'direct') {
+        return this.skip({
+          ...common,
+          verdict,
+          status: 'unrecoverable',
+          detail:
+            `${verdict.reason} — paid up front on the fast path, so there is no dispute to raise; ` +
+            'the cost of skipping escrow is that a bad result cannot be reversed',
+          result: job.result,
+        });
+      }
       return this.dispute({...common, verdict}, verdict.reason);
     }
 

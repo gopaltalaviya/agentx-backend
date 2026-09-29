@@ -201,3 +201,84 @@ describe('replaying a refund', () => {
     expect(Number((await statsOf(workerId)).failed)).toBe(0);
   });
 });
+
+/**
+ * Where a fresh indexer starts.
+ *
+ * With no cursor, `tick()` begins at the deployment's `startBlock` and
+ * backfills — correct for production, and the reason the demo never once
+ * completed. The demo truncates the cursor at startup, so the indexer
+ * restarted at block 65,027,889 while its own transactions were landing at
+ * 66,636,000: 1.6 MILLION blocks away, at Monad's 100-block `eth_getLogs`
+ * cap. It would have needed about two hours to catch up to work that finished
+ * in ninety seconds.
+ *
+ * So no `chain_job_id` was ever linked, every transition answered "not
+ * confirmed on-chain yet", and no job ever settled. Five demo runs were read
+ * as agent failures. `.catch(() => {})` around the tick hid the whole thing.
+ *
+ * Starting at the head is also what an operator wants when adding a chain
+ * they do not need the history of.
+ */
+describe('starting from the head instead of from genesis', () => {
+  /** A chain whose head is far from the deployment block. */
+  const fakeChain = (head: bigint) => ({
+    getBlockNumber: async () => head,
+    getBlock: async ({blockNumber}: {blockNumber: bigint}) => ({
+      number: blockNumber,
+      hash: `0x${blockNumber.toString(16).padStart(64, '0')}`,
+    }),
+  });
+
+  const cursorRow = async () =>
+    (await db.execute(
+      sql`SELECT last_block, last_block_hash FROM indexer_cursor WHERE chain_id = 31337`,
+    )) as unknown as {last_block: string; last_block_hash: string}[];
+
+  beforeEach(async () => {
+    await db.execute(sql`DELETE FROM indexer_cursor WHERE chain_id = 31337`);
+  });
+
+  it('writes a cursor at the head so the next tick does not backfill', async () => {
+    (indexer as unknown as {client: unknown}).client = fakeChain(66_636_596n);
+
+    await indexer.seedCursorToHead();
+
+    const [row] = await cursorRow();
+    expect(row).toBeDefined();
+    // Far past the deployment block — that is the whole point.
+    expect(BigInt(row!.last_block)).toBeGreaterThan(BigInt(chain.startBlock));
+    expect(BigInt(row!.last_block)).toBeLessThanOrEqual(66_636_596n);
+  });
+
+  it('stores the head block hash, so reorg detection still works', async () => {
+    (indexer as unknown as {client: unknown}).client = fakeChain(66_636_596n);
+
+    await indexer.seedCursorToHead();
+
+    const [row] = await cursorRow();
+    expect(row!.last_block_hash).toMatch(/^0x[0-9a-f]{64}$/);
+  });
+
+  it('leaves an existing cursor alone — a restart must not skip a backlog', async () => {
+    await db.execute(
+      sql`INSERT INTO indexer_cursor (chain_id, contract, last_block, last_block_hash)
+          VALUES (31337, 'TaskEscrow', 100, '0xdead')`,
+    );
+    (indexer as unknown as {client: unknown}).client = fakeChain(66_636_596n);
+
+    await indexer.seedCursorToHead();
+
+    const [row] = await cursorRow();
+    expect(Number(row!.last_block)).toBe(100);
+  });
+
+  it('never seeds below genesis on a chain with barely any blocks', async () => {
+    (indexer as unknown as {client: unknown}).client = fakeChain(3n);
+
+    await indexer.seedCursorToHead();
+
+    const [row] = await cursorRow();
+    expect(BigInt(row!.last_block)).toBeGreaterThanOrEqual(0n);
+  });
+});
