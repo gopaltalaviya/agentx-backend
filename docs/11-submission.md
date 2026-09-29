@@ -134,8 +134,8 @@ chain, and `TaskEscrow` has settled real jobs.
 | `AgentAccountFactory` | `0x51F75C30563d260FafF7dAB42ACf9fA57B82315D` |
 | ERC-8004 Identity (reference impl, absent upstream on testnet) | `0x784b42fe1307c70e61df82288f9084614a0ce4c0` |
 
-**481 tests** (counted 2026-09-29). 128 contracts (unit, fuzz, invariant,
-adversarial), 346 backend, 7 interface. 100% branch coverage on `TaskEscrow`
+**486 tests** (counted 2026-09-29). 128 contracts (unit, fuzz, invariant,
+adversarial), 351 backend, 7 interface. 100% branch coverage on `TaskEscrow`
 and `StakeVault`, the two that hold money. The invariants have been run at
 2,000 runs × 256 depth — 512,000 randomised state transitions each — and the
 fuzz properties at 100,000 runs.

@@ -3,66 +3,69 @@
 > **START HERE every session.** This file is the memory that survives a closed
 > terminal. Read it top to bottom before doing anything else.
 
-- Last updated: **2026-09-29** (Session 22 — first end-to-end runs; the loop settles on testnet, and replays)
+- Last updated: **2026-09-29** (Session 23 — "complete everything": keeper, retry, caps, chaos, deck, interface)
 - Days to deadline: **14** — verified: **2026-10-13, 11:59 PM ET**
 - Target track: **4 — Trust, Identity & AI Infrastructure** ($30,000)
-- Current state: **live on Monad testnet, end to end.** `pnpm demo` plans,
-  hires, judges and settles real jobs with a local model (Ollama `llama3` 8B),
-  and replays the same run in `cached` mode with no model at all
-- Overall: `██████████████████░░` 87% — **100 / 115 tasks**, **427 tests green**
-  (128 contracts · 292 backend · 7 interface)
+- Current state: **live on Monad testnet, end to end, and survives broken
+  workers.** `pnpm demo` plans, hires, judges and settles real jobs with a
+  local model; replays in 157 s with no model; both chaos modes pass live; the
+  keeper refunds stranded escrow on chain; the interface renders in a browser
+- Overall: `██████████████████░░` 90% — **103 / 115 tasks**, **486 tests green**
+  (128 contracts · 351 backend · 7 interface)
 
 ---
 
 ## ⏭ Next actions
 
-### 👤 You — 5 items, none blocking any more
+### 👤 You — everything left is yours, and none of it is code
 
-1. **A hosted model key is now optional, not blocking.** The demo runs end to
-   end on local Ollama (see Session 22). A key in `agentx-backend/.env`
-   (`GEMINI_API_KEY=` or `GROQ_API_KEY=`, free, no card) would still improve
-   the judgement quality a judge sees in the video — an 8B model plans 2–3
-   steps and its prose is plain. Do not paste it in chat.
-2. **Railway** account + project (M2-22). Deferred to M5 by your earlier call.
-3. **Vercel** account for `agentx-interface`.
-4. **Arbiter and fee-recipient addresses** — both currently default to
-   `DEPLOYER`. Fine for the demo; say if you want them separate.
-5. **An explorer API key** (`EXPLORER_API_KEY` in `agentx-contracts/.env`) if
-   you want verified source on the explorer. Contracts are deployed but **not
-   verified**, so a judge following a link sees bytecode. The config that
-   blocked verification is fixed; only the key is missing.
+1. **Make the three repos public** — required by Oct 13.
+2. **Record the video.** Claude cannot record video. The cached replay runs the
+   full demo in ~157 s with no model (commands under Cold start); the
+   interface screenshots are in `agentx-interface/docs/screenshots/`.
+3. **Railway + Vercel.** When you deploy: `SIGNER_TOKEN` in BOTH the API and
+   the signer; `KEEPER_PRIVATE_KEY` (a gas-only key the signer never uses) in
+   the signer; `CORS_ORIGINS` = the Vercel URL in the API.
+4. **`EXPLORER_API_KEY`** in `agentx-contracts/.env` for verified source.
+   Deployed source is untouched on purpose so verification still matches.
+5. **Decide about Gemini.** There IS a `GEMINI_API_KEY` in
+   `agentx-contracts/.env`. See the Session 23 disclosure: two early runs this
+   session sent orchestrator requests to it by mistake; none succeeded. Nothing
+   uses it now. Say if you want the video recorded with it.
+6. **Arbiter / fee recipient** — `Deploy.s.sol` now honours `ARBITER_ADDRESS`
+   and `FEE_RECIPIENT` on a fresh deploy. For the live contracts it would be a
+   role transfer; say if you want it.
 
-### 🤖 Claude — next, none of it blocked
+### 🤖 Claude — nothing blocked, all optional
 
-1. **The two live-run chaos items** — kill a worker mid-job (refund fires,
-   orchestrator retries), and a slow network. Both are now runnable.
-2. **3 timed rehearsal runs** (under 3 minutes) and the **backup video** from
-   `AGENT_MODE=cached` — the cache now replays a full run faithfully.
-3. **Put the real run into the deck and `docs/11-submission.md`** — the demo
-   slide the deck deliberately left out, with the testnet transactions.
-4. Decide whether `pnpm demo` should require every step to settle. Today it
-   passes with 1 of 3 settled, which is how a broken cached replay passed
-   earlier in this session.
-5. Docs 01–04 and 07 still unaudited against the code.
-6. An intermittent failure in `apps/api/test/meta.test.ts` — see Session 22.
+1. Phone-hotspot chaos run (the last of seven).
+2. Move the demo agents onto `AgentAccount`, so the on-chain cap claim is
+   fact rather than design. Today the signer enforces caps for EOAs.
+3. Runs history page; reorg deletion in the indexer (documented limitation).
+4. The intermittent `meta.test.ts` failure (Session 22) has not recurred in
+   eight full runs since; still open.
 
 ## 🚧 Blockers
 
 | # | Blocked | Blocked by | Since | Owner |
 |---|---|---|---|---|
-| B7 | Interface visual verification | Chrome extension not connected in this session | Sep 23 | 👤 |
 | B8 | Deploy + e2e against real hosting (M2-22/23, M5) | Railway + Vercel accounts | Sep 22 | 👤 |
+| B10 | Verified source on the explorer | `EXPLORER_API_KEY` empty | Sep 28 | 👤 |
+| B11 | Repos readable by judges | repos are private | — | 👤 |
 
 
 Cleared: ~~B1 scaffolding~~ · ~~B2 funded wallets~~ · ~~B3 schedule~~ ·
 ~~B4 deploy target~~ · ~~B5 git push~~ · ~~B9 docs and plan unbacked~~
 (moved into `agentx-backend` on Sep 25, which also fixed a README link that
 was broken on GitHub) · ~~B6 no model~~ (Sep 29 — local Ollama instead of a
-hosted key; the full path now runs and settles on testnet).
+hosted key; the full path now runs and settles on testnet) · ~~B7 interface
+never viewed~~ (Sep 29 — headless Chrome; the first render found the API sent
+no CORS headers).
 
 > **B6 cleared the way it was predicted to matter.** The first real runs of
 > orchestrator → worker → judge → settle found sixteen defects on exactly
-> that path, none of them caught by the tests passing at the time.
+> that path, none of them caught by the tests passing at the time. The audit
+> and chaos work that followed found as many again.
 
 ## 🔌 Cold start — resuming after the terminal closed
 
@@ -113,12 +116,12 @@ pnpm -r build
 cd ../agentx-contracts && forge build
 
 # 3. Prove it is all still green
-FOUNDRY_PROFILE=ci forge test              # expect 120 passed
-cd ../agentx-backend && npx tsc -b && npx vitest run   # expect 179 passed
+FOUNDRY_PROFILE=ci forge test              # expect 128 passed
+cd ../agentx-backend && npx tsc -b && npx vitest run   # expect 351 passed
 cd ../agentx-interface && npx tsc --noEmit && npx next build
 ```
 
-Expected totals as of 2026-09-25: **120 contracts + 179 backend = 299**.
+Expected totals as of 2026-09-29: **128 contracts + 351 backend + 7 interface = 486**.
 If a number is lower, something regressed — find out what before building on
 it.
 
@@ -161,19 +164,39 @@ a confusing revert.
 cd agentx-backend
 docker compose up -d && pnpm -r build           # demo imports from dist/
 set -a; . ../agentx-contracts/.env; set +a
+unset GEMINI_API_KEY                            # <- the contracts .env has one; see Session 23
 export VERIFY_CHAIN_ID=10143 AGENTX_CONTRACTS_ROOT=../agentx-contracts \
-       DATABASE_URL=postgres://agentx:agentx@127.0.0.1:5442/agentx
+       DATABASE_URL=postgres://agentx:agentx@127.0.0.1:5442/agentx \
+       BRAIN_CHAIN=ollama BRAIN_CHAIN_ORCHESTRATOR=ollama OLLAMA_MODEL=llama3:latest
 
 # Live, local model, no API quota spent (needs Ollama with llama3 pulled)
-AGENT_MODE=record BRAIN_CHAIN=ollama OLLAMA_MODEL=llama3:latest node scripts/demo.mjs
+AGENT_MODE=record node scripts/demo.mjs
 
-# Replay that recording — no model at all. This is the backup-video path.
+# Replay that recording — no model at all. The backup-video path, ~157 s.
 AGENT_MODE=cached node scripts/demo.mjs
+
+# Chaos: a broken fourth worker. Both pass live.
+AGENT_MODE=live DEMO_CHAOS=no-accept node scripts/demo.mjs
+AGENT_MODE=live DEMO_CHAOS=mid-job   node scripts/demo.mjs
+#   mid-job prints a chain job id held in escrow ~35 min; after that:
+node scripts/keeper-sweep.mjs <chainJobId>
+
+# Full stack e2e, asserted on balances and reputation
+node scripts/e2e.mjs
 ```
 
-Each run spends a little testnet MON and registers four fresh agents. The
-recording lives in `.agent-cache/` (gitignored). **Any change to a prompt or
-a schema invalidates it** — re-record before relying on `cached`.
+**`BRAIN_CHAIN` only covers workers.** The orchestrator and judge read
+`BRAIN_CHAIN_ORCHESTRATOR`; unset, they try Claude → Gemini → Groq → Ollama
+and will use any key in the environment. That is how the Gemini requests in
+Session 23 happened.
+
+Each run spends a little testnet MON and registers fresh agents. The demo's
+signer runs the keeper on the FUNDER key; do not run `keeper-sweep.mjs` with
+the same key while a demo is running (nonce race) — unset `FUNDER_PRIVATE_KEY`
+for the demo in that case. The recording lives in `.agent-cache/`
+(gitignored). **Any change to a prompt or a schema invalidates it** —
+re-record before relying on `cached`. The test suites TRUNCATE the same
+database: never run them while a demo or a UI check is using it.
 
 ### Environment gotchas — each of these cost real time
 
@@ -530,9 +553,9 @@ the adversarial pass.
 | M0 | Foundations | Sep 22–24 | ✅ done | 23 / 23 |
 | M1 | Contracts | Sep 25–28 | ✅ done | 26 / 26 |
 | M2 | Backend spine | Sep 29 – Oct 2 | 🟡 in progress | 21 / 25 |
-| M3 | Agents + MCP | Oct 3–5 | 🟡 in progress | 12 / 15 |
+| M3 | Agents + MCP | Oct 3–5 | 🟡 in progress | 14 / 15 |
 | M4 | Frontend | Oct 6–8 | 🟡 in progress | 9 / 11 |
-| M5 | Harden | Oct 9–11 | 🟡 in progress | 4 / 7 |
+| M5 | Harden | Oct 9–11 | 🟡 in progress | 5 / 7 |
 | M6 | Submit | Oct 12–13 | 🟡 in progress | 5 / 8 |
 
 Status key: ⬜ not started · 🟡 in progress · ✅ done · 🔴 blocked · ⏭ deferred · ❌ cut
@@ -603,12 +626,97 @@ Append-only. Never rewrite a decision — supersede it with a new row.
 | Sep 28 | M6 | **Lead with the published numbers.** Xiong et al. 2026 measured the live ERC-8004 ecosystem: $0.0027 median to move a score on Base, 90.6% of reviewers Sybil, 98.7–100% of feedback with no payment proof. Their first recommendation is evidence-backed interactions — which is what this project is | ✅ |
 | Sep 28 | M6 | **Mapping TaskEscrow onto the ACP Job interface is post-hackathon.** Obvious next step, explicitly out of scope with 15 days left and the demo not yet run end to end | ✅ |
 | Sep 28 | M6 | **No Artifacts for this project — deliverables are local files**, committed to the repo: `.pptx`/`.html` decks, `.md` docs, `.xlsx` tables. A submission needs something a judge can download and a repo they can open; a hosted page is neither, is a second place for the truth to live, and is not in the backup. Recorded in `CLAUDE.md` at the project root and in this repo | ✅ |
+| Sep 29 | M3 | **Supersedes Sep 23: the injection bound is enforced by the signer, not on chain.** Demo agents are EOAs, and nothing enforced a cap for them. The signer now does. The claim is "cannot spend past the caps the owner set, enforced outside the model by the process that holds the key"; on-chain only for `AgentAccount` wallets. Protects against a hijacked agent, not a compromised signer | ✅ |
+| Sep 29 | M3 | **A silent worker is retried once, with a different agent.** 45 s to accept, else cancel (immediate refund) and re-hire; an accepted job that never arrives is abandoned at the step timeout. Never the same agent; never a second hire if the cancel fails | ✅ |
+| Sep 29 | M3 | **The fast path must be earned** — `fastPathMinScore` enforced for `auto`. Consequence accepted: fresh demo agents always go through escrow | ✅ |
+| Sep 29 | M5 | **A keeper sends the escrow's permissionless exits**, in the signer, on its own gas-only key | ✅ |
+| Sep 29 | M5 | **Deployed contract source is not edited, even comments** — it would break explorer verification of the live contracts. Wrong comments are corrected in the docs instead | ✅ |
 
 ---
 
 ## 📓 Session log
 
 Newest first. One entry per working session, however short.
+
+### Session 23 — 2026-09-29 ("complete everything": keeper, retry, caps, chaos, deck, interface)
+
+**Shipped** — backend `2a0e2ee`…`d02a1e9` (and this entry) · contracts
+`066af2b` · interface `f081679` `66b0432`. 128 + 351 + 7 = **486 tests green**.
+Every new test was run against the code before its fix and seen to fail.
+
+The instruction was to finish everything that is Claude's to finish. A docs
+audit of 01–04 and 07 (run as a background agent) came back with fifteen
+places the code did not do what the docs said; each was verified before
+acting. Live runs, chaos runs and the first browser render found more.
+
+**The ones that change what the project can claim**
+
+- **Spending caps were enforced nowhere.** Every agent is a plain EOA; the
+  signer read the caps from `AgentAccount`, every read failed on an address
+  with no code, and failure meant "no cap". The headline claim — a hijacked
+  agent cannot spend past its daily cap — held for a contract nobody used.
+  The signer now enforces `spend_policies` for EOAs (atomic check-and-reserve
+  under the per-agent lock, rolling 24 h, released on failed broadcast,
+  fail-closed). Every doc, the deck and the submission now say *signer*, not
+  *on chain*. That bounds a hijacked agent, not a compromised signer.
+- **Nothing ever sent the escrow's permissionless exits.** The keeper does
+  now, inside the signer on its own key. **Proven live:** chain jobs 94, 99,
+  104 and 108, stranded by the mid-job chaos runs, each went `ACCEPTED` →
+  `expireUndelivered` → `REFUNDED` (tx for 94: `0xd57ada26…`).
+- **Agents registered through the API or `/register` could never be hired** —
+  nothing set `chain_agent_id`. Registration now carries it, verified against
+  the identity registry (owner and payout wallet).
+- **A retried hire inserted a phantom job** each time. Now idempotent at the
+  job level (migration `0002`).
+- **The indexer linked by spec hash alone**, and credited a worker for an old
+  run's payment. Linking now checks both parties. Refunds only count against
+  a worker for `undelivered` and a lost `dispute`; `payments.tx_hash` is real;
+  the confidence floor is read per chain.
+- **The API sent no CORS headers.** The first time the interface was opened in
+  a browser, every page said "API unreachable". Fixed; the four pages are
+  screenshotted in `agentx-interface/docs/screenshots/`.
+- `fastPathMinScore` is enforced (so the demo is now all-escrow); the signer
+  has a token and binds loopback without one; auth errors are 401/403; the
+  budget respects the 24 h rollover; `make drift` exists and reports no drift;
+  `Deploy.s.sol` honours `ARBITER_ADDRESS` / `FEE_RECIPIENT`.
+
+**Agents.** A silent worker is retried once with another agent: an offer
+unaccepted after 45 s is cancelled (immediate refund) and re-hired; an
+accepted job that never arrives is abandoned at the step timeout. The Worker
+no longer abandons a job the API told it to retry. `pnpm demo` now fails on
+any `failed`/`timeout` step; per-step timeout 180 s for a local model.
+
+**Live evidence (Monad testnet, llama3 8B)** — no-accept chaos: pass, chain
+job 85 cancelled → REFUNDED, step re-hired and settled. Mid-job chaos: pass
+(after two runs that exposed the Worker-retry and gas-top-up defects). e2e:
+pass, one job row after a replay, linked to its own chain job. Fresh
+recording: 3/3 settled; cached replay identical in 157 s; earlier rehearsals
+155 / 109 / 111 s.
+
+**Deck.** A demo slide from the real run (hire and settle hashes, both chaos
+results, the keeper refund), claims corrected, and — first time ever —
+rendered through PowerPoint over COM and every slide inspected. Status
+workbook rebuilt from real per-file counts.
+
+**⚠️ Disclosure — Gemini.** `agentx-contracts/.env` contains a
+`GEMINI_API_KEY`. Two early record runs this session loaded that file and set
+`BRAIN_CHAIN=ollama`, not knowing the orchestrator reads
+`BRAIN_CHAIN_ORCHESTRATOR`. So the orchestrator's chain tried Claude (no key),
+then **Gemini**, then fell back to Ollama. Every recorded answer came from
+Ollama, so no Gemini request succeeded — but requests were sent, which the
+standing rule says to ask about first. Not repeated: every run since unsets
+the key and pins both chains. Why they failed (invalid key, quota, rate
+limit) was not checked, because checking means calling it again.
+
+**Mistakes of my own, recorded so they are not repeated.** Running the test
+suites while a demo used the same database truncated its tables mid-run (one
+chaos run wasted). Two heredoc edits wrote a NUL and a BEL byte into files;
+both caught and fixed before commit. The Chrome extension disconnected
+mid-check; headless Chrome from PowerShell did the rendering instead.
+
+**Still open** — phone-hotspot chaos item; demo agents onto `AgentAccount`;
+reorg deletion; DISPUTED has no timeout (contract; documented); the
+`meta.test.ts` flake has not recurred in eight full runs.
 
 ### Session 22 — 2026-09-29 (the loop runs end to end · 16 defects on the live path)
 
