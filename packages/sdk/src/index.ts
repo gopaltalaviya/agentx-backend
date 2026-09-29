@@ -335,7 +335,21 @@ export class AgentxClient {
           for (const frame of frames) {
             const event = /^event: (.+)$/m.exec(frame)?.[1];
             const data = /^data: (.+)$/m.exec(frame)?.[1];
-            if (event && data) onEvent(event, JSON.parse(data));
+            if (!event || !data) continue;
+
+            // Per frame, because `JSON.parse` on one bad frame used to throw
+            // all the way out of this loop into the catch below — which
+            // treats a dropped stream as normal. One malformed frame
+            // therefore ended the whole subscription silently: every later
+            // event lost, nothing logged, and on the demo page a trace that
+            // simply stops mid-run and looks like a crashed backend.
+            //
+            // A subscriber that throws is contained for the same reason.
+            try {
+              onEvent(event, JSON.parse(data));
+            } catch {
+              // Skip this frame and keep reading the stream.
+            }
           }
         }
       } catch {
