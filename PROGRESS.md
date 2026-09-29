@@ -649,7 +649,7 @@ list is in the commit bodies; the ones worth remembering:
 cache miss into `./artifacts/` from inside the library.
 
 **Open, not chased blind:** `apps/api/test/meta.test.ts > GET /v1/network >
-answers without credentials` failed once in six full-suite runs and never in
+answers without credentials` failed once in five full-suite runs and never in
 isolation. The failing run's output was not kept. Session 20's flake turned
 out to be a real race, so the next occurrence needs its message recorded
 before anything else.
