@@ -1,7 +1,21 @@
-import {createPublicClient, http, type Abi, type Log, type PublicClient} from 'viem';
+import {createPublicClient, hexToString, http, type Abi, type Log, type PublicClient} from 'viem';
 import {and, eq, isNull, sql} from 'drizzle-orm';
 import type {ChainConfig} from '@agentx/config';
 import {type Db, indexerCursor, jobEvents, jobs, agents, agentStats, payments} from '@agentx/db';
+
+/** Refund reasons the contract records as the worker's failure (TaskEscrow `_refund` callers). */
+const WORKER_FAULT = new Set(['undelivered', 'dispute']);
+
+/** `JobRefunded.reason` is a left-aligned bytes32 string. */
+function refundReason(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  if (!raw.startsWith('0x')) return raw;
+  try {
+    return hexToString(raw as `0x${string}`).replace(/\0+$/, '');
+  } catch {
+    return '';
+  }
+}
 
 /**
  * Chain → Postgres, one worker per enabled chain.
@@ -149,13 +163,25 @@ export class Indexer {
     // id neither side knew in advance — is also self-healing: it works no
     // matter which of the two writes landed first.
     if (!job && payload['specHash']) {
-      job = await db.query.jobs.findFirst({
+      const candidate = await db.query.jobs.findFirst({
         where: and(
           eq(jobs.chainId, chain.chainId),
           eq(jobs.specHash, String(payload['specHash'])),
           isNull(jobs.chainJobId),
         ),
       });
+      // The hash alone is not enough. It is scoped to this database's job id,
+      // and ids repeat when a database is rebuilt or two deployments share a
+      // chain — a live run linked an unaccepted escrow job to an OLD run's
+      // fast-path payment, called it settled, and credited the worker. The
+      // event names both parties; they must be this row's.
+      job = candidate && (await this.samePartiesAs(candidate, payload)) ? candidate : undefined;
+      if (candidate && !job) {
+        this.log.warn(
+          {jobId: candidate.id, chainJobId, specHash: payload['specHash']},
+          'spec hash matched a job between different agents — not linked',
+        );
+      }
       if (job) {
         await db.update(jobs).set({chainJobId}).where(eq(jobs.id, job.id));
         this.log.info({jobId: job.id, chainJobId}, 'linked job to its on-chain id');
@@ -202,8 +228,26 @@ export class Indexer {
       // Already seen. Its effects are already in the projection.
       if (!recorded) return;
 
-      await this.applyStateChange(tx, jobRow.id, kind, payload, blockNumber);
+      await this.applyStateChange(tx, jobRow.id, kind, payload, blockNumber, entry.transactionHash ?? '');
     });
+  }
+
+  /** Whether an event's client and worker are this job row's, by ERC-8004 id. */
+  private async samePartiesAs(
+    job: {clientAgentId: number; workerAgentId: number},
+    payload: Record<string, unknown>,
+  ): Promise<boolean> {
+    const client = payload['clientAgentId'];
+    const worker = payload['workerAgentId'];
+    // Every event that carries a specHash also names both parties. One that
+    // did not could not be checked, and an unchecked link is how the wrong
+    // job gets paid for.
+    if (client === undefined || worker === undefined) return false;
+    const [c, w] = await Promise.all([
+      this.deps.db.query.agents.findFirst({where: eq(agents.id, job.clientAgentId)}),
+      this.deps.db.query.agents.findFirst({where: eq(agents.id, job.workerAgentId)}),
+    ]);
+    return String(c?.chainAgentId) === String(client) && String(w?.chainAgentId) === String(worker);
   }
 
   private async decode(
@@ -251,6 +295,7 @@ export class Indexer {
     kind: string,
     payload: Record<string, unknown>,
     blockNumber: bigint,
+    txHash: string,
   ): Promise<void> {
 
     const stateOf: Record<string, 'accepted' | 'submitted' | 'settled' | 'refunded' | 'disputed'> = {
@@ -290,7 +335,9 @@ export class Indexer {
           toAgentId: job.workerAgentId,
           amount: job.amount,
           fee: String(payload['fee'] ?? '0'),
-          txHash: String(payload['txHash'] ?? ''),
+          // From the log. No event carries a tx hash in its arguments, so
+          // reading one from the payload stored '' on every payment row.
+          txHash,
           // The real block, not 0. A payment row that claims block zero is a
           // payment nobody can find again on the chain it came from.
           blockNumber: Number(blockNumber),
@@ -303,9 +350,15 @@ export class Indexer {
 
     if (kind === 'refunded') {
       const job = await db.query.jobs.findFirst({where: eq(jobs.id, jobId)});
-      // Only an accepted-then-undelivered job counts as a failure. A job
-      // nobody ever accepted is not the worker's fault.
-      if (job && payload['reason'] !== undefined) {
+      // Only what the contract itself records as the worker's failure:
+      // accepted and never delivered, or a dispute the worker lost. A client
+      // cancelling, or an offer nobody accepted, is not the worker's fault —
+      // and the contract writes no feedback for either.
+      //
+      // This tested `reason !== undefined`, which is always true: the event
+      // always carries a reason, as bytes32. So every refund, a client's own
+      // cancel included, was counted against the worker.
+      if (job && WORKER_FAULT.has(refundReason(payload['reason']))) {
         await this.bumpReputation(db, job.workerAgentId, false, '0');
       }
     }
@@ -342,11 +395,14 @@ export class Indexer {
         },
       });
 
+    // The floor is per chain: more evidence is demanded where a reputation is
+    // worth more to fake. This was a literal 25, so mainnet's 50 did nothing.
+    const floor = Number(this.deps.chain.params['confidenceFloor'] ?? 25);
     await db.execute(sql`
       UPDATE agent_stats SET score = GREATEST(0, LEAST(100, (
         50 + ((
           (100 * (completed + 1) / (completed + failed + 2)) - 50
-        ) * LEAST(100, (completed + failed) * 100 / 25)) / 100
+        ) * LEAST(100, (completed + failed) * 100 / ${floor})) / 100
       )::int))
       WHERE agent_id = ${agentId}
     `);

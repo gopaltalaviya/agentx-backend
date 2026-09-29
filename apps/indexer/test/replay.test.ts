@@ -4,6 +4,7 @@ import {sql} from 'drizzle-orm';
 import {loadConfig, loadAbis} from '@agentx/config';
 import {createDb, closeDb, type Db} from '@agentx/db';
 import {Indexer} from '../src/indexer.js';
+import {encodeAbiParameters, encodeEventTopics, stringToHex, type Abi, type AbiEvent} from 'viem';
 
 /**
  * Replay safety — chaos checklist item 2, "kill the indexer, no duplicate rows".
@@ -196,7 +197,7 @@ describe('replaying a refund', () => {
   /** A job nobody ever accepted is not the worker's fault. */
   it('does not blame the worker for a job that was never accepted', async () => {
     const {workerId} = await seedJob();
-    await feed(settledLog({logIndex: 6}), 'refunded', {});
+    await feed(settledLog({logIndex: 6}), 'refunded', {reason: 'unaccepted'});
 
     expect(Number((await statsOf(workerId)).failed)).toBe(0);
   });
@@ -280,5 +281,140 @@ describe('starting from the head instead of from genesis', () => {
 
     const [row] = await cursorRow();
     expect(BigInt(row!.last_block)).toBeGreaterThanOrEqual(0n);
+  });
+});
+
+/**
+ * Through the REAL decoder, with logs encoded from the ABI.
+ *
+ * `feed` above hands the projection a payload of our choosing, and the
+ * payloads chosen were ones the chain never produces: a refund with no
+ * `reason` (the event always carries one, as bytes32) and a settlement with a
+ * `txHash` field (no event has one). Both fictions passed while the real
+ * thing was wrong: every refund, including a client's own cancel, counted as
+ * a failure against the worker, and every payment row had an empty tx hash.
+ */
+describe('real refund and settlement logs', () => {
+  const escrowAbi = loadAbis()['TaskEscrow'] as Abi;
+  const TX = `0x${'ef'.repeat(32)}` as const;
+
+  function realLog(eventName: string, args: Record<string, unknown>, logIndex: number) {
+    const event = (escrowAbi as AbiEvent[]).find((e) => e.type === 'event' && e.name === eventName)!;
+    const topics = encodeEventTopics({abi: [event], eventName, args} as never);
+    const data = encodeAbiParameters(
+      event.inputs.filter((i) => !i.indexed),
+      event.inputs.filter((i) => !i.indexed).map((i) => args[i.name!]),
+    );
+    return {...settledLog({logIndex}), topics, data, transactionHash: TX};
+  }
+
+  async function refund(reason: string, logIndex: number) {
+    const {workerId} = await seedJob();
+    const log = realLog('JobRefunded', {jobId: 7n, amount: 20_000n, reason: stringToHex(reason, {size: 32})}, logIndex);
+    await (indexer as unknown as {handleLog: (e: unknown) => Promise<void>}).handleLog(log);
+    return statsOf(workerId);
+  }
+
+  it('does not count a client cancelling as the worker failing', async () => {
+    expect(Number((await refund('cancelled', 11)).failed)).toBe(0);
+  });
+
+  it('does not count an offer nobody accepted as the worker failing', async () => {
+    expect(Number((await refund('unaccepted', 12)).failed)).toBe(0);
+  });
+
+  it('counts accepted work that was never delivered', async () => {
+    expect(Number((await refund('undelivered', 13)).failed)).toBe(1);
+  });
+
+  it('counts a dispute the worker lost', async () => {
+    expect(Number((await refund('dispute', 14)).failed)).toBe(1);
+  });
+
+  it('records the transaction a payment landed in', async () => {
+    await seedJob();
+    const log = realLog('JobSettled', {jobId: 7n, paid: 19_800n, fee: 200n, outcome: 0}, 15);
+    await (indexer as unknown as {handleLog: (e: unknown) => Promise<void>}).handleLog(log);
+
+    const rows = (await db.execute(sql`SELECT tx_hash FROM payments`)) as unknown as {tx_hash: string}[];
+    expect(rows[0]!.tx_hash).toBe(TX);
+  });
+});
+
+/**
+ * The confidence floor is per chain — 25 on testnet, 50 on mainnet, where a
+ * reputation is worth more to fake — and the score hard-coded 25. The same
+ * history must score LOWER where the chain demands more evidence.
+ */
+describe('the confidence floor', () => {
+  async function scoreAfterTenSettlements(floor: number) {
+    const {workerId} = await seedJob();
+    const strict = new Indexer({
+      db,
+      chain: {...chain, params: {...chain.params, confidenceFloor: floor}} as typeof chain,
+      abis: loadAbis() as never,
+    });
+    const inner = strict as unknown as {decode: unknown; handleLog: (e: unknown) => Promise<void>};
+    inner.decode = async () => ({kind: 'settled', chainJobId: '7', payload: {fee: '200'}});
+    for (let i = 0; i < 10; i++) await inner.handleLog.call(strict, settledLog({logIndex: 100 + i}));
+    return Number((await statsOf(workerId)).score);
+  }
+
+  it('reads the floor from the chain configuration', async () => {
+    const lenient = await scoreAfterTenSettlements(25);
+    await db.execute(sql`TRUNCATE agents, jobs, job_events, agent_stats, payments RESTART IDENTITY CASCADE`);
+    const strict = await scoreAfterTenSettlements(50);
+    expect(strict).toBeLessThan(lenient);
+  });
+});
+
+/**
+ * Linking a job row to its on-chain id.
+ *
+ * The first event carries the specHash, and the row was found by that hash
+ * alone. A spec hash is scoped to the database's job id — and ids repeat
+ * whenever a database is rebuilt, or when two deployments share a chain. A
+ * live end-to-end run showed the cost: an escrow job nobody had accepted, and
+ * whose worker was paid nothing, was linked to an OLD run's fast-path
+ * payment, projected as settled, and credited to the worker as a completion.
+ * The event also names the client and the worker; both must match.
+ */
+describe('linking by spec hash', () => {
+  const escrowAbi = loadAbis()['TaskEscrow'] as Abi;
+
+  async function unlinkedJob() {
+    const {jobId, workerId} = await seedJob();
+    await db.execute(sql`UPDATE jobs SET chain_job_id = NULL, spec_hash = ${'0x' + 'aa'.repeat(32)} WHERE id = ${jobId}`);
+    return {jobId, workerId};
+  }
+
+  function directPaid(clientAgentId: bigint, workerAgentId: bigint, logIndex: number) {
+    const event = (escrowAbi as AbiEvent[]).find((e) => e.type === 'event' && e.name === 'DirectPaid')!;
+    const args = {jobId: 55n, clientAgentId, workerAgentId, amount: 20_000n, fee: 200n, specHash: `0x${'aa'.repeat(32)}`};
+    const topics = encodeEventTopics({abi: [event], eventName: 'DirectPaid', args} as never);
+    const data = encodeAbiParameters(
+      event.inputs.filter((i) => !i.indexed),
+      event.inputs.filter((i) => !i.indexed).map((i) => (args as Record<string, unknown>)[i.name!]),
+    );
+    return {...settledLog({logIndex}), topics, data};
+  }
+
+  const handle = (log: unknown) => (indexer as unknown as {handleLog: (e: unknown) => Promise<void>}).handleLog(log);
+  const chainJobIdOf = async (jobId: number) =>
+    ((await db.execute(sql`SELECT chain_job_id FROM jobs WHERE id = ${jobId}`)) as unknown as {chain_job_id: string | null}[])[0]!
+      .chain_job_id;
+
+  it('links when the parties match', async () => {
+    const {jobId} = await unlinkedJob();
+    // seedJob's agents are chain ids 1 (client) and 2 (worker).
+    await handle(directPaid(1n, 2n, 20));
+    expect(await chainJobIdOf(jobId)).toBe('55');
+  });
+
+  it('refuses a payment between other agents that happens to share the hash', async () => {
+    const {jobId, workerId} = await unlinkedJob();
+    await handle(directPaid(901n, 902n, 21));
+    expect(await chainJobIdOf(jobId)).toBeNull();
+    expect(Number((await statsOf(workerId)).completed)).toBe(0);
   });
 });
