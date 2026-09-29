@@ -238,6 +238,15 @@ without narration.
 - [ ] run the demo on a phone hotspot → no timeout assumptions baked in
 - [ ] agent wallet runs out of MON → clear error, auto top-up recovers
 
+> **Done early (2026-09-28/29):** all seven have been run and pass. The
+> worker kill is `DEMO_CHAOS=mid-job`, passed live on testnet. The phone
+> hotspot is reproduced with `scripts/slow-rpc.mjs`, a proxy between every
+> service and the RPC: 600–1800 ms + 5% failures passed in 287 s, and
+> 1500–4000 ms + 15% failures in 464 s (157 s on a clean link). Two differ
+> from the wording above: a malformed result is refused at the API boundary
+> rather than disputed, and an out-of-MON wallet gets an actionable error and
+> recovers on retry after a manual top-up, not an automatic one.
+
 **Oct 10 — security pass.** Re-read [04 §9](04-how-it-works.md#9-security-model-and-threats)
 against the actual code. Confirm: no key in logs or env, SSRF guard on
 `metadataURI` fetches, `nonReentrant` on every state-changing function,

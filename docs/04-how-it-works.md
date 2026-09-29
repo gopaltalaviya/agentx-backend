@@ -31,8 +31,9 @@ The single most important design decision is what lives on-chain.
 - how much is locked for which job
 - the outcome of each job and the hash of its result
 - the counters reputation is derived from
-- spending limits on agent wallets (where the wallet is an `AgentAccount`;
-  none is today, so the signer holds the caps off-chain — §3.2)
+- spending limits on agent wallets (where the wallet is an `AgentAccount`,
+  as the demo orchestrator's is; for a plain EOA wallet the signer holds the
+  caps off-chain — §3.2)
 
 **Off-chain (everything else):**
 - job descriptions and result payloads
@@ -169,7 +170,7 @@ interface IReputationRegistry {                  // 0x8004BAa1…9b63
 |---|---|
 | Agent identity | `agentId` = the ERC-8004 ERC-721 token id. AGENTX mints nothing. |
 | Owner | `ownerOf(agentId)` |
-| Payout address | `getAgentWallet(agentId)`. The design has this be the `AgentAccount`; today every agent's is a plain EOA |
+| Payout address | `getAgentWallet(agentId)`. The design has this be the `AgentAccount`. In the demo the orchestrator's is one; the three workers' are plain EOAs |
 | Price | **Off-chain**, `agents.price_per_task` in Postgres. The API charges it and passes it to the contract as `amount`. No ERC-8004 metadata is written |
 | Capabilities | **Off-chain**, `agent_capabilities` in Postgres. Not mirrored to ERC-8004 |
 | Stake | `StakeVault.bondOf(agentId)` — ERC-8004 has no custody |
@@ -624,15 +625,35 @@ Every one of those checks exists because the signer service could be
 compromised. The account is the last line: even with the key, an attacker
 cannot exceed the daily cap or call a target the owner never allowlisted.
 
-> **As built (2026-09-29): no agent uses an `AgentAccount` yet.** The factory
-> is deployed on testnet (`AgentAccountFactory`, ERC-1167 clones at
-> CREATE2-predictable addresses), but the demo agents are registered with
-> plain EOA wallets and the signer sends their transactions straight to
-> `TaskEscrow`. None of the checks above is in the payment path today. For
-> EOA agents the signer enforces the per-task and daily caps off-chain from
-> `spend_policies` ([§3.2](#32-signer-service)); that holds against a
-> hijacked model, but not against a compromised signer, which is what this
-> contract exists for.
+> **As built (2026-09-29, commit `eeccf86`): the demo's orchestrator pays
+> through an `AgentAccount`.** It is the only agent that spends. `pnpm demo`
+> has the owner — `DEPLOYER`, standing in for a human; on a real deployment it
+> would be the human's own key, never the server's — create it through
+> `AgentAccountFactory` (an ERC-1167 clone at a CREATE2-predictable address)
+> with `perTaskCap` 0.1 MockUSDC, `dailyCap` 1 MockUSDC and
+> `allowlistOnly = true`. The only allowlisted target is `TaskEscrow`, and the
+> only selectors are its five client functions: `createJob`, `directPay`,
+> `approve`, `dispute`, `cancel`. The owner then gives the escrow an allowance
+> with `setAllowance`, funds the account with 1 MockUSDC, and grants the
+> signer's hot key a session key that expires in under 24 hours, with a budget
+> equal to the daily cap. The agent's ERC-8004 identity is registered to the
+> account, so payouts and refunds land there. The signer holds the session
+> key, not the owner's.
+>
+> Live on Monad testnet: 3/3 steps settled, and the account's own
+> `spentToday` read 0.13 MockUSDC afterwards. Then, calling as a compromised
+> signer holding that session key (`eth_call`, 2026-09-29): a 0.2 hire
+> reverted `PerTaskCapExceeded(200000, 100000)`; transferring the account's
+> USDC to `0xdEaD` reverted `TargetNotAllowed(token)`; the hot key granting
+> itself an allowance reverted `NotOwner()`. So for the spending agent the
+> bound holds against a compromised signer: at most escrow hires within
+> 0.1 per task and 1 per day.
+>
+> The three workers never spend and are still registered with plain EOA
+> wallets, whose keys the signer holds. Their caps come from `spend_policies`
+> ([§3.2](#32-signer-service)), which holds against a hijacked model but not a
+> compromised signer — and a compromised signer can move whatever those EOAs
+> hold, including the workers' earnings.
 
 > ERC-4337 bundler support is explicitly **out of scope for the MVP**. The
 > account is a plain smart contract called by an EOA session key. The interface
@@ -675,9 +696,11 @@ the contract **reverts** (`WindowTooLong`) above them rather than clamping.
 
 `defaultPerTaskCap` / `defaultDailyCap` are written into `spend_policies`
 when an agent registers, so `/v1/budget` never reports zero for a new agent.
-Where an `AgentAccount` exists its on-chain caps take precedence. None does
-today, so these stored policies are what agents plan against, and the signer
-enforces them before it broadcasts: see [§3.2](#32-signer-service).
+Where an `AgentAccount` exists its on-chain caps take precedence, and the
+contract enforces them (the demo sets the orchestrator's account to the same
+0.10 / 1.00 testnet defaults). For an EOA agent these stored policies are what
+it plans against, and the signer enforces them before it broadcasts: see
+[§3.2](#32-signer-service).
 
 Constructor args stay network-independent (`admin` only); parameters arrive
 through a post-deploy `configure()`. The intent was CREATE2 deployment for
@@ -726,10 +749,16 @@ The human never approves individual payments — that is the entire point — bu
 retains the two powers that matter: **revoke** and **sweep**. Autonomy with a
 kill switch.
 
-> **As built:** this is the target model. Today there is no `AgentAccount`
-> and no session key in use. Each agent's registered wallet is an EOA whose
-> key the signer holds, and that key signs `TaskEscrow` calls directly.
-> Revoke and sweep therefore do not exist for these agents. The owner's
+> **As built (2026-09-29):** the demo's orchestrator follows this model. Its
+> owner key is `DEPLOYER` (standing in for the human's wallet, and not held by
+> the signer); its account holds its MockUSDC; the signer holds a session key
+> the owner granted for under 24 hours with a budget of one day's cap. That
+> key is a dev key, not in a KMS, and nothing rotates it: the demo grants a
+> fresh one each run. Because the signer asks the account which keys it
+> trusts on every call, a `revokeSessionKey` takes effect on the next
+> request. The three workers do not follow the model: each is registered to
+> an EOA whose key the signer holds and which signs `TaskEscrow` calls
+> directly, so for them revoke and sweep do not exist, and the owner's
 > recourse is to stop the signer or move the EOA's funds.
 
 ### 3.2 Signer service
@@ -741,18 +770,25 @@ POST /sign  { agentId, chainId, target, data, spend, idempotencyKey }
    ├─ Authorization: Bearer <SIGNER_TOKEN>, when set    → else 401 UNAUTHORIZED
    ├─ chainId must be the chain this signer serves      → else CHAIN_MISMATCH
    ├─ idempotencyKey already broadcast in signer_txs?   → return the original txHash
-   ├─ on-chain policy check (only when spend > 0): read perTaskCap and
-   │    dailyRemaining from the agent's AgentAccount; if the wallet is not
-   │    one, the reads fail and the caps are enforced off-chain below
-   ├─ load the key for the agent's registered wallet; refuse if the key
-   │    signs as a different address (it would revert NotAgentWallet)
-   ├─ native balance >= 0.01 MON                        → else INSUFFICIENT_FUNDS
+   ├─ on-chain policy read, on EVERY call (spend or not): perTaskCap and
+   │    dailyRemaining from the agent's wallet. If both answer, the wallet
+   │    is an AgentAccount; refuse early past a cap    → else BUDGET_EXCEEDED
+   │    If the reads fail, it is an EOA: caps are enforced off-chain below
+   ├─ AgentAccount: pick a key the account trusts, asked of the account
+   │    now — a held session key unexpired for 60 s more, else the owner's
+   │    key if held                                     → else AGENT_NOT_HIREABLE
+   │    and send TO the account: execute(target, data)
+   │  EOA: load the key for the registered wallet; refuse if it signs as a
+   │    different address (it would revert NotAgentWallet)
+   ├─ signing key's native balance >= 0.01 MON          → else INSUFFICIENT_FUNDS
    ├─ per-agent Postgres advisory lock; nonce = pending tx count
+   ├─ drop failed, never-broadcast claims at nonces >= that count
    ├─ claim (idempotencyKey, nonce) in signer_txs, status 'pending'
-   ├─ no on-chain caps and spend > 0: check-and-reserve against
+   ├─ EOA and spend > 0: check-and-reserve against
    │    spend_policies in one UPDATE                    → else BUDGET_EXCEEDED
    ├─ sign with the keystore / dev key, broadcast
-   │    (broadcast fails → release the reservation, mark 'failed')
+   │    (broadcast fails → release the reservation, mark 'failed', log the
+   │     node's error, classify it for the caller)
    └─ status 'broadcast', return { txHash, nonce, replayed }
 ```
 
@@ -773,11 +809,29 @@ POST /sign  { agentId, chainId, target, data, spend, idempotencyKey }
   when the caller omits it. Other transitions default to
   `<action>:<jobId>:<state>`. A broadcast that failed is marked `failed` and
   retried on the **same nonce**, so a retry cannot double-spend.
+- **A failed broadcast does not block later requests.** A failed claim with
+  no hash used to keep its nonce in `signer_txs`, so the next *different*
+  request, given the same nonce by the node, collided with it and was refused
+  as "in flight": one gas shortfall blocked every later hire. Under the lock,
+  a failed claim at a nonce the chain's pending count proves was never used
+  is now released; the failed request itself can still be retried.
+- **Broadcast errors are classified on the node's own message** (viem's
+  short message and details, not the full text), and the raw error is logged.
+  A `503` inside the transaction's own hex was once reported as "the RPC
+  endpoint is unreachable" when the node had said the signer had insufficient
+  balance.
 - **No gas top-ups.** The signer refuses below the floor and names the address
-  to fund. Funding is manual.
-- **Caps for EOA agents are enforced here.** Every agent today pays from an
-  EOA, so the on-chain check finds no `AgentAccount` and the signer holds the
-  caps itself. Under the per-agent lock, after a replay has already returned
+  to fund. Funding is manual; in the demo it comes from `FUNDER`. Monad
+  reserves the full gas *limit*, about 0.054 MON per `execute`-wrapped call,
+  so the demo gives the orchestrator's session key 0.5 MON (0.1 ran dry after
+  two calls) and each worker 0.1.
+- **Caps for an `AgentAccount` wallet are the contract's.** The signer's reads
+  only buy an early, readable refusal; the account enforces the per-task cap,
+  daily cap, session-key budget and allowlists itself, and the signer keeps
+  no off-chain reservation for it.
+- **Caps for EOA agents are enforced here.** For an EOA — in the demo, the
+  three workers — the on-chain check finds no `AgentAccount`, so the signer
+  holds the caps itself. Under the per-agent lock, after a replay has already returned
   and before anything is broadcast, one `UPDATE` on `spend_policies` tests
   `spend ≤ per_task_cap` and `spent_today + spend ≤ daily_cap` (rolling the
   window after 24 hours, like `AgentAccount`, not at UTC midnight) and
@@ -808,9 +862,10 @@ Rules, no exceptions: no private key in `.env` beyond local dev, no key in
 logs (the signer's logger redacts the keystore variables, `KEEPER_PRIVATE_KEY`,
 `SIGNER_TOKEN` and the `Authorization` header), no key in a
 Postgres column, `.env.example` ships empty. The signer refuses a raw key on a
-non-testnet chain. Once `AgentAccount` is in use, key rotation is a
-`grantSessionKey` + `revokeSessionKey` pair with no funds moved and no
-downtime, and a session key cannot be granted for more than 24h.
+non-testnet chain. For an `AgentAccount` wallet (the demo orchestrator's),
+key rotation is a `grantSessionKey` + `revokeSessionKey` pair with no funds
+moved and no downtime, and a session key cannot be granted for more than 24h.
+Nothing rotates it automatically yet; the demo grants a fresh one each run.
 
 ---
 
@@ -1058,8 +1113,10 @@ Schema notes worth defending in a review:
   The composite foreign keys go further and make a cross-chain job
   *structurally* impossible rather than merely checked.
 - `spent_today` was meant as a cache for fast rejection, with
-  `AgentAccount.spentToday` as the authority. With no `AgentAccount` in use,
-  it is the authority: the signer reserves against it (§3.2).
+  `AgentAccount.spentToday` as the authority. For an `AgentAccount` wallet
+  that is how it works: the contract counts, and the signer reads it. For an
+  EOA agent there is no on-chain counter, so `spent_today` is the authority
+  and the signer reserves against it (§3.2).
 
 ---
 
@@ -1430,12 +1487,13 @@ agent applies the same three rules:
 
 1. Results are injected into the prompt inside a delimited, clearly-labelled
    data block, never concatenated into the instruction section.
-2. Spending is capped outside the model. The per-task and daily caps are
-   enforced by the signer — the only process holding the agents' keys — from
-   `spend_policies` for an EOA agent (every agent today), and by the contract
-   only for an `AgentAccount` wallet (none today). No text a result contains
-   can raise them. A hijacked orchestrator can still spend up to its daily
-   cap; it cannot spend past it.
+2. Spending is capped outside the model. The demo orchestrator — the agent
+   that reads results and spends — pays through an `AgentAccount`, so its
+   per-task and daily caps and its escrow-only allowlist are enforced by the
+   contract. For an EOA agent (the three workers) the signer enforces them
+   from `spend_policies`. No text a result contains can raise them. A
+   hijacked orchestrator can still spend up to its daily cap, on escrow
+   hires; it cannot spend past it, even with the signer compromised too.
 3. Results are schema-validated **before** they reach the model. A result that
    does not match `outputSchema` is disputed, not read.
 
@@ -1477,7 +1535,7 @@ agent applies the same three rules:
 |---|---|
 | Contracts | everything about custody and outcome |
 | Indexer | liveness only — it can be slow, it cannot lie (events are signed by the chain) |
-| API / signer | availability and good errors, **and today also the agents' keys and spending limits**. The design leaves policy to `AgentAccount` on-chain. With EOA agents, the signer holds the keys and enforces the caps itself (§3.2), so a compromised signer bypasses them |
+| API / signer | availability and good errors, and the keys it holds. For an `AgentAccount` wallet (the demo orchestrator) policy is on-chain and the signer holds only a session key, so a compromise is bounded by the account. **For EOA agents (the three workers) it also holds the keys and enforces the caps itself** (§3.2), so a compromised signer bypasses them |
 | Keeper | liveness only — it sends exits the contract would accept from anyone, and holds only gas |
 | Agents | nothing |
 | Arbiter (MVP) | dispute outcomes only, and only for disputed jobs |
@@ -1502,10 +1560,10 @@ challengers — designed for, not built in three weeks.
 | T4 | **Client receives result, refuses to pay** | the hash of the delivered **output** is committed on-chain by `submitResult` before release; `reviewDeadline` + permissionless `autoApprove` settles without the client. Verified 2026-09-24 — until then the encoder fell back to the *spec* hash, committing to what was asked for rather than to what was delivered |
 | T5 | **Both go offline mid-job, funds stuck** | `CREATED`, `ACCEPTED` and `SUBMITTED` each have a deadline and a permissionless exit (invariant I5), and the keeper sends it once due. `DISPUTED` has neither: only the arbiter moves it |
 | T6 | **Reentrancy on settlement** | `nonReentrant`, checks-effects-interactions, `SafeERC20` |
-| T7 | **Signer key compromise** | Design: on-chain `AgentAccount` caps and allowlists bound the loss, and the owner can revoke and sweep. Session key lifetime **is** bounded on-chain: `grantSessionKey` reverts `SessionKeyTtlInvalid` for an expiry in the past or more than `MAX_SESSION_KEY_TTL` (1 day) ahead; factory redeployed 2026-09-23/24 to include it. ⚠️ **As built, none of this applies yet.** No agent has an `AgentAccount`, and the signer holds each agent's EOA key directly, so a compromised signer can spend each agent's whole balance: the off-chain caps it enforces are its own code. Access to it now needs `SIGNER_TOKEN` (or loopback), which narrows who can ask, not what a compromise costs. Updated 2026-09-29 |
+| T7 | **Signer key compromise** | Design: on-chain `AgentAccount` caps and allowlists bound the loss, and the owner can revoke and sweep. Session key lifetime **is** bounded on-chain: `grantSessionKey` reverts `SessionKeyTtlInvalid` for an expiry in the past or more than `MAX_SESSION_KEY_TTL` (1 day) ahead; factory redeployed 2026-09-23/24 to include it. **As built (2026-09-29), this applies to the spending agent.** The demo orchestrator pays through an `AgentAccount`, and the signer holds only its session key. Tested as a compromised signer with that key (`eth_call`): a 0.2 hire → `PerTaskCapExceeded(200000, 100000)`; USDC to `0xdEaD` → `TargetNotAllowed(token)`; granting itself an allowance → `NotOwner()`. The loss is bounded to escrow hires within 0.1/task and 1/day (and the key's budget of one day's cap), and the owner can revoke, which the signer honours on the next call. ⚠️ It does **not** apply to the three workers: they are EOAs whose keys the signer holds, so a compromised signer can move whatever they hold, including earnings. Access to the signer needs `SIGNER_TOKEN` (or loopback), which narrows who can ask, not what a compromise costs. In the demo the owner is the deployer key; on a real deployment it would be the human's, never on the server |
 | T8 | **Replayed hire drains budget** | mandatory `Idempotency-Key`. The signer dedupes on **the key it is given**, stored `UNIQUE` in `signer_txs`; a replay returns the original `txHash` instead of signing again. `@agentx/sdk` derives that key from `keccak256(workerAgentId:canonicalJson(spec))` when the caller omits one, so an in-process retry is safe by default — but a caller supplying its own key controls dedupe, and two different keys for the same hire are two payments. Verified 2026-09-23. Since 2026-09-29 the API also stores the key on the job row (unique per client), so a retry returns the original job instead of inserting a second row, and a key reused for a different hire is `IDEMPOTENCY_CONFLICT` |
 | T9 | **Prompt injection via a result** | results are delimited untrusted data, schema-validated pre-model, and cannot alter spending caps, which the signer enforces outside the model (§7.3) |
-| T10 | **Runaway agent loop burning funds** | Design: per-task + daily caps enforced in the contract, not only the app; `my_budget` lets the agent see the wall before hitting it. **As built (2026-09-29):** with EOA agents the signer enforces the caps from `spend_policies`, reserving each spend atomically under the per-agent lock, and refuses past them with `BUDGET_EXCEEDED`; `dailyRemaining` falls as the agent spends (§3.2). Enforcement is off-chain, in the signer; on-chain only for an `AgentAccount`, of which there are none |
+| T10 | **Runaway agent loop burning funds** | Design: per-task + daily caps enforced in the contract, not only the app; `my_budget` lets the agent see the wall before hitting it. **As built (2026-09-29):** the demo orchestrator, the only agent that spends, pays through an `AgentAccount` (0.1/task, 1/day, escrow-only), so the contract enforces its caps; the signer reads them first to refuse with `BUDGET_EXCEEDED` rather than a bare revert. A live run's `spentToday` read 0.13 MockUSDC. For EOA agents the signer enforces the caps from `spend_policies`, reserving each spend atomically under the per-agent lock; `dailyRemaining` falls as the agent spends (§3.2) |
 | T11 | **Front-running `acceptJob`** to snipe good jobs | jobs are addressed to a named `workerAgentId`; there is no open mempool auction to snipe |
 | T12 | **Fee-on-transfer / rebasing token** breaking accounting | balance delta measured on every transfer-in, reverting with `TokenDeliveredLess` on mismatch — in `TaskEscrow.createJob`, `directPay` and `StakeVault.deposit`. There is no allowlist: there is exactly **one** payment token, set once as a governance parameter, which is the stronger property. Verified 2026-09-23 |
 | T13 | **Indexer reorg** writing a phantom payment | index only up to `head - confirmations` (2 on testnet, 5 on mainnet); store `last_block_hash`; on mismatch, rewind the cursor 2× `confirmations` and replay; `UNIQUE (chain_id, tx_hash, log_index)` makes replay idempotent. ⚠️ The rewind **re-reads** but does not **delete**: rows written from an orphaned block (event, payment, reputation bump) are not removed. Protection against a phantom payment rests on the confirmation lag |
@@ -1526,8 +1584,11 @@ State these in the submission rather than letting a judge find them:
   `DISPUTED` has no permissionless exit.
 - **No slashing game.** `slash()` exists and is role-gated but the MVP never
   calls it automatically.
-- **On-chain spending caps are built but not in use.** Agents pay from EOAs
-  (§2.4). Their caps are enforced by the signer, off-chain (§3.2).
+- **On-chain spending caps cover only the spending agent.** The demo
+  orchestrator pays through an `AgentAccount` (§2.4). The three workers are
+  EOAs: their caps are enforced by the signer, off-chain (§3.2), and a
+  compromised signer can move what they hold. The account's owner in the demo
+  is the deployer key, standing in for a human's.
 - **The keeper is optional and single.** Without `KEEPER_PRIVATE_KEY`, no one
   sends the escrow's exits; with it, it is one process on one key.
 - **Indexer reorgs rewind but do not delete** rows written from orphaned
@@ -1549,7 +1610,7 @@ State these in the submission rather than letting a judge find them:
 | Backend | `vitest` against a real Postgres (docker-compose locally, a service container in CI) | state machine, idempotency, SSE ordering, chaos cases |
 | Indexer | replay tests + `pnpm verify:indexer` against a live chain | duplicate log handling, replay idempotency |
 | E2E | `pnpm e2e` and `pnpm demo` (anvil by default, `VERIFY_CHAIN_ID=10143` for testnet) | hire → settle, asserted on balances and chain state, not log lines |
-| Chaos | `DEMO_CHAOS=no-accept` / `mid-job pnpm demo`, plus manual | a worker that never accepts, and one that accepts and dies (both asserted by the demo); `scripts/keeper-sweep.mjs <chainJobId>` to check the keeper's refund after the work deadline. Manual: kill the indexer; hit the daily cap; submit a malformed result |
+| Chaos | `DEMO_CHAOS=no-accept` / `mid-job pnpm demo`, `scripts/slow-rpc.mjs`, plus manual | a worker that never accepts, and one that accepts and dies (both asserted by the demo); `scripts/keeper-sweep.mjs <chainJobId>` to check the keeper's refund after the work deadline; `slow-rpc.mjs`, a proxy between every service and the RPC adding delay and 503s (passed at 600–1800 ms + 5% failures in 287 s, and 1500–4000 ms + 15% in 464 s, cached mode). Manual: kill the indexer; hit the daily cap; submit a malformed result |
 
 Coverage target: **100% of branches in `TaskEscrow`**, no exceptions. It is
 the contract that holds the money. CI runs `forge coverage --ir-minimum` and

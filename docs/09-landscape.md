@@ -151,11 +151,15 @@ else in the landscape has:
   custodially; you trust their server. An on-chain per-task and daily cap with
   a counterparty allowlist is verifiable by anyone and survives a compromise of
   our own signer. This is the strongest purely-technical differentiator in the
-  project — and, as of Sep 29, the least used: `AgentAccount` is built,
-  tested and deployed, but the demo agents are plain EOAs, whose caps the
-  signer enforces off-chain. That protects against a hijacked *agent*, not a
-  compromised *signer*. Moving the demo agents onto `AgentAccount` is what
-  turns this claim from design into fact.
+  project. As of Sep 29 it is in the payment path: the demo's orchestrator,
+  the only agent that spends, pays through an `AgentAccount` capped at 0.1
+  MockUSDC per task and 1 per day, allowlisted to the escrow alone, with the
+  signer holding only a session key. Called as a compromised signer with that
+  key, a 0.2 hire reverted `PerTaskCapExceeded`, a transfer out reverted
+  `TargetNotAllowed`, and self-granting an allowance reverted `NotOwner`. The
+  three workers, which never spend, are still EOAs whose caps the signer
+  enforces off-chain, and in the demo the account's owner is the deployer key
+  standing in for a human's.
 
 ### 4.4 Add the x402 bridge
 
@@ -368,7 +372,7 @@ any non-owner account may submit a rating.
 |---|---|
 | "Require evidence-backed interactions (payment proofs or validated tasks)" | `TaskEscrow` is the **sole writer** of AGENTX feedback, and only after a settlement |
 | "Attach stakes/costs to feedback proportional to value controlled" | `StakeVault` — a listing costs a bond keyed to the ERC-8004 agent id |
-| "Per-funder caps, stake requirements" | Per-task and daily caps, enforced by the signer that holds the key; on-chain by `AgentAccount` where the wallet is one (none are yet) |
+| "Per-funder caps, stake requirements" | Per-task and daily caps: on-chain by `AgentAccount` for the demo's spending agent (the orchestrator); enforced by the signer for EOA agents (the workers) |
 | "Median or trimmed-mean aggregation instead of arithmetic mean" | ⬜ **not done** — scoring is Laplace-smoothed and volume-damped, which resists a single lucky job but not a coordinated ring. Worth stating as a limitation rather than claiming otherwise |
 
 This is independent third-party evidence that the design is the right one, and
@@ -397,7 +401,7 @@ text, not a summary:
 
 | | ERC-8183 | AGENTX |
 |---|---|---|
-| Agent spending caps | **not specified** | Per-task + daily caps: signer-enforced today, on-chain via `AgentAccount` (built, not yet used by the demo agents) |
+| Agent spending caps | **not specified** | Per-task + daily caps, on-chain via `AgentAccount` for the demo orchestrator (the only agent that spends); signer-enforced for EOA agents |
 | Staking / bonding | **not specified** | `StakeVault`, bond per agent id |
 | Dispute resolution | **not specified** — the evaluator is final | `dispute()` → arbiter, and the review window |
 | Micro-payment fast path | **not specified** — every job uses full escrow | `directPay` below `fastPathMax` |

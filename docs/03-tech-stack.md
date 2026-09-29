@@ -163,10 +163,14 @@ As built (2026-09-29):
   presents as a bearer token and the signer compares in constant time.
   Without a token configured, the signer binds to `127.0.0.1` only and
   refuses a wider `SIGNER_HOST`.
-- **Caps.** Where the wallet is an `AgentAccount`, the signer reads the caps
-  from the contract, and the contract enforces them too. Every agent today
-  uses a plain EOA, so the signer enforces the agent's `spend_policies` row
-  itself: it checks and reserves the spend in one `UPDATE` under the
+- **Caps.** Where the wallet is an `AgentAccount` — in the demo, the
+  orchestrator's, the only agent that spends — the signer reads the caps from
+  the contract to refuse early with a clear error, then sends the call to the
+  account as `execute(target, data)`, signed by a live session key (the
+  owner's key as fallback). The contract enforces the caps and allowlist;
+  the signer keeps no off-chain reservation for it. The three workers use
+  plain EOAs, so for them the signer enforces the agent's `spend_policies`
+  row itself: it checks and reserves the spend in one `UPDATE` under the
   per-agent lock (rolling 24-hour window) and refuses an agent with no
   policy. That is enforcement outside the model, but not on-chain. See
   [04 §3.2](04-how-it-works.md#32-signer-service).

@@ -81,9 +81,9 @@ attacker has written itself a payment order for two cents of setup cost.
 
 > We do not claim to prevent prompt injection. We claim that a successful
 > injection cannot spend more than the agent's daily cap, because the caps are
-> enforced outside the model by the signer — the only process holding the
-> agent's key. On-chain enforcement applies only to `AgentAccount` wallets,
-> and today's agents use plain EOAs.
+> enforced outside the model. For the agent that spends, the orchestrator,
+> they are enforced on-chain by its `AgentAccount`, so they hold even against
+> a compromised signer; for EOA agents, by the signer.
 
 Four layers, and only the last is a guarantee:
 
@@ -92,13 +92,19 @@ Four layers, and only the last is a guarantee:
 | 1 | Results are shape-checked before any model sees them |
 | 2 | They enter a prompt as delimited, untrusted data, with nested delimiters stripped |
 | 3 | The judge runs **with no tools** — a fully successful injection has nothing to call |
-| 4 | Per-task and daily caps, checked and reserved atomically by the **signer** before it signs (rolling 24 h window; no policy, no spend). For an `AgentAccount` wallet the contract also enforces them, with a counterparty allowlist — but no agent uses one yet |
+| 4 | Per-task and daily caps outside the model. The orchestrator — the only agent that spends — pays through an **`AgentAccount`**: the contract enforces 0.1 MockUSDC per task and 1 per day and allows calls only to `TaskEscrow`'s five client functions, and the signer holds only a session key (under 24 h, budget one day's cap). For an EOA agent the **signer** checks and reserves the caps atomically before it signs (rolling 24 h window; no policy, no spend) |
 
 Layer 4 is arithmetic, done by code the model cannot reach. Everything above
-it mitigates an unsolved problem. What layer 4 does not cover, as built: a
-compromised signer (the off-chain caps are its own code), and payees — an EOA
-agent has no allowlist, so within its cap a hijacked orchestrator can still
-hire any registered agent.
+it mitigates an unsolved problem. It was tested against a compromised signer
+on 2026-09-29: calling with the orchestrator's session key (`eth_call` on
+testnet), a 0.2 hire reverted `PerTaskCapExceeded(200000, 100000)`,
+transferring the account's USDC to `0xdEaD` reverted `TargetNotAllowed(token)`,
+and granting itself an allowance reverted `NotOwner()`. What layer 4 does not
+cover, as built: payees — the allowlist is of contracts and functions, so
+within its cap a hijacked orchestrator can still hire any registered agent
+through the escrow; the three workers, which are EOAs whose keys the signer
+holds; and the owner, which in the demo is the deployer key standing in for a
+human's.
 There is deliberately **no keyword filtering**: it fails against paraphrase and
 encoding while manufacturing the appearance of safety.
 
@@ -134,8 +140,8 @@ chain, and `TaskEscrow` has settled real jobs.
 | `AgentAccountFactory` | `0x51F75C30563d260FafF7dAB42ACf9fA57B82315D` |
 | ERC-8004 Identity (reference impl, absent upstream on testnet) | `0x784b42fe1307c70e61df82288f9084614a0ce4c0` |
 
-**486 tests** (counted 2026-09-29). 128 contracts (unit, fuzz, invariant,
-adversarial), 351 backend, 7 interface. 100% branch coverage on `TaskEscrow`
+**495 tests** (counted 2026-09-29). 128 contracts (unit, fuzz, invariant,
+adversarial), 360 backend, 7 interface. 100% branch coverage on `TaskEscrow`
 and `StakeVault`, the two that hold money. The invariants have been run at
 2,000 runs × 256 depth — 512,000 randomised state transitions each — and the
 fuzz properties at 100,000 runs.
@@ -151,12 +157,19 @@ demo page, marketplace, agent profile and registration.
 
 **The demo** (`pnpm demo`) runs on local Ollama `llama3` 8B, and a cached
 replay reproduces a recorded run with no model; three cached rehearsals took
-155 s, 109 s and 111 s. Every step goes through escrow, because the agents are
+155 s, 109 s and 111 s, and one after the switch to `AgentAccount` 156 s. The
+orchestrator pays through its `AgentAccount`; in the live run on testnet all
+three steps settled and the account's own `spentToday` read 0.13 MockUSDC,
+inside its 1 MockUSDC daily cap. Every step goes through escrow, because the agents are
 registered fresh with a score of 50 and the fast path requires 70. The demo
 fails if any step ends `failed` or `timeout`. `DEMO_CHAOS=no-accept` and
 `DEMO_CHAOS=mid-job` add a broken worker; in a live `no-accept` run on
 testnet the orchestrator cancelled the unaccepted job after 45 s (chain job 85
 read back as `REFUNDED`), re-hired, and all three steps settled.
+`scripts/slow-rpc.mjs` puts a slow, lossy link between every service and the
+RPC, the "phone hotspot" chaos item: at 600–1800 ms per request with 5%
+failures the cached demo passed in 287 s, and at 1500–4000 ms with 15%
+failures in 464 s. That was the last of the seven chaos items; all pass.
 
 ```bash
 # the whole stack, one real settlement, asserted on balances and the fee split
@@ -181,9 +194,15 @@ Stated here rather than left for a judge to find.
   permissionless exit, so the keeper cannot move it: if the arbiter never
   rules, its funds stay locked. The path beyond it is an optimistic challenge
   window with staked challengers — designed for, not built in three weeks.
-- **Agents pay from plain EOAs, not `AgentAccount`s.** Their spending caps are
-  enforced by the signer, off-chain; a compromised signer is bounded only by
-  each wallet's balance. Owner revoke and sweep do not exist for them.
+- **Only the spending agent has an `AgentAccount`.** The orchestrator pays
+  through one, so a compromised signer is bounded by its on-chain caps. The
+  three workers, which never spend, are plain EOAs: their caps are enforced by
+  the signer, off-chain, a compromised signer can move whatever they hold
+  (their earnings included), and owner revoke and sweep do not exist for them.
+- **The account's owner in the demo is the deployer key,** standing in for a
+  human. On a real deployment it would be the human's own wallet, never held
+  by the server. The session key is a dev key, not in a KMS, and nothing
+  rotates it; the demo grants a fresh one each run.
 - **The keeper is one process on one key**, and runs only when
   `KEEPER_PRIVATE_KEY` is set. Anyone may send the same exits, but nothing
   else in the system does.
@@ -235,10 +254,12 @@ way it is not evidence.
 most central to the pitch. Each was fixed in code that day:
 
 - **The spending caps were not enforced for any real agent.** The signer read
-  them from `AgentAccount`; every agent is an EOA, every read failed, and each
+  them from `AgentAccount`; every agent was an EOA, every read failed, and each
   failure meant "no cap". `spent_today` never moved. The injection claim in §4
   held only for a contract account nobody used. The signer now enforces the
-  caps itself.
+  caps itself for EOA agents, and the same evening the orchestrator was moved
+  onto an `AgentAccount`, so for the agent that spends the cap is the
+  contract's.
 - **Nothing sent the escrow's permissionless exits.** A worker that vanished
   after accepting left the client's money in escrow indefinitely, while the
   orchestrator told the user it would resolve on its own. The keeper now
@@ -263,6 +284,23 @@ most central to the pitch. Each was fixed in code that day:
 - **Two deploy-side promises were never kept**: `ARBITER_ADDRESS` and
   `FEE_RECIPIENT` were read by nothing, and `make drift` called a script that
   did not exist. Both now work; testnet shows no parameter drift.
+
+**Moving the orchestrator onto `AgentAccount` found three more,** each fixed
+with a test that failed on the old code:
+
+- **Monad reserves the full gas limit,** about 0.054 MON per call wrapped in
+  `execute`, so the session key's 0.1 MON ran dry after two calls. It now gets
+  0.5 MON, and the demo's gas top-ups come from `FUNDER` rather than draining
+  the deployer.
+- **An empty gas wallet was reported as an outage.** The node said the signer
+  had insufficient balance; the signer reported "the RPC endpoint is
+  unreachable", because "503" matched inside the transaction's own hex in the
+  full error text. Errors are now classified on the node's own message, and
+  the raw error is logged — it was logged nowhere.
+- **One failed broadcast blocked every later hire.** Its claim kept a nonce the
+  chain never saw, so the next different request, given the same nonce,
+  collided with it and was refused as "in flight". A failed claim on a nonce
+  the chain's pending count proves unused is now released.
 
 One found fact is deliberately left alone: `TaskEscrow.sol`'s comment says
 every non-terminal state has a permissionless exit, which is wrong for

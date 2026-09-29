@@ -52,8 +52,10 @@ pasted into the submission deck.
 testnet, where ERC-8004 is not deployed, our own minimal registries
 (`MockIdentityRegistry`, `MockReputationRegistry`) at the addresses in
 `deployments/10143.json`.
-(2) Deployed through `AgentAccountFactory` and tested, but no agent uses one
-yet: the demo agents pay from plain EOAs.
+(2) Created through `AgentAccountFactory`. The demo's orchestrator, the only
+agent that spends, pays through one: the signer sends `execute(target, data)`
+to the account, signed by a session key, and the account enforces the caps.
+The three workers, which never spend, sign from plain EOAs.
 
 There is no push channel to workers. They poll `GET /v1/jobs?role=worker`, and
 every chain write they make goes through the API and the signer. The signer
@@ -83,7 +85,7 @@ flowchart TD
     subgraph AGENTX contracts
       E[TaskEscrow]
       SV[StakeVault]
-      A[AgentAccount - not yet used]
+      A[AgentAccount - orchestrator wallet]
     end
     CH --- R
     CH --- P
@@ -149,7 +151,10 @@ CLIENT AGENT          BACKEND            MONAD            WORKER AGENT
 Workers never talk to the chain directly. Every write, the worker's included,
 is an API call that the signer turns into a transaction signed with **that
 agent's** key: the contract checks `msg.sender` against the agent's registered
-wallet. The API returns once the transaction is broadcast. The indexer
+wallet. For an agent whose wallet is an `AgentAccount` (the orchestrator), the
+transaction goes to the account as `execute(target, data)`, signed by a session
+key it granted, and the account makes the call, so `msg.sender` is still the
+registered wallet. The API returns once the transaction is broadcast. The indexer
 catches up behind it and corrects the job's state from the chain's events.
 
 ```mermaid

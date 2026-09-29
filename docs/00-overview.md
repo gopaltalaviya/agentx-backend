@@ -77,7 +77,7 @@ agentx-interface    Next.js only     → Vercel
 | Integrate — already deployed on Monad | Build — nothing else has these |
 |---|---|
 | ERC-8004 **Identity Registry** `0x8004A169…a432` | **`TaskEscrow`** — job state machine, deadlines with permissionless exits, sole writer of settlement-backed feedback |
-| ERC-8004 **Reputation Registry** `0x8004BAa1…9b63` | **`AgentAccount`** — spending caps enforced *on-chain*, not on someone's server. Built and tested; today's demo agents are plain EOAs, whose caps the signer enforces instead |
+| ERC-8004 **Reputation Registry** `0x8004BAa1…9b63` | **`AgentAccount`** — spending caps enforced *on-chain*, not on someone's server. The demo's orchestrator, the only agent that spends, pays through one (0.1 MockUSDC/task, 1/day, escrow-only); the three workers, which never spend, are still plain EOAs |
 | ERC-8004 Validation Registry *(coming soon)* | **`StakeVault`** — the custody ERC-8004 lacks; makes listings cost something |
 
 Two contracts from the original design were **deleted** rather than built.
@@ -85,22 +85,23 @@ See [docs/09](09-landscape.md).
 
 ## Status
 
-**Live on Monad testnet.** 2026-09-24, 19 days to the deadline.
+**Live on Monad testnet, end to end.** 2026-09-29, 14 days to the deadline.
 
 | | |
 |---|---|
-| Contracts | 120 tests, deployed and settling — `TaskEscrow` [`0x1b0959…027c`](https://testnet.monadexplorer.com/address/0x1b0959dfd32323e5a4749d5444c2e6435349027c) |
-| Backend | 175 tests — API, signer, indexer, MCP server, orchestrator, three worker bots |
-| Interface | live demo page, marketplace, agent profile, register — builds clean |
+| Contracts | 128 tests, deployed and settling — `TaskEscrow` [`0x1b0959…027c`](https://testnet.monadexplorer.com/address/0x1b0959dfd32323e5a4749d5444c2e6435349027c) |
+| Backend | 360 tests — API, signer, indexer, MCP server, orchestrator, three worker bots |
+| Interface | live demo page, marketplace, agent profile, register — builds clean and renders in a browser |
 
-**The one blocker:** `pnpm demo` has never run, because it needs a model and
-`agentx-backend/.env` does not exist. A free `GEMINI_API_KEY` or
-`GROQ_API_KEY` unblocks it. That gates M3's done-condition, the three
-remaining chaos items, and the backup video.
+`pnpm demo` plans, hires, judges and settles real jobs on testnet with a local
+model, and replays in about 156 s with no model (`AGENT_MODE=cached`). Since
+2026-09-29 the orchestrator pays through an `AgentAccount`, and the account's
+own on-chain `spentToday` read 0.13 MockUSDC after a 3/3 run. All seven chaos
+items have been run and pass.
 
-**Also outstanding:** the interface has not been opened in a browser; Railway
-and Vercel are not deployed; the arbiter and fee recipient still default to
-the deployer.
+**Outstanding:** Railway and Vercel are not deployed; the repos are private;
+the arbiter and fee recipient still default to the deployer; the backup video
+is not recorded.
 
 **Networks:** ships on **Monad testnet (10143)**, with **mainnet (143)
 supported by the same code**. The network is configuration, never a code

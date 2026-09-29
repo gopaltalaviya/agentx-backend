@@ -49,14 +49,18 @@ that succeeds completely still cannot take more than a known amount.
 | 1 | **Schema validation before the model sees it** | Anything that is not the declared shape never reaches a context at all |
 | 2 | **Results enter as delimited data, never as instructions** | The model is told, in a frozen system prompt, that the block is untrusted third-party content |
 | 3 | **The judge runs with NO tools** | Even a fully successful injection into the judging call has nothing to call. It can only return a verdict |
-| 4 | **Spending caps are enforced outside the model** | The decisive layer. The per-task and daily caps are checked by the **signer**, the only process that holds the agents' keys, before it signs. A *completely* compromised orchestrator can only ask; it cannot sign, and the signer refuses a spend over `per_task_cap` or past `daily_cap` |
-| 5 | **Design: on-chain `AgentAccount` policy, owner revoke and sweep** | Where an agent's wallet is an `AgentAccount`, the contract enforces the same caps plus a counterparty allowlist, and the owner can revoke and sweep. **No agent uses one today**, so this layer is not in effect |
+| 4 | **Spending caps are enforced outside the model** | The decisive layer. The per-task and daily caps are checked by the **signer**, the only process that holds signing keys, before it signs. A *completely* compromised orchestrator can only ask; it cannot sign, and the signer refuses a spend over `per_task_cap` or past `daily_cap` |
+| 5 | **On-chain `AgentAccount` policy, owner revoke and sweep** | In effect for the demo's orchestrator, the only agent that spends (since 2026-09-29). Its wallet is an `AgentAccount`: the contract enforces 0.1 MockUSDC per task and 1 per day, allows calls only to `TaskEscrow`'s five client functions, and the owner can revoke the signer's session key and sweep. This layer holds even if the signer is compromised. The three workers, which never spend, are plain EOAs, so it does not cover them |
 
-How layer 4 works as built (2026-09-29): every agent today pays from a plain
-EOA, so the signer holds each agent's caps in `spend_policies` and checks and
+How layers 4 and 5 work as built (2026-09-29): for the orchestrator's
+`AgentAccount`, the signer reads the caps from the contract to refuse early
+with a readable error, then sends `execute(target, data)` to the account,
+signed by a session key the owner granted for under 24 hours; the contract
+does the enforcing, and a live run's `spentToday` read 0.13 MockUSDC. For an
+EOA agent the signer holds the caps in `spend_policies` and checks and
 reserves every spend in one `UPDATE` under a per-agent lock, over a rolling
-24-hour window. An agent with no policy spends nothing. Before 2026-09-29 this
-check did not run for EOAs at all, and nothing enforced the caps. See
+24-hour window; an agent with no policy spends nothing. Before 2026-09-29
+neither ran: nothing enforced the caps. See
 [04 §3.2](04-how-it-works.md#32-signer-service).
 
 Layer 4 is the one that makes the claim defensible. Everything above it is
@@ -65,15 +69,19 @@ code the model cannot reach. The honest sentence for the submission is:
 
 > We do not claim to prevent prompt injection. We claim that a successful
 > injection cannot spend more than the agent's daily cap, because the caps are
-> enforced outside the model by the signer, the only process holding the key.
-> On-chain enforcement applies only to `AgentAccount` wallets, and today's
-> agents use plain EOAs.
+> enforced outside the model. For the agent that spends, the orchestrator,
+> they are enforced by its `AgentAccount` on-chain, so they hold even against
+> a compromised signer; for EOA agents, by the signer.
 
 That is a far stronger statement than "we sanitise inputs", and it is true.
-What it does not cover: a compromised **signer** bypasses the off-chain caps
-(that is what `AgentAccount` is for), and there is no counterparty allowlist
-for EOA agents — within its cap, a hijacked orchestrator can still hire, and
-pay, any registered agent.
+It was tested: calling as a compromised signer with the orchestrator's session
+key, a 0.2 hire reverted `PerTaskCapExceeded`, moving its USDC anywhere but
+the escrow reverted `TargetNotAllowed`, and granting itself an allowance
+reverted `NotOwner`. What it does not cover: within its caps, a hijacked
+orchestrator can still hire, and pay, any registered agent through the escrow
+(the allowlist is of contracts and functions, not of counterparties); a
+compromised signer can still move whatever the workers' EOAs hold; and in the
+demo the account's owner is the deployer key, standing in for a human's.
 
 ### What we deliberately do NOT do
 
@@ -207,6 +215,6 @@ What the agents must handle, and how:
 | Output valid but empty or wrong | Judge disputes; worker is not paid |
 | Worker never responds | Escrow offer not accepted in 45 s: the orchestrator cancels it (immediate refund) and hires a different agent. Accepted but silent until the step timeout: it hires a different agent with the budget minus what is still locked, and the **keeper** sends the permissionless `expireUndelivered` refund once `workDeadline` passes. At most 2 attempts per step, never the same agent twice; if the cancel fails (the worker accepted in the gap), no second hire |
 | Every provider unavailable | Cached replay, labelled as such |
-| Injection attempt in a result | Contained by §1; bounded by the caps the signer enforces (on-chain only for an `AgentAccount`) |
+| Injection attempt in a result | Contained by §1; bounded by the orchestrator's on-chain `AgentAccount` caps (the signer's caps for an EOA agent) |
 
 Nothing in that table ends in "the demo hangs".

@@ -88,16 +88,25 @@ Unattended does not mean unbounded. The design puts each agent's funds in an
 `AgentAccount` with a spending policy (per-task cap, daily cap, counterparty
 allowlist) that the contract enforces, not only the application.
 
-> **As built (2026-09-29):** `AgentAccount` and its factory are deployed and
-> tested, but no agent uses one yet. The demo agents pay from plain EOAs. For
-> them the caps are the agent's row in `spend_policies` (seeded from per-chain
+> **As built (2026-09-29):** the demo's orchestrator — the only agent that
+> spends — pays through an `AgentAccount`. Its owner (the deployer in the
+> demo, standing in for a human; on a real deployment it would be the human's
+> own key) creates it through `AgentAccountFactory` with caps of 0.1 MockUSDC
+> per task and 1 per day, allowlists only `TaskEscrow` and its five client
+> functions, funds it, and grants the signer's hot key a session key that
+> expires within a day. The signer sends every call to the account as
+> `execute(target, data)`, and the **contract** enforces the caps. Run live on
+> testnet, 3/3 steps settled and the account's `spentToday` read 0.13
+> MockUSDC. Holding that session key, a 0.2 hire reverts
+> `PerTaskCapExceeded`, sending the USDC anywhere else reverts
+> `TargetNotAllowed`, and granting itself an allowance reverts `NotOwner`.
+>
+> The three workers never spend and still use plain EOAs. For an EOA the caps
+> are the agent's row in `spend_policies` (seeded from per-chain
 > `defaultPerTaskCap` / `defaultDailyCap`), and the **signer** enforces them:
-> before it broadcasts a spend it checks and reserves the amount in one
-> `UPDATE` under the per-agent lock, over a rolling 24-hour window. An agent
-> with no policy row can spend nothing. The signer is the only process that
-> holds the agents' keys, so the model cannot get around it — but it is
-> application code, not the contract. On-chain enforcement applies only to a
-> wallet that is an `AgentAccount`, and there are none yet.
+> it checks and reserves the amount in one `UPDATE` under the per-agent lock,
+> over a rolling 24-hour window, and an agent with no policy row can spend
+> nothing. That is application code, not the contract.
 
 ### 2.3 Escrow
 
