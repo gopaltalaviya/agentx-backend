@@ -689,7 +689,7 @@ describe('a worker that goes silent', () => {
 
   function scenario(opts: {
     candidates: (typeof CANDIDATE)[];
-    silent: (agentId: number) => 'never-accepts' | 'accepts-then-silent' | 'delivers';
+    silent: (agentId: number) => 'never-accepts' | 'accepts-late' | 'accepts-then-silent' | 'delivers';
     cancelFails?: boolean;
   }) {
     const hires: {agentId: number; maxPrice: string}[] = [];
@@ -717,6 +717,11 @@ describe('a worker that goes silent', () => {
       awaitResult: async (jobId: string, o: {timeoutMs: number; acceptWithinMs?: number}) => {
         const behaviour = opts.silent(byJob.get(jobId)!);
         if (behaviour === 'never-accepts') throw new NotAccepted(jobId, o.acceptWithinMs ?? 0);
+        // Accepts just after the accept window: only a wait with an accept
+        // limit sees it as unaccepted.
+        if (behaviour === 'accepts-late' && o.acceptWithinMs !== undefined) {
+          throw new NotAccepted(jobId, o.acceptWithinMs);
+        }
         if (behaviour === 'accepts-then-silent') {
           throw new AgentxError(ErrorCode.DEADLINE_PASSED, `job ${jobId} was still "accepted"`);
         }
@@ -807,5 +812,26 @@ describe('a worker that goes silent', () => {
     expect(hires).toHaveLength(1);
     expect(report.steps[0]).toMatchObject({status: 'failed'});
     expect(report.steps[0]!.detail).toMatch(/cancel failed/);
+  });
+
+  /**
+   * Live, on a lossy RPC: the worker's accept landed just after the accept
+   * window, so the cancel was refused (InvalidState). The step was reported
+   * failed and never judged — while the worker delivered seconds later, into
+   * an escrow nobody was going to settle.
+   */
+  it('waits for the delivery when the cancel fails because the worker accepted late', async () => {
+    const {orchestrator, hires, cancelled, calls} = scenario({
+      candidates: [CANDIDATE, OTHER],
+      silent: () => 'accepts-late',
+      cancelFails: true,
+    });
+
+    const report = await orchestrator.run('how deep is ETH/USDC?');
+
+    expect(hires).toHaveLength(1);
+    expect(cancelled).toEqual([]);
+    expect(report.steps[0]).toMatchObject({status: 'settled', agentId: 7, jobId: '101'});
+    expect(calls.approved).toEqual(['101']);
   });
 });

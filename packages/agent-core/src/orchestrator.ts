@@ -405,6 +405,7 @@ export class Orchestrator {
       explorerUrl: receipt.explorerUrl,
     };
 
+    const waitingSince = Date.now();
     let job;
     try {
       job = await this.opts.client.awaitResult(receipt.jobId, {
@@ -412,20 +413,47 @@ export class Orchestrator {
         acceptWithinMs: Math.min(ACCEPT_WITHIN_MS, timeoutMs),
       });
     } catch (err) {
-      if (err instanceof NotAccepted) {
-        // Nobody started, so the client may cancel: an immediate on-chain
-        // refund rather than one that waits out the accept window.
+      if (!(err instanceof NotAccepted)) {
+        if (err instanceof AgentxError && err.code === ErrorCode.DEADLINE_PASSED) {
+          // Not a lost payment: the keeper sends the permissionless refund once
+          // the on-chain work deadline passes. Say so, rather than implying the
+          // money is gone.
+          return {
+            retry: {
+              ...common,
+              status: 'timeout',
+              detail: `agent ${chosen.agentId} did not deliver in time — the escrow refunds it at the work deadline`,
+            },
+            locked: BigInt(receipt.amount),
+          };
+        }
+        return this.skip({...common, status: 'failed', detail: message(err)});
+      }
+      // Nobody started, so the client may cancel: an immediate on-chain
+      // refund rather than one that waits out the accept window.
+      try {
+        await this.opts.client.cancel(receipt.jobId);
+      } catch (cancelErr) {
+        // Most likely the worker accepted in the gap. The job is theirs now:
+        // hiring a second agent would pay twice, and walking away left their
+        // delivery in an escrow nobody judged — seen live on a lossy RPC. So
+        // wait for it like any other, for what is left of the step's time.
         try {
-          await this.opts.client.cancel(receipt.jobId);
-        } catch (cancelErr) {
-          // Most likely the worker accepted in the gap. The job is theirs
-          // now; hiring a second agent for it would pay twice.
+          job = await this.opts.client.awaitResult(receipt.jobId, {
+            timeoutMs: Math.max(timeoutMs - (Date.now() - waitingSince), 0),
+          });
+        } catch (lateErr) {
+          // Never a retry: if the cancel failed for some other reason the job
+          // may still be accepted and delivered, and a second hire would pay
+          // twice. It stays recoverable on chain through its own deadlines.
           return this.skip({
             ...common,
             status: 'failed',
-            detail: `worker was slow to accept and the cancel failed: ${message(cancelErr)}`,
+            detail: `worker was slow to accept and the cancel failed (${message(cancelErr)}): ${message(lateErr)}`,
           });
         }
+      }
+      if (!job) {
         return {
           retry: {
             ...common,
@@ -435,20 +463,6 @@ export class Orchestrator {
           locked: 0n,
         };
       }
-      if (err instanceof AgentxError && err.code === ErrorCode.DEADLINE_PASSED) {
-        // Not a lost payment: the keeper sends the permissionless refund once
-        // the on-chain work deadline passes. Say so, rather than implying the
-        // money is gone.
-        return {
-          retry: {
-            ...common,
-            status: 'timeout',
-            detail: `agent ${chosen.agentId} did not deliver in time — the escrow refunds it at the work deadline`,
-          },
-          locked: BigInt(receipt.amount),
-        };
-      }
-      return this.skip({...common, status: 'failed', detail: message(err)});
     }
 
     if (!job.result) {
