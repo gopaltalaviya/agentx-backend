@@ -133,27 +133,27 @@ export async function registerX402Routes(app: FastifyInstance, deps: X402RouteDe
     const caller = await authenticate(db, request);
     const chainId = resolveChainId(request, caller, enabled);
     const {req, payment} = parseVerify(request.body);
-    const checked = await check(deps, caller, chainId, req, payment);
-    if (!checked.isValid) return checked;
+    const {verdict, jobRowId} = await check(deps, caller, chainId, req, payment);
+    if (!verdict.isValid) return verdict;
 
     const used = await db.query.x402Redemptions.findFirst({
-      where: eq(x402Redemptions.jobId, Number(payment.payload.jobId)),
+      where: eq(x402Redemptions.jobId, jobRowId!),
     });
-    return used ? invalid('already_redeemed', 'this payment has already been redeemed', checked.payer) : checked;
+    return used ? invalid('already_redeemed', 'this payment has already been redeemed', verdict.payer) : verdict;
   });
 
   app.post('/v1/x402/redeem', async (request) => {
     const caller = await authenticate(db, request);
     const chainId = resolveChainId(request, caller, enabled);
     const {req, payment} = parseVerify(request.body);
-    const checked = await check(deps, caller, chainId, req, payment);
+    const {verdict: checked, jobRowId} = await check(deps, caller, chainId, req, payment);
     if (!checked.isValid) return checked;
 
     // One insert decides it. Two concurrent redemptions of one payment both
     // pass every check above; only one of them gets the row.
     const won = await db
       .insert(x402Redemptions)
-      .values({jobId: Number(payment.payload.jobId), resource: req.resource})
+      .values({jobId: jobRowId!, resource: req.resource})
       .onConflictDoNothing()
       .returning();
     return won.length === 1
@@ -213,33 +213,33 @@ async function check(
   chainId: number,
   req: PaymentRequirements,
   payment: PaymentPayload,
-): Promise<VerifyResponse> {
+): Promise<{verdict: VerifyResponse; jobRowId?: number}> {
   const {db} = deps;
   const network = x402Network(chainId);
   if (payment.network !== network || req.network !== network) {
-    return invalid('wrong_network', `this facilitator verifies ${network}`);
+    return {verdict: invalid('wrong_network', `this facilitator verifies ${network}`)};
   }
 
   const job = await db.query.jobs.findFirst({
-    where: and(eq(jobs.id, Number(payment.payload.jobId)), eq(jobs.chainId, chainId)),
+    where: and(eq(jobs.publicId, payment.payload.jobId), eq(jobs.chainId, chainId)),
   });
-  if (!job) return invalid('unknown_payment', `no payment ${payment.payload.jobId} on ${network}`);
+  if (!job) return {verdict: invalid('unknown_payment', `no payment ${payment.payload.jobId} on ${network}`)};
   const payer = job.clientAgentId;
 
   // Only the payee may verify or redeem. Anyone else asking is either
   // probing other agents' receipts or trying to burn one before it is used.
   if (job.workerAgentId !== caller.agentId || req.extra.agentId !== caller.agentId) {
-    return invalid('wrong_payee', 'this payment was not made to the calling agent', payer);
+    return {verdict: invalid('wrong_payee', 'this payment was not made to the calling agent', payer)};
   }
-  if (job.path !== 'direct') return invalid('not_direct_payment', 'an escrow job is not an x402 payment', payer);
+  if (job.path !== 'direct') return {verdict: invalid('not_direct_payment', 'an escrow job is not an x402 payment', payer)};
 
   const bound = (job.spec as {input?: {x402?: {resource?: string}}}).input?.x402?.resource;
   if (bound !== req.resource) {
-    return invalid('wrong_resource', `this payment was for ${bound ?? 'no x402 resource'}`, payer);
+    return {verdict: invalid('wrong_resource', `this payment was for ${bound ?? 'no x402 resource'}`, payer)};
   }
   const required = BigInt(req.maxAmountRequired);
   if (BigInt(job.amount) < required) {
-    return invalid('insufficient_amount', `paid ${job.amount}, the resource costs ${required}`, payer);
+    return {verdict: invalid('insufficient_amount', `paid ${job.amount}, the resource costs ${required}`, payer)};
   }
 
   const created = await db.query.jobEvents.findFirst({
@@ -247,17 +247,17 @@ async function check(
   });
   const recordedTx = (created?.payload as {txHash?: string} | undefined)?.txHash;
   if (!recordedTx || recordedTx.toLowerCase() !== payment.payload.txHash.toLowerCase()) {
-    return invalid('transaction_mismatch', 'the transaction named is not the one that paid for this job', payer);
+    return {verdict: invalid('transaction_mismatch', 'the transaction named is not the one that paid for this job', payer)};
   }
 
   // The chain, last and decisively.
   if (!deps.readPayment) {
-    return invalid('payment_pending', 'this facilitator cannot read the chain, so it cannot confirm anything', payer);
+    return {verdict: invalid('payment_pending', 'this facilitator cannot read the chain, so it cannot confirm anything', payer)};
   }
   const worker = await db.query.agents.findFirst({where: eq(agents.id, job.workerAgentId)});
   const reading = await deps.readPayment({chainId, txHash: payment.payload.txHash as Hex});
-  if (reading.status === 'pending') return invalid('payment_pending', 'not yet confirmed on chain — retry shortly', payer);
-  if (reading.status === 'reverted') return invalid('payment_reverted', 'the payment transaction reverted', payer);
+  if (reading.status === 'pending') return {verdict: invalid('payment_pending', 'not yet confirmed on chain — retry shortly', payer)};
+  if (reading.status === 'reverted') return {verdict: invalid('payment_reverted', 'the payment transaction reverted', payer)};
 
   const paid = reading.directPaid.some(
     (e) =>
@@ -268,9 +268,9 @@ async function check(
       e.amount >= required,
   );
   if (!paid) {
-    return invalid('transaction_mismatch', 'the escrow emitted no DirectPaid to this worker for this job', payer);
+    return {verdict: invalid('transaction_mismatch', 'the escrow emitted no DirectPaid to this worker for this job', payer)};
   }
-  return {isValid: true, payer};
+  return {verdict: {isValid: true, payer}, jobRowId: job.id};
 }
 
 function invalid(reason: NonNullable<VerifyResponse['invalidReason']>, detail: string, payer?: number): VerifyResponse {

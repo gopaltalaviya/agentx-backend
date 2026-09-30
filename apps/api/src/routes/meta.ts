@@ -78,7 +78,12 @@ export async function registerMetaRoutes(app: FastifyInstance, deps: MetaRouteDe
         accept: Number(chain.params.acceptWindowSeconds),
         work: Number(chain.params.workWindowSeconds),
         review: Number(chain.params.reviewWindowSeconds),
+        /** After this, anyone may settle a disputed job for the worker. */
+        dispute: Number(chain.params.disputeTimeoutSeconds),
       },
+      /** The smallest job the escrow accepts, and the least any job pays in fees. */
+      minJobAmount: String(chain.params.minJobAmount),
+      minFee: String(chain.params.minFee),
       fastPathMax: String(chain.params.fastPathMax),
       fastPathMaxDisplay: chain.formatToken(chain.params.fastPathMax as bigint),
       protocolFeeBps: Number(chain.params.protocolFeeBps),

@@ -580,7 +580,8 @@ describe('the direct-pay path, after the money has moved', () => {
     expect(hire.statusCode, hire.body).toBe(201);
     const {jobId} = hire.json() as {jobId: string};
     // The chain assigns the id; the indexer links it. Stand in for that.
-    await db.execute(sql`UPDATE jobs SET chain_job_id = ${jobId} WHERE id = ${Number(jobId)}`);
+    // The chain id is a number; the job's own serial stands in for it.
+    await db.execute(sql`UPDATE jobs SET chain_job_id = id WHERE public_id = ${jobId}`);
     return {jobId, worker};
   }
 
@@ -588,7 +589,7 @@ describe('the direct-pay path, after the money has moved', () => {
     const {jobId} = await directJob();
 
     const rows = (await db.execute(
-      sql`SELECT state FROM jobs WHERE id = ${Number(jobId)}`,
+      sql`SELECT state FROM jobs WHERE public_id = ${jobId}`,
     )) as unknown as {state: string}[];
     expect(rows[0]!.state).toBe('settled');
   });
@@ -606,7 +607,7 @@ describe('the direct-pay path, after the money has moved', () => {
     expect(res.statusCode, res.body).toBe(200);
 
     const rows = (await db.execute(
-      sql`SELECT result, result_hash FROM jobs WHERE id = ${Number(jobId)}`,
+      sql`SELECT result, result_hash FROM jobs WHERE public_id = ${jobId}`,
     )) as unknown as {result: Record<string, unknown> | null; result_hash: string | null}[];
     expect(rows[0]!.result).toMatchObject({summary: 'liquidity is thin'});
     expect(rows[0]!.result_hash).toMatch(/^0x[0-9a-f]{64}$/);
@@ -643,7 +644,8 @@ describe('the direct-pay path, after the money has moved', () => {
       },
     });
     const {jobId} = hire.json() as {jobId: string};
-    await db.execute(sql`UPDATE jobs SET chain_job_id = ${jobId} WHERE id = ${Number(jobId)}`);
+    // The chain id is a number; the job's own serial stands in for it.
+    await db.execute(sql`UPDATE jobs SET chain_job_id = id WHERE public_id = ${jobId}`);
 
     const res = await app.inject({
       method: 'POST',

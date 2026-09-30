@@ -21,7 +21,21 @@ export interface SignerSubmitDeps {
   config: AgentxConfig;
   abis?: Record<string, Abi>;
   fetchImpl?: typeof fetch;
+  /** How long to wait for the signer. A sign includes a broadcast, so not short. */
+  timeoutMs?: number;
 }
+
+/** The codes a signer refusal may carry through to the caller as they are. */
+const PASS_THROUGH = new Set<string>([
+  ErrorCode.BUDGET_EXCEEDED,
+  ErrorCode.INSUFFICIENT_FUNDS,
+  ErrorCode.AGENT_NOT_HIREABLE,
+  ErrorCode.CHAIN_MISMATCH,
+  ErrorCode.IDEMPOTENCY_CONFLICT,
+  ErrorCode.SCHEMA_MISMATCH,
+  ErrorCode.INVALID_STATE,
+  ErrorCode.DEADLINE_PASSED,
+]);
 
 export function makeSignerSubmit(deps: SignerSubmitDeps): JobRouteDeps['submit'] {
   const abis = deps.abis ?? (loadAbis() as unknown as Record<string, Abi>);
@@ -29,7 +43,7 @@ export function makeSignerSubmit(deps: SignerSubmitDeps): JobRouteDeps['submit']
   if (!escrowAbi) throw new Error('TaskEscrow ABI missing — run `make export` in agentx-contracts');
   const doFetch = deps.fetchImpl ?? fetch;
 
-  return async ({agentId, chainId, kind, job, spend, idempotencyKey, payload}) => {
+  return async ({agentId, chainId, kind, job, spend, idempotencyKey, payload, traceId}) => {
     const chain = deps.config.chain(chainId);
     const escrow = chain.contracts['TaskEscrow'];
     if (!escrow) {
@@ -38,11 +52,17 @@ export function makeSignerSubmit(deps: SignerSubmitDeps): JobRouteDeps['submit']
 
     const data = encodeCall(escrowAbi, kind, {agentId, job, spend, payload, chain});
 
-    const res = await doFetch(`${deps.signerUrl}/sign`, {
+    let res: Response;
+    try {
+      res = await doFetch(`${deps.signerUrl}/sign`, {
       method: 'POST',
+      // No timeout used to mean a hung signer hung every hire with it.
+      signal: AbortSignal.timeout(deps.timeoutMs ?? 30_000),
       headers: {
         'content-type': 'application/json',
         ...(deps.signerToken ? {authorization: `Bearer ${deps.signerToken}`} : {}),
+        // One id from the caller's request to the signer's log line.
+        ...(traceId ? {'x-request-id': traceId} : {}),
       },
       body: JSON.stringify({
         agentId,
@@ -52,16 +72,39 @@ export function makeSignerSubmit(deps: SignerSubmitDeps): JobRouteDeps['submit']
         spend: spend.toString(),
         idempotencyKey,
       }),
-    });
+      });
+    } catch (err) {
+      // Nothing was signed, or the idempotency key makes a retry safe if it was.
+      throw new AgentxError(
+        ErrorCode.UPSTREAM_UNAVAILABLE,
+        `the signer did not answer: ${err instanceof Error ? err.message : String(err)}`,
+        2,
+      );
+    }
 
     if (!res.ok) {
       // The signer already speaks RFC 7807, so its refusal is passed through
       // intact rather than flattened into a generic 500. An agent that hit a
       // budget cap must see BUDGET_EXCEEDED, not "signer error".
-      const problem = (await res.json().catch(() => ({}))) as {code?: string; detail?: string};
+      const problem = (await res.json().catch(() => ({}))) as {
+        code?: string;
+        detail?: string;
+        retryAfter?: number;
+      };
+      // A refusal the CALLER can act on passes through with its code. Anything
+      // else — the signer down, a 5xx, the API's own token rejected — is an
+      // outage, not the caller's empty wallet (which is what v1 called it).
+      if (problem.code && PASS_THROUGH.has(problem.code)) {
+        throw new AgentxError(
+          problem.code as ErrorCode,
+          problem.detail ?? `signer refused with ${res.status}`,
+          problem.retryAfter,
+        );
+      }
       throw new AgentxError(
-        (problem.code as ErrorCode) ?? ErrorCode.INSUFFICIENT_FUNDS,
-        problem.detail ?? `signer refused with ${res.status}`,
+        ErrorCode.UPSTREAM_UNAVAILABLE,
+        `the signer answered ${res.status}${problem.code ? ` ${problem.code}` : ''}`,
+        2,
       );
     }
 

@@ -1,4 +1,6 @@
-import Fastify, {type FastifyInstance} from 'fastify';
+import Fastify, {type FastifyBaseLogger, type FastifyInstance} from 'fastify';
+import helmet from '@fastify/helmet';
+import {registerMetrics, serviceOptions, withTimeout, type Metrics} from '@agentx/service';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import type {ChainConfig} from '@agentx/config';
@@ -29,7 +31,18 @@ export interface AppDeps {
   runExecutor?: RunExecutor;
   /** Browser origins allowed to call the API. Omitted, any origin may. */
   corsOrigins?: string[];
+  /** Honour X-Forwarded-For. Set behind a proxy (Railway), never when exposed directly. */
+  trustProxy?: boolean;
+  /** Requests per client IP per minute. */
+  rateLimitPerMinute?: number;
   logger?: boolean;
+  /** A configured pino logger (redaction, service name). Wins over `logger`. */
+  loggerInstance?: FastifyBaseLogger;
+  /** Dependencies `/ready` checks — the database, and whatever else is wired. */
+  readiness?: Record<string, () => Promise<unknown>>;
+  /** Prometheus registry; `/metrics` is served when given. */
+  metrics?: Metrics;
+  metricsToken?: string;
 }
 
 /**
@@ -38,11 +51,13 @@ export interface AppDeps {
  * exercise by starting it is a server nobody writes tests for.
  */
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
+  // Request ids: an incoming x-request-id is honoured, else a random UUID —
+  // agents retry, and a trace id that survives into the response is how a
+  // failed hire is connected to the log line explaining it. Body limit and
+  // timeouts are explicit (serviceOptions).
   const app = Fastify({
-    logger: deps.logger ?? false,
-    // Agents retry; a trace id that survives into the response is how a
-    // failed hire is connected to the log line explaining it.
-    genReqId: () => `req_${Math.random().toString(36).slice(2, 10)}`,
+    ...serviceOptions({trustProxy: deps.trustProxy ?? false}),
+    ...(deps.loggerInstance ? {loggerInstance: deps.loggerInstance} : {logger: deps.logger ?? false}),
   });
 
   const bus = deps.bus ?? new EventBus();
@@ -65,14 +80,50 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
 
   await app.register(rateLimit, {
-    max: 600,
+    max: deps.rateLimitPerMinute ?? 600,
     timeWindow: '1 minute',
-    // Per API key, not per IP: every agent behind one Railway egress would
-    // otherwise share a single bucket and throttle each other.
-    keyGenerator: (req) => (req.headers.authorization ?? req.ip) as string,
+    // Per client IP, BEFORE authentication. It was keyed on the raw
+    // Authorization header — so an attacker got a fresh bucket for every
+    // garbage key, which made the per-request auth cost unbounded. With
+    // TRUST_PROXY set, `req.ip` is the client, not Railway's proxy.
+    keyGenerator: (req) => req.ip,
   });
 
   registerErrorHandler(app);
+
+  // Security headers. This is a JSON API, so the content policy is "nothing":
+  // no script, no frame, no inline anything — a response rendered as a page
+  // by mistake cannot become one.
+  await app.register(helmet, {
+    contentSecurityPolicy: {directives: {defaultSrc: ["'none'"], frameAncestors: ["'none'"]}},
+    crossOriginResourcePolicy: {policy: 'cross-origin'}, // the interface is on another origin
+  });
+
+  if (deps.metrics) registerMetrics(app, deps.metrics, deps.metricsToken ? {token: deps.metricsToken} : {});
+
+  app.get('/ready', async (_request, reply) => {
+    const checks = Object.entries(deps.readiness ?? {});
+    const results = await Promise.all(
+      checks.map(async ([name, check]) => {
+        try {
+          await withTimeout(check(), 2_000, `${name} did not answer within 2000 ms`);
+          return [name, {ok: true}] as const;
+        } catch (err) {
+          return [name, {ok: false, error: err instanceof Error ? err.message : String(err)}] as const;
+        }
+      }),
+    );
+    const ok = results.every(([, r]) => r.ok);
+    return reply.status(ok ? 200 : 503).send({ok, checks: Object.fromEntries(results)});
+  });
+
+  // SSE streams never end by themselves; end them so close() does not wait.
+  // preClose, not onClose: onClose runs only AFTER the server has closed,
+  // which it cannot do while a stream is open.
+  app.addHook('preClose', async () => {
+    bus.closeAll();
+    runBus.closeAll();
+  });
 
   app.addHook('onSend', async (request, reply, payload) => {
     reply.header('x-trace-id', request.id);

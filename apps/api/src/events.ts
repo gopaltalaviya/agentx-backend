@@ -22,6 +22,34 @@ type Subscriber = (event: StreamEvent) => void;
 
 export class EventBus {
   private readonly byTopic = new Map<number, Set<Subscriber>>();
+  /** Open SSE streams, so shutdown can end them rather than wait on them. */
+  private readonly streams = new Set<() => void>();
+
+  /**
+   * @param maxStreams open SSE connections this instance will hold. Each is a
+   *   socket and a heartbeat timer; without a ceiling one client could open
+   *   them until the process ran out of file descriptors.
+   */
+  constructor(readonly maxStreams = 1_000) {}
+
+  get streamCount(): number {
+    return this.streams.size;
+  }
+
+  /** @internal */
+  track(close: () => void): () => void {
+    this.streams.add(close);
+    return () => this.streams.delete(close);
+  }
+
+  /**
+   * End every open stream. Called on shutdown: an SSE connection never ends
+   * by itself, so without this `app.close()` waited out the shutdown timeout
+   * on every deploy. The client's EventSource reconnects to a live instance.
+   */
+  closeAll(): void {
+    for (const close of [...this.streams]) close();
+  }
 
   publish(topicId: number, event: StreamEvent): void {
     for (const fn of this.byTopic.get(topicId) ?? []) {
@@ -72,12 +100,32 @@ export function streamEvents(
   topicId: number,
   replay: StreamEvent[] = [],
 ): void {
+  if (bus.streamCount >= bus.maxStreams) {
+    reply.raw.writeHead(503, {'content-type': 'application/problem+json', 'retry-after': '5'});
+    reply.raw.end(
+      JSON.stringify({
+        type: 'https://agentx.dev/errors/upstream-unavailable',
+        title: 'Too many open streams',
+        status: 503,
+        code: 'UPSTREAM_UNAVAILABLE',
+        detail: `this instance holds ${bus.maxStreams} streams; retry shortly`,
+        retryAfter: 5,
+      }),
+    );
+    return;
+  }
+
   reply.raw.writeHead(200, {
     'content-type': 'text/event-stream',
     'cache-control': 'no-cache, no-transform',
     connection: 'keep-alive',
     'x-accel-buffering': 'no', // nginx buffers SSE into uselessness otherwise
   });
+  // Send the headers NOW. Node holds them until the first write, so a client
+  // watching a quiet run — nothing to replay, nothing published yet — saw no
+  // response at all until the first heartbeat, 25 s later. The retry hint
+  // tells EventSource how soon to reconnect after a deploy ends the stream.
+  reply.raw.write('retry: 3000\n\n');
 
   const send = (e: StreamEvent) => {
     reply.raw.write(`event: ${e.event}\ndata: ${JSON.stringify(e.data)}\n\n`);
@@ -90,9 +138,14 @@ export function streamEvents(
   const unsubscribe = bus.subscribe(topicId, send);
   const heartbeat = setInterval(() => reply.raw.write(': keep-alive\n\n'), HEARTBEAT_MS);
 
+  let closed = false;
+  const untrack = bus.track(() => close());
   const close = () => {
+    if (closed) return;
+    closed = true;
     clearInterval(heartbeat);
     unsubscribe();
+    untrack();
     reply.raw.end();
   };
 

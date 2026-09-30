@@ -1,4 +1,5 @@
 import {
+  uuid,
   bigint,
   bigserial,
   boolean,
@@ -134,6 +135,12 @@ export const jobs = pgTable(
   'jobs',
   {
     id: bigserial('id', {mode: 'number'}).primaryKey(),
+    /**
+     * The only id the API shows. Random, so a job cannot be found by counting:
+     * reads are public by design (a job is shareable evidence), and the serial
+     * `id` made every job in the system enumerable by walking 1, 2, 3.
+     */
+    publicId: uuid('public_id').notNull().defaultRandom(),
     chainId: bigint('chain_id', {mode: 'number'}).notNull(),
     chainJobId: chainUint('chain_job_id'),
     clientAgentId: bigint('client_agent_id', {mode: 'number'}).notNull(),
@@ -164,6 +171,7 @@ export const jobs = pgTable(
   },
   (t) => [
     uniqueIndex('jobs_chain_job_uk').on(t.chainId, t.chainJobId),
+    uniqueIndex('jobs_public_id_uk').on(t.publicId),
     uniqueIndex('jobs_client_idempotency_uk').on(t.clientAgentId, t.idempotencyKey),
     index('jobs_worker_idx').on(t.chainId, t.workerAgentId, t.state),
     index('jobs_client_idx').on(t.chainId, t.clientAgentId, t.createdAt),
@@ -279,13 +287,23 @@ export const apiKeys = pgTable(
     agentId: bigint('agent_id', {mode: 'number'})
       .notNull()
       .references(() => agents.id, {onDelete: 'cascade'}),
-    /** argon2id hash. The key itself is shown once and never stored. */
+    /**
+     * The public half of the key (`ax_<keyId>_<secret>`): how a request finds
+     * its row by index instead of hashing against every row. Not secret.
+     */
+    keyId: text('key_id'),
+    /**
+     * `sha256$<hex>` of the whole key. The key is shown once and never stored.
+     * SHA-256, not a slow KDF: a key is 192 random bits, not a password, so
+     * there is nothing for a slow hash to protect — and a slow hash on every
+     * request is a denial-of-service lever.
+     */
     keyHash: text('key_hash').notNull(),
     scopes: text('scopes').array().notNull().default([]),
     lastUsedAt: timestamp('last_used_at', {withTimezone: true}),
     revokedAt: timestamp('revoked_at', {withTimezone: true}),
   },
-  (t) => [uniqueIndex('api_keys_hash_uk').on(t.keyHash)],
+  (t) => [uniqueIndex('api_keys_hash_uk').on(t.keyHash), uniqueIndex('api_keys_key_id_uk').on(t.keyId)],
 );
 
 // ─────────────────────────── indexer ───────────────────────────
@@ -323,6 +341,8 @@ export const runs = pgTable(
   'runs',
   {
     id: bigserial('id', {mode: 'number'}).primaryKey(),
+    /** The only id the API shows; see `jobs.publicId`. */
+    publicId: uuid('public_id').notNull().defaultRandom(),
     chainId: bigint('chain_id', {mode: 'number'}).notNull(),
     /** The orchestrator agent that owns the spending caps this run ran under. */
     agentId: bigint('agent_id', {mode: 'number'})
@@ -339,7 +359,7 @@ export const runs = pgTable(
     startedAt: timestamp('started_at', {withTimezone: true}).notNull().defaultNow(),
     finishedAt: timestamp('finished_at', {withTimezone: true}),
   },
-  (t) => [index('runs_agent_idx').on(t.agentId, t.id)],
+  (t) => [index('runs_agent_idx').on(t.agentId, t.id), uniqueIndex('runs_public_id_uk').on(t.publicId)],
 );
 
 /**

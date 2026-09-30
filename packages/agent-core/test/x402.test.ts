@@ -35,11 +35,14 @@ class FakeBrain implements Brain {
   }
 }
 
+/** A job's public id — what the facilitator puts in a payment. */
+const JOB = '5f0c1a9e-2b7d-4c3e-9a61-0d8e4f7b2c11';
+
 const HEADER = encodePaymentHeader({
   x402Version: 1,
   scheme: X402_SCHEME,
   network: 'eip155:10143',
-  payload: {jobId: '7', txHash: `0x${'ab'.repeat(32)}`},
+  payload: {jobId: JOB, txHash: `0x${'ab'.repeat(32)}`},
 });
 
 interface Seen {
@@ -119,7 +122,7 @@ describe('the paid endpoint', () => {
     expect((await res.json()).output).toEqual({summary: 'deep', confidence: 0.9});
     expect(seen.redeemed).toEqual([{req: expect.objectContaining({resource: 'http://127.0.0.1:9402/market-research'}), header: HEADER}]);
     expect(brain.calls).toBe(1);
-    expect(seen.submitted).toEqual([{jobId: '7', output: {summary: 'deep', confidence: 0.9}}]);
+    expect(seen.submitted).toEqual([{jobId: JOB, output: {summary: 'deep', confidence: 0.9}}]);
 
     const receipt = JSON.parse(Buffer.from(res.headers.get('x-payment-response')!, 'base64').toString('utf8'));
     expect(receipt).toEqual({success: true, transaction: `0x${'ab'.repeat(32)}`, network: 'eip155:10143', payer: 1});

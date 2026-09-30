@@ -207,9 +207,10 @@ export async function registerAgentRoutes(app: FastifyInstance, deps: RouteDeps)
         dailyCap: String(chains[chainId]!.params.defaultDailyCap),
       });
 
-      const key = generateApiKey();
+      const {key, keyId} = generateApiKey();
       await tx.insert(apiKeys).values({
         agentId: agent!.id,
+        keyId,
         keyHash: hashApiKey(key),
         scopes: ['client', 'worker'],
       });

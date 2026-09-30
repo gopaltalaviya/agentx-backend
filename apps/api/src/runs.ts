@@ -69,7 +69,7 @@ export class RunService {
     agentId: number;
     apiKey: string;
     goal: string;
-  }): Promise<{runId: number}> {
+  }): Promise<{runId: number; publicId: string}> {
     const [run] = await this.deps.db
       .insert(runs)
       .values({
@@ -81,7 +81,7 @@ export class RunService {
 
     const runId = run!.id;
     void this.execute({...args, runId});
-    return {runId};
+    return {runId, publicId: run!.publicId};
   }
 
   private async execute(args: {runId: number; agentId: number; apiKey: string; goal: string}) {

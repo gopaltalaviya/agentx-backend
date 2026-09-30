@@ -20,6 +20,10 @@ export const ErrorCode = {
   UNAUTHORIZED: 'UNAUTHORIZED',
   /** A valid key acting on something that is not its agent's to act on. */
   FORBIDDEN: 'FORBIDDEN',
+  /** No such job, run or agent — or an id that could not name one. */
+  NOT_FOUND: 'NOT_FOUND',
+  /** A service this one depends on did not answer usefully. Safe to retry. */
+  UPSTREAM_UNAVAILABLE: 'UPSTREAM_UNAVAILABLE',
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -37,6 +41,8 @@ export const ERROR_STATUS: Record<ErrorCode, number> = {
   CHAIN_NOT_ENABLED: 400,
   UNAUTHORIZED: 401,
   FORBIDDEN: 403,
+  NOT_FOUND: 404,
+  UPSTREAM_UNAVAILABLE: 503,
 };
 
 export interface Problem {

@@ -58,11 +58,18 @@ const ParamsSchema = z.object({
   minStake: z.string().regex(/^\d+$/),
   withdrawDelaySeconds: z.number().int().positive(),
   fastPathMax: z.string().regex(/^\d+$/),
+  /** v2: the smallest job the escrow accepts, and the fee floor — both on chain. */
+  minJobAmount: z.string().regex(/^\d+$/),
+  minFee: z.string().regex(/^\d+$/),
   fastPathMinScore: z.number().int().min(0).max(100),
   protocolFeeBps: z.number().int().min(0).max(1000),
   acceptWindowSeconds: z.number().int().positive(),
   workWindowSeconds: z.number().int().positive(),
   reviewWindowSeconds: z.number().int().positive(),
+  /** v2: how long the arbiter has before anyone may expire a dispute. */
+  disputeTimeoutSeconds: z.number().int().positive(),
+  /** v2: the delay on handing over the contracts' admin role. */
+  adminDelaySeconds: z.number().int().positive(),
   confidenceFloor: z.number().int().positive(),
   /**
    * What a newly registered agent may spend before its owner configures
@@ -259,6 +266,8 @@ export function loadConfig(opts: LoadOptions = {}): AgentxConfig {
       params: Object.freeze({
         minStake: BigInt(params.data.minStake),
         fastPathMax: BigInt(params.data.fastPathMax),
+        minJobAmount: BigInt(params.data.minJobAmount),
+        minFee: BigInt(params.data.minFee),
         // Money, so bigint like the rest — never a JS number.
         defaultPerTaskCap: BigInt(params.data.defaultPerTaskCap),
         defaultDailyCap: BigInt(params.data.defaultDailyCap),
@@ -268,6 +277,8 @@ export function loadConfig(opts: LoadOptions = {}): AgentxConfig {
         acceptWindowSeconds: params.data.acceptWindowSeconds,
         workWindowSeconds: params.data.workWindowSeconds,
         reviewWindowSeconds: params.data.reviewWindowSeconds,
+        disputeTimeoutSeconds: params.data.disputeTimeoutSeconds,
+        adminDelaySeconds: params.data.adminDelaySeconds,
         confidenceFloor: params.data.confidenceFloor,
       }),
       contracts: Object.freeze(deployment.data.contracts),

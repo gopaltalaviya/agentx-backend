@@ -62,8 +62,8 @@ export const PaymentPayload = z.object({
   scheme: z.literal(X402_SCHEME),
   network: z.string().min(1),
   payload: z.object({
-    /** The AGENTX job the facilitator settled this payment as. */
-    jobId: z.string().regex(/^\d+$/),
+    /** The AGENTX job the facilitator settled this payment as — its public id. */
+    jobId: z.string().uuid(),
     txHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/),
   }),
 });

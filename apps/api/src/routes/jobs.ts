@@ -38,6 +38,8 @@ export interface JobRouteDeps {
     spend: bigint;
     idempotencyKey: string;
     payload?: Record<string, unknown>;
+    /** The caller's request id, carried to the signer. */
+    traceId?: string;
   }) => Promise<{txHash: string; chainJobId?: string}>;
 }
 
@@ -114,7 +116,7 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
       jobs: rows.map((job) => {
         const chain = chains[job.chainId]!;
         return {
-          jobId: String(job.id),
+          jobId: job.publicId,
           chainJobId: job.chainJobId,
           chainId: job.chainId,
           state: job.state,
@@ -151,7 +153,7 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
       .orderBy(asc(jobEvents.id));
 
     return {
-      jobId: String(job.id),
+      jobId: job.publicId,
       chainJobId: job.chainJobId,
       chainId: job.chainId,
       network: chain.name,
@@ -275,8 +277,12 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
   // ── helpers ────────────────────────────────────────────────────────────
 
   async function loadJob(params: {id: string}) {
-    const job = await db.query.jobs.findFirst({where: eq(jobs.id, Number(params.id))});
-    if (!job) throw new AgentxError(ErrorCode.INVALID_STATE, `no job ${params.id}`);
+    // Public ids only. A serial id — or anything else — names no job: 404,
+    // not a 500 from handing NaN to Postgres.
+    const job = isPublicId(params.id)
+      ? await db.query.jobs.findFirst({where: eq(jobs.publicId, params.id)})
+      : undefined;
+    if (!job) throw new AgentxError(ErrorCode.NOT_FOUND, `no job ${params.id}`);
     const chain = chains[job.chainId];
     if (!chain) throw new AgentxError(ErrorCode.CHAIN_NOT_ENABLED, `chain ${job.chainId} is not enabled`);
     return {job, chain};
@@ -364,6 +370,7 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
       // Only the hire moves money; the rest are state changes.
       spend: 0n,
       idempotencyKey,
+          traceId: request.id,
       payload: {
         ...((request.body ?? {}) as Record<string, unknown>),
         // Without this the encoder falls back to the SPEC hash, so the chain
@@ -401,12 +408,12 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
     const finalState = offChainOnly ? job.state : to;
 
     await recordEvent(db, bus, job.id, job.chainId, offChainOnly ? 'job.delivered' : `job.${to}`, {
-      jobId: String(job.id),
+      jobId: job.publicId,
       txHash: result.txHash,
     });
 
     return {
-      jobId: String(job.id),
+      jobId: job.publicId,
       chainId: job.chainId,
       state: finalState,
       txHash: result.txHash,
@@ -470,6 +477,16 @@ export async function hire(
 
   const price = BigInt(worker.pricePerTask);
   const maxPrice = BigInt(body.maxPrice);
+
+  // The escrow refuses any job below its minimum (v2): said here, before a
+  // transaction is paid for only to revert.
+  const minJobAmount = BigInt(chain.params.minJobAmount ?? 0n);
+  if (price < minJobAmount) {
+    throw new AgentxError(
+      ErrorCode.AGENT_NOT_HIREABLE,
+      `agent ${workerAgentId} charges ${chain.formatToken(price)}, below the escrow minimum of ${chain.formatToken(minJobAmount)}`,
+    );
+  }
   if (price > maxPrice) {
     throw new AgentxError(
       ErrorCode.PRICE_ABOVE_MAX,
@@ -541,7 +558,8 @@ export async function hire(
         idempotencyKey: hireKey,
       })
       .returning();
-    const hashed = await sha3(`${canonicalize(body.spec)}:${inserted!.id}`);
+    // The PUBLIC id — the one in the receipt — so the client can recompute it.
+    const hashed = await sha3(`${canonicalize(body.spec)}:${inserted!.publicId}`);
     const [row] = await db.update(jobs).set({specHash: hashed}).where(eq(jobs.id, inserted!.id)).returning();
     return row!;
   }
@@ -557,6 +575,7 @@ export async function hire(
     job: {id: job.id, chainJobId: null},
     spend: amount,
     idempotencyKey,
+    traceId: ctx.traceId,
     payload: {
       // ERC-8004 ids, never the database's.
       clientChainAgentId: clientRow.chainAgentId,
@@ -586,7 +605,7 @@ export async function hire(
   }
 
   await recordEvent(db, bus, job.id, chainId, 'job.created', {
-    jobId: String(job.id),
+    jobId: job.publicId,
     txHash: result.txHash,
   });
 
@@ -610,13 +629,13 @@ async function createdTxHash(db: Db, jobId: number): Promise<string | null> {
 
 /** What a hire answers with — the same for the first request and every retry of it. */
 function receipt(
-  job: {id: number; chainJobId: string | null; path: string; amount: string; specHash: string},
+  job: {publicId: string; chainJobId: string | null; path: string; amount: string; specHash: string},
   chain: ChainConfig,
   txHash: string,
 ) {
   const amount = BigInt(job.amount);
   return {
-    jobId: String(job.id),
+    jobId: job.publicId,
     chainJobId: job.chainJobId ?? null,
     chainId: chain.chainId,
     network: chain.name,
@@ -640,6 +659,13 @@ async function recordEvent(
 ): Promise<void> {
   await db.insert(jobEvents).values({chainId, jobId, kind, payload}).onConflictDoNothing();
   bus.publish(jobId, {event: kind, data: payload});
+}
+
+const PUBLIC_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Is this a public id (a uuid)? Anything else names nothing. */
+export function isPublicId(id: string): boolean {
+  return PUBLIC_ID.test(id);
 }
 
 async function sha3(input: string): Promise<string> {

@@ -104,7 +104,7 @@ describe('agent registration', () => {
     );
     const stored = (rows as unknown as {key_hash: string}[])[0]!.key_hash;
     expect(stored).not.toContain(apiKey);
-    expect(stored.startsWith('scrypt$')).toBe(true);
+    expect(stored.startsWith('sha256$')).toBe(true);
   });
 
   it('rejects a capability that is not kebab-case', async () => {
@@ -206,6 +206,41 @@ describe('hiring', () => {
   /** Paying up front is a bet on the worker; it is only offered on a record. */
   const proven = (agentId: number, score = 80) =>
     db.execute(sql`UPDATE agent_stats SET score = ${score}, completed = 30 WHERE agent_id = ${agentId}`);
+
+  /**
+   * Reads are public by design — a job is shareable evidence — so its id is
+   * the only thing between a job and a stranger. v1 used the serial id, and
+   * `GET /v1/jobs/1`, `/2`, `/3` walked every job in the system.
+   */
+  it('names a job by an unguessable public id, and a serial id names nothing', async () => {
+    const {client, worker} = await twoAgents();
+    const {jobId} = (await hire(client.apiKey, worker.agentId)).json();
+    expect(jobId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+
+    expect((await app.inject({url: `/v1/jobs/${jobId}`})).statusCode).toBe(200);
+
+    for (const guess of ['1', '2', 'NaN', '../1']) {
+      const res = await app.inject({url: `/v1/jobs/${guess}`});
+      expect(res.statusCode, guess).toBe(404);
+      expect(res.json().code).toBe('NOT_FOUND');
+    }
+    expect((await app.inject({url: '/v1/runs/1'})).statusCode).toBe(404);
+  });
+
+  /**
+   * v2's escrow refuses any job below `minJobAmount`, so a worker priced below
+   * it cannot be hired at all. Said here, before a transaction is paid for
+   * and reverts.
+   */
+  it('refuses to hire a worker priced below the escrow minimum, before submitting', async () => {
+    const client = await register();
+    const worker = await register({name: 'Cheap', walletAddress: '0x' + '44'.repeat(20), pricePerTask: '5000'});
+    const res = await hire(client.apiKey, worker.agentId);
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe('AGENT_NOT_HIREABLE');
+    expect(res.json().detail).toMatch(/below the escrow minimum/);
+    expect(submitted).toHaveLength(0);
+  });
 
   it('takes the fast path below the threshold and says so', async () => {
     const {client, worker} = await twoAgents();

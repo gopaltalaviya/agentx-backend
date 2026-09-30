@@ -1,41 +1,49 @@
-import {randomBytes, scryptSync, timingSafeEqual} from 'node:crypto';
+import {createHash, randomBytes, timingSafeEqual} from 'node:crypto';
 import {eq, and, isNull} from 'drizzle-orm';
 import type {FastifyRequest} from 'fastify';
 import {type Db, apiKeys, agents} from '@agentx/db';
 import {AgentxError, ErrorCode} from '@agentx/shared';
 
 /**
- * API keys, one per agent.
+ * API keys, one per agent: `ax_<keyId>_<secret>`.
  *
- * The key is shown once at creation and never stored — only a salted scrypt
- * hash is. A database dump therefore does not yield working credentials.
+ * `keyId` is 16 hex characters, public, and indexed — a request finds its one
+ * row by it. `secret` is 24 random bytes. Only `sha256$<hex>` of the whole key
+ * is stored, so a database dump yields no working credential.
  *
- * scrypt from node:crypto rather than argon2id: argon2 is the better choice on
- * paper, but it needs a native build, and a native build that fails on
- * Railway the night before a deadline is a worse outcome than a slightly
- * weaker KDF on testnet keys. Recorded as a known trade-off.
+ * v1 stored a salted scrypt hash and no id, so authenticating meant loading
+ * EVERY key and running a synchronous scrypt against each, on the event loop,
+ * for every request: 20 requests with garbage keys against 25 stored keys
+ * blocked the API for 12.9 s (apps/api/test/auth.test.ts). A key is 192 random
+ * bits, not a password — there is nothing for a slow hash to protect, and on a
+ * hot path it is a denial-of-service lever. This is how GitHub and Stripe
+ * store API tokens. Keys issued in the v1 format are refused with a message
+ * saying to re-issue them.
  */
+const KEY_PATTERN = /^ax_([0-9a-f]{16})_([A-Za-z0-9_-]{32})$/;
 
-const SCRYPT = {N: 16_384, r: 8, p: 1, keylen: 32};
-
-export function generateApiKey(): string {
-  return `ax_${randomBytes(24).toString('base64url')}`;
+export function generateApiKey(): {key: string; keyId: string} {
+  const keyId = randomBytes(8).toString('hex');
+  return {key: `ax_${keyId}_${randomBytes(24).toString('base64url')}`, keyId};
 }
 
 export function hashApiKey(key: string): string {
-  const salt = randomBytes(16);
-  const hash = scryptSync(key, salt, SCRYPT.keylen, SCRYPT);
-  return `scrypt$${salt.toString('hex')}$${hash.toString('hex')}`;
+  return `sha256$${createHash('sha256').update(key).digest('hex')}`;
 }
 
 export function verifyApiKey(key: string, stored: string): boolean {
-  const [scheme, saltHex, hashHex] = stored.split('$');
-  if (scheme !== 'scrypt' || !saltHex || !hashHex) return false;
-  const expected = Buffer.from(hashHex, 'hex');
-  const actual = scryptSync(key, Buffer.from(saltHex, 'hex'), expected.length, SCRYPT);
-  // Constant time: a length-varying or short-circuiting compare leaks the
-  // hash one byte at a time to anyone willing to measure.
+  const [scheme, hex] = stored.split('$');
+  if (scheme !== 'sha256' || !hex) return false;
+  const expected = Buffer.from(hex, 'hex');
+  const actual = createHash('sha256').update(key).digest();
+  // Constant time: a short-circuiting compare leaks the hash to anyone
+  // willing to measure.
   return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+/** The key id of a well-formed key, or null. */
+export function keyIdOf(key: string): string | null {
+  return KEY_PATTERN.exec(key)?.[1] ?? null;
 }
 
 export interface Caller {
@@ -59,15 +67,22 @@ export async function authenticate(db: Db, request: FastifyRequest): Promise<Cal
   }
   const presented = header.slice('Bearer '.length).trim();
 
-  // Candidate set is small (keys are per-agent); scanning avoids storing a
-  // reversible lookup index alongside the hash.
-  const rows = await db
-    .select({id: apiKeys.id, agentId: apiKeys.agentId, keyHash: apiKeys.keyHash, scopes: apiKeys.scopes})
-    .from(apiKeys)
-    .where(isNull(apiKeys.revokedAt));
+  const keyId = keyIdOf(presented);
+  if (!keyId) {
+    throw new AgentxError(
+      ErrorCode.UNAUTHORIZED,
+      'not an AGENTX API key (expected ax_<id>_<secret>); keys issued before 2026-09-30 must be re-issued',
+    );
+  }
 
-  const match = rows.find((r) => verifyApiKey(presented, r.keyHash));
-  if (!match) throw new AgentxError(ErrorCode.UNAUTHORIZED, 'unknown or revoked API key');
+  // One indexed lookup, one hash. The id is public; the hash is what proves
+  // the caller holds the secret.
+  const match = await db.query.apiKeys.findFirst({
+    where: and(eq(apiKeys.keyId, keyId), isNull(apiKeys.revokedAt)),
+  });
+  if (!match || !verifyApiKey(presented, match.keyHash)) {
+    throw new AgentxError(ErrorCode.UNAUTHORIZED, 'unknown or revoked API key');
+  }
 
   const agent = await db.query.agents.findFirst({where: eq(agents.id, match.agentId)});
   if (!agent) throw new AgentxError(ErrorCode.AGENT_NOT_HIREABLE, 'the key belongs to a deleted agent');

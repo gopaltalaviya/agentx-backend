@@ -29,6 +29,20 @@
       "when": 1790743471799,
       "tag": "0003_fine_scarlet_spider",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790751863972,
+      "tag": "0004_sweet_tusk",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790752021898,
+      "tag": "0005_numerous_falcon",
+      "breakpoints": true
     }
   ]
 }

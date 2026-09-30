@@ -117,7 +117,7 @@ async function settle(clientKey: string, req: PaymentRequirements, key = 'x402-p
 /** Make the fake chain report exactly the DirectPaid the escrow would emit for this job. */
 async function chainConfirms(jobId: string, over: {workerChainId?: bigint; specHash?: string; amount?: bigint} = {}) {
   const [row] = (await db.execute(
-    sql`SELECT j.spec_hash, j.amount, a.chain_agent_id FROM jobs j JOIN agents a ON a.id = j.worker_agent_id WHERE j.id = ${Number(jobId)}`,
+    sql`SELECT j.spec_hash, j.amount, a.chain_agent_id FROM jobs j JOIN agents a ON a.id = j.worker_agent_id WHERE j.public_id = ${jobId}`,
   )) as unknown as {spec_hash: string; amount: string; chain_agent_id: string}[];
   reading = {
     status: 'success',
@@ -155,7 +155,7 @@ describe('POST /v1/x402/settle — the client pays', () => {
     const header = decodePaymentHeader(body.paymentHeader);
     expect(header.payload).toEqual({jobId: body.jobId, txHash: body.transaction});
 
-    const [job] = (await db.execute(sql`SELECT path, state, spec FROM jobs WHERE id = ${Number(body.jobId)}`)) as unknown as {
+    const [job] = (await db.execute(sql`SELECT path, state, spec FROM jobs WHERE public_id = ${body.jobId}`)) as unknown as {
       path: string;
       state: string;
       spec: {input: {x402: {resource: string}}};
@@ -336,7 +336,7 @@ describe('POST /v1/x402/redeem — the worker checks, once', () => {
   it('refuses a payment that does not exist', async () => {
     const {worker, req, header} = await paid();
     const ghost = decodePaymentHeader(header);
-    ghost.payload.jobId = '424242';
+    ghost.payload.jobId = '00000000-0000-4000-8000-000000000000';
     expect((await redeem(worker.apiKey, req, encodePaymentHeader(ghost))).json().invalidReason).toBe('unknown_payment');
   });
 
