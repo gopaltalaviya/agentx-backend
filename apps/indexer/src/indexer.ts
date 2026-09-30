@@ -63,6 +63,8 @@ export interface IndexerDeps {
   chain: ChainConfig;
   abis: Record<string, Abi>;
   logger?: {info: (o: unknown, m?: string) => void; warn: (o: unknown, m?: string) => void};
+  /** The chain client. Injected in tests; by default one for `chain.rpcUrl`. */
+  client?: PublicClient;
 }
 
 type JobState = 'created' | 'accepted' | 'submitted' | 'disputed' | 'settled' | 'refunded';
@@ -98,8 +100,12 @@ export class Indexer {
   private readonly reorgDepth: bigint;
   private readonly maxRange: bigint;
 
+  /** The last head read and the last block indexed to — see `progress()`. */
+  private lastHead: bigint | null = null;
+  private lastIndexed: bigint | null = null;
+
   constructor(private readonly deps: IndexerDeps) {
-    this.client = createPublicClient({transport: http(deps.chain.rpcUrl)});
+    this.client = deps.client ?? createPublicClient({transport: http(deps.chain.rpcUrl)});
     this.log = deps.logger ?? {info: () => {}, warn: () => {}};
     this.reorgDepth = BigInt(deps.chain.confirmations);
     // Public RPCs cap eth_getLogs. Monad's rejects anything over 100 blocks,
@@ -108,10 +114,26 @@ export class Indexer {
     this.maxRange = BigInt(deps.chain.maxLogRange);
   }
 
+  /**
+   * How far the last tick got: the chain head it read and the block it has
+   * indexed up to. Their difference is the lag an operator alerts on — a
+   * tick can succeed every time while falling further behind a backlog.
+   */
+  progress(): {headBlock: bigint | null; indexedBlock: bigint | null} {
+    return {headBlock: this.lastHead, indexedBlock: this.lastIndexed};
+  }
+
   /** Process one batch. Returns the block it advanced to. */
   async tick(): Promise<bigint> {
+    const to = await this.step();
+    this.lastIndexed = to;
+    return to;
+  }
+
+  private async step(): Promise<bigint> {
     const {chain} = this.deps;
     const head = await this.client.getBlockNumber();
+    this.lastHead = head;
     const safeHead = head > this.reorgDepth ? head - this.reorgDepth : 0n;
 
     const cursor = await this.readCursor();

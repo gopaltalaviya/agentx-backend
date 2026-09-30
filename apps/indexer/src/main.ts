@@ -4,6 +4,7 @@ import {z} from 'zod';
 import {loadConfig, loadAbis} from '@agentx/config';
 import {closeDb, createDb} from '@agentx/db';
 import {
+  buildInfo,
   createMetrics,
   env,
   installShutdown,
@@ -48,7 +49,15 @@ const ticks = metrics.counter('indexer_ticks_total', 'Indexer ticks, by chain an
 const lastOk = metrics.gauge('indexer_last_success_seconds', 'Unix time of the last successful tick', [
   'chain',
 ]);
+const headBlock = metrics.gauge('indexer_head_block', 'The chain head the last tick read', ['chain']);
+const indexedBlock = metrics.gauge('indexer_indexed_block', 'The block the indexer has indexed up to', [
+  'chain',
+]);
+const lagBlocks = metrics.gauge('indexer_lag_blocks', 'Blocks between the chain head and the indexed block', [
+  'chain',
+]);
 const lastSuccess = new Map<number, number>();
+const build = buildInfo({service: 'indexer', packageJsonUrl: new URL('../package.json', import.meta.url)});
 
 const health = cfg.INDEXER_HEALTH_PORT ? Fastify({...serviceOptions(), logger: false}) : null;
 
@@ -70,6 +79,11 @@ const workersDone = Promise.all(
     return runIndexerLoop(
       async () => {
         await indexer.tick();
+        const {headBlock: head, indexedBlock: indexed} = indexer.progress();
+        const label = String(chain.chainId);
+        if (head !== null) headBlock.labels(label).set(Number(head));
+        if (indexed !== null) indexedBlock.labels(label).set(Number(indexed));
+        if (head !== null && indexed !== null) lagBlocks.labels(label).set(Number(head - indexed));
         const now = Date.now();
         lastSuccess.set(chain.chainId, now);
         lastOk.labels(String(chain.chainId)).set(Math.floor(now / 1000));
@@ -103,6 +117,7 @@ if (health) {
   // Ready = the database answers AND every chain indexed successfully within
   // the backoff ceiling. Behind that, the indexer is failing, not waiting.
   registerHealth(health, {
+    info: () => ({build}),
     checks: {
       database: () => db.execute(sql`SELECT 1`),
       ...Object.fromEntries(

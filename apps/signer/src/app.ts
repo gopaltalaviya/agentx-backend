@@ -1,7 +1,7 @@
 import Fastify, {type FastifyInstance} from 'fastify';
 import {z, ZodError} from 'zod';
 import {AgentxError, ErrorCode} from '@agentx/shared';
-import {registerHealth, registerMetrics, serviceOptions, type Metrics} from '@agentx/service';
+import {registerHealth, registerMetrics, serviceOptions, type BuildInfo, type Metrics} from '@agentx/service';
 import {authorised} from './auth.js';
 import type {SignerService, SignRequest} from './signer.js';
 
@@ -30,6 +30,8 @@ export interface SignerAppDeps {
   service: Pick<SignerService, 'sign'>;
   chainId: number;
   keysKind: string;
+  /** What is running — reported on `/health`. */
+  build?: BuildInfo;
   token?: string;
   checks: Record<string, () => Promise<unknown>>;
   metrics?: Metrics;
@@ -53,7 +55,10 @@ export function buildSignerApp(deps: SignerAppDeps): FastifyInstance {
     ['replayed'],
   );
 
-  registerHealth(app, {checks: deps.checks, info: () => ({chainId: deps.chainId, keys: deps.keysKind})});
+  registerHealth(app, {
+    checks: deps.checks,
+    info: () => ({chainId: deps.chainId, keys: deps.keysKind, build: deps.build ?? null}),
+  });
   if (deps.metrics) registerMetrics(app, deps.metrics, deps.metricsToken ? {token: deps.metricsToken} : {});
 
   app.setErrorHandler((error: unknown, request, reply) => {

@@ -4,7 +4,7 @@ import {sql} from 'drizzle-orm';
 import {z} from 'zod';
 import {loadConfig, loadAbis} from '@agentx/config';
 import {closeDb, closeLockPool, createDb, createLockPool} from '@agentx/db';
-import {createMetrics, env, installShutdown, loadEnv, serviceLogger} from '@agentx/service';
+import {buildInfo, createMetrics, env, installShutdown, loadEnv, serviceLogger} from '@agentx/service';
 import {buildSignerApp} from './app.js';
 import {EnvKeystoreSource, RawKeySource, type KeySource} from './keystore.js';
 import {SignerService} from './signer.js';
@@ -60,6 +60,7 @@ const app = buildSignerApp({
   service,
   chainId: chain.chainId,
   keysKind: keys.kind,
+  build: buildInfo({service: 'signer', packageJsonUrl: new URL('../package.json', import.meta.url)}),
   ...(cfg.SIGNER_TOKEN ? {token: cfg.SIGNER_TOKEN} : {}),
   ...(cfg.METRICS_TOKEN ? {metricsToken: cfg.METRICS_TOKEN} : {}),
   trustProxy: cfg.TRUST_PROXY,
