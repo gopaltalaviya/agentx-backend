@@ -403,7 +403,14 @@ try {
   await sql`DELETE FROM indexer_cursor`;
 
   const base = `http://127.0.0.1:${API_PORT}`;
-  const register = async (name, capability, price, chainAgentId, walletAddress) => {
+  const register = async (
+    name,
+    capability,
+    price,
+    chainAgentId,
+    walletAddress,
+    ownerAddress = DEPLOYER.address,
+  ) => {
     const res = await fetch(`${base}/v1/agents`, {
       method: 'POST',
       headers: {'content-type': 'application/json'},
@@ -412,7 +419,7 @@ try {
         capabilities: [capability],
         pricePerTask: price,
         walletAddress,
-        ownerAddress: DEPLOYER.address,
+        ownerAddress,
         chainId: CHAIN_ID,
         // Verified by the API against the identity registry before it is
         // stored — the same path the /register page takes.
@@ -434,7 +441,16 @@ try {
   const workerAgents = [];
   for (const [i, w] of WORKERS.entries()) {
     workerAgents.push(
-      await register(titleCase(w.capability), w.capability, w.price, workerIds[i], workerWallets[i]),
+      await register(
+        titleCase(w.capability),
+        w.capability,
+        w.price,
+        workerIds[i],
+        workerWallets[i],
+        // The API checks this against the identity's on-chain owner, and
+        // each worker now owns its own identity.
+        workerAccounts[i].address,
+      ),
     );
   }
   ok(`registered ${WORKERS.length} workers and the orchestrator through the API`);

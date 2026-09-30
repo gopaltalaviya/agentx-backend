@@ -157,7 +157,7 @@ try {
   await sql`DELETE FROM indexer_cursor`;
 
   const base = `http://127.0.0.1:${API_PORT}`;
-  const register = async (name, price, chainAgentId, walletAddress) => {
+  const register = async (name, price, chainAgentId, walletAddress, ownerAddress = DEPLOYER.address) => {
     const res = await fetch(`${base}/v1/agents`, {
       method: 'POST',
       headers: {'content-type': 'application/json'},
@@ -166,7 +166,7 @@ try {
         capabilities: ['market-research'],
         pricePerTask: price,
         walletAddress,
-        ownerAddress: DEPLOYER.address,
+        ownerAddress,
         chainId: CHAIN_ID,
         // Verified by the API against the identity registry before it is
         // stored — the same path the /register page takes.
@@ -179,7 +179,7 @@ try {
   };
 
   const clientAgent = await register('ClientBot', '20000', clientChainId, DEPLOYER.address);
-  const workerAgent = await register('ResearchBot', '20000', workerChainId, WORKER_WALLET);
+  const workerAgent = await register('ResearchBot', '20000', workerChainId, WORKER_WALLET, WORKER.address);
   ok(`registered two agents through the API (ids ${clientAgent.agentId}, ${workerAgent.agentId})`);
 
   // ── 4. discovery ──────────────────────────────────────────────────────
