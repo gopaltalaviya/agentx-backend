@@ -362,3 +362,20 @@ export const runEvents = pgTable(
   },
   (t) => [index('run_events_run_idx').on(t.runId, t.id)],
 );
+
+/**
+ * x402 payment receipts a worker has already honoured.
+ *
+ * An x402 payment is a fast-path job: `directPay`, settled on chain the
+ * moment it lands. The receipt the client presents is that job, so the one
+ * thing the chain cannot stop is the same receipt being shown twice — paid
+ * once, served forever. The primary key makes redemption a single atomic
+ * insert: the first presentation wins, every later one conflicts.
+ */
+export const x402Redemptions = pgTable('x402_redemptions', {
+  jobId: bigint('job_id', {mode: 'number'})
+    .primaryKey()
+    .references(() => jobs.id, {onDelete: 'cascade'}),
+  resource: text('resource').notNull(),
+  redeemedAt: timestamp('redeemed_at', {withTimezone: true}).notNull().defaultNow(),
+});

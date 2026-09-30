@@ -1,6 +1,7 @@
 import type {z} from 'zod';
 import {AgentxClient} from '@agentx/sdk';
 import {buildBrain} from './factory.js';
+import {serveX402} from './x402.js';
 import {Worker, type WorkerEvent} from './worker.js';
 
 /**
@@ -60,6 +61,33 @@ export async function runWorker<T>(config: RunWorkerConfig<T>): Promise<void> {
     `${config.capability} ready` +
       (network ? ` — ${network.name}${network.testnet ? ' (testnet)' : ' (REAL FUNDS)'}` : ''),
   );
+
+  // Optional: a paid HTTP endpoint beside the job loop. Off unless asked for,
+  // because it is a listening port, and a worker that only polls has none.
+  const x402Port = env['X402_PORT'];
+  if (x402Port) {
+    const agentId = Number(env['AGENTX_AGENT_ID']);
+    if (!Number.isInteger(agentId) || agentId <= 0) {
+      throw new Error(`${config.capability}: X402_PORT needs AGENTX_AGENT_ID — the id the facilitator pays`);
+    }
+    const [agent, net] = await Promise.all([client.getAgent(agentId), client.network()]);
+    if (!net.paymentToken.address) throw new Error(`${config.capability}: this network has no payment token`);
+    const server = await serveX402({
+      worker,
+      client,
+      port: Number(x402Port),
+      host: env['X402_HOST'] ?? '127.0.0.1',
+      publicUrl: env['X402_PUBLIC_URL'] ?? `http://127.0.0.1:${x402Port}`,
+      agentId,
+      price: agent.pricePerTask,
+      payTo: agent.walletAddress,
+      asset: net.paymentToken.address,
+      network: `eip155:${net.chainId}`,
+      log: (e) => log(`x402 ${e.kind} ${JSON.stringify(e)}`),
+    });
+    log(`${config.capability} x402 endpoint at ${server.url} — ${agent.priceDisplay} a request`);
+    controller.signal.addEventListener('abort', () => void server.close());
+  }
 
   await worker.run({
     intervalMs: Number(env['WORKER_POLL_MS'] ?? 1_000),

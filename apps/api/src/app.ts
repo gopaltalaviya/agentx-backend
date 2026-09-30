@@ -9,8 +9,9 @@ import {registerAgentRoutes} from './routes/agents.js';
 import {registerJobRoutes, type JobRouteDeps} from './routes/jobs.js';
 import {registerMetaRoutes} from './routes/meta.js';
 import {registerRunRoutes} from './routes/runs.js';
+import {registerX402Routes} from './routes/x402.js';
 import {RunService, type RunExecutor} from './runs.js';
-import type {BudgetReader, IdentityReader} from './chain-reads.js';
+import type {BudgetReader, IdentityReader, PaymentReader} from './chain-reads.js';
 
 export interface AppDeps {
   db: Db;
@@ -22,6 +23,8 @@ export interface AppDeps {
   readBudget?: BudgetReader;
   /** Omitted, a registration that names an on-chain id is refused: it cannot be verified. */
   readIdentity?: IdentityReader;
+  /** Omitted, the x402 facilitator can settle but never confirms a payment. */
+  readPayment?: PaymentReader;
   /** Omitted, the API serves everything except starting a run. */
   runExecutor?: RunExecutor;
   /** Browser origins allowed to call the API. Omitted, any origin may. */
@@ -57,7 +60,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     origin: deps.corsOrigins && deps.corsOrigins.length > 0 ? deps.corsOrigins : '*',
     credentials: false,
     methods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['authorization', 'content-type', 'idempotency-key', 'last-event-id'],
+    allowedHeaders: ['authorization', 'content-type', 'idempotency-key', 'last-event-id', 'x-payment'],
     exposedHeaders: ['x-trace-id', 'retry-after'],
   });
 
@@ -108,6 +111,14 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     chains: deps.chains,
     defaultChainId: deps.defaultChainId,
     ...(deps.readBudget ? {readBudget: deps.readBudget} : {}),
+  });
+
+  await registerX402Routes(app, {
+    db: deps.db,
+    chains: deps.chains,
+    bus,
+    submit: deps.submit,
+    ...(deps.readPayment ? {readPayment: deps.readPayment} : {}),
   });
 
   await registerRunRoutes(app, {

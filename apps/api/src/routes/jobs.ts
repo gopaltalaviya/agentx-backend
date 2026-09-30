@@ -67,161 +67,9 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
     const hireKey: string = idempotencyKey;
 
     const body = HireRequest.parse(request.body);
-    const workerAgentId = Number(body.workerAgentId);
-
-    if (workerAgentId === caller.agentId) {
-      throw new AgentxError(ErrorCode.INVALID_STATE, 'an agent cannot hire itself');
-    }
-
-    const worker = await db.query.agents.findFirst({
-      where: and(eq(agents.id, workerAgentId), eq(agents.chainId, chainId)),
-    });
-    if (!worker) {
-      throw new AgentxError(ErrorCode.AGENT_NOT_HIREABLE, `no agent ${workerAgentId} on chain ${chainId}`);
-    }
-
-    const clientRow = await db.query.agents.findFirst({where: eq(agents.id, caller.agentId)});
-
-    // The contract addresses agents by their ERC-8004 id; the database uses
-    // its own serial. Sending one where the other is expected targets a
-    // different agent entirely — the transaction still succeeds, and pays
-    // the wrong wallet. Refuse until both sides are known.
-    if (!clientRow?.chainAgentId || !worker.chainAgentId) {
-      throw new AgentxError(
-        ErrorCode.AGENT_NOT_HIREABLE,
-        'an agent is not yet registered on-chain (no ERC-8004 id) — retry once the indexer has seen it',
-        2,
-      );
-    }
-    if (!worker.active) {
-      throw new AgentxError(ErrorCode.AGENT_NOT_HIREABLE, `agent ${workerAgentId} is not accepting work`);
-    }
-
-    const price = BigInt(worker.pricePerTask);
-    const maxPrice = BigInt(body.maxPrice);
-    if (price > maxPrice) {
-      throw new AgentxError(
-        ErrorCode.PRICE_ABOVE_MAX,
-        `agent charges ${chain.formatToken(price)}, above your maxPrice of ${chain.formatToken(maxPrice)}`,
-      );
-    }
-
-    // Fast path vs escrow, decided here and always reported back, so a caller
-    // is never uncertain whether its money is protected.
-    //
-    // The fast path pays before any work is done and has no recourse, so it
-    // is a bet on the worker as much as a saving on gas: cheap is not enough,
-    // the worker must also have the record `fastPathMinScore` asks for. That
-    // parameter was configured and documented and read by nothing, so every
-    // cheap hire of an agent with no history paid up front. An explicit
-    // `path: 'direct'` is still the client's own call to make.
-    const fastPathMax = chain.params.fastPathMax as bigint;
-    const fastPathMinScore = Number(chain.params.fastPathMinScore ?? 0);
-    const workerStats = await db.query.agentStats.findFirst({where: eq(agentStats.agentId, worker.id)});
-    const earnedFastPath = (workerStats?.score ?? 0) >= fastPathMinScore;
-    const path =
-      body.path === 'auto' ? (price <= fastPathMax && earnedFastPath ? 'direct' : 'escrow') : body.path;
-
-    // Insert first so the job has an id, then commit to a hash that includes
-    // it.
-    //
-    // The hash of a spec alone is NOT unique: two jobs asking the same
-    // question produce the same hash, and the indexer — which links a job to
-    // its on-chain event by this hash — would match an unrelated earlier
-    // payment. Scoping the commitment to the job makes it identify THIS job,
-    // which is what it was always meant to do. A client can still verify it:
-    // keccak256(canonicalJson + ':' + jobId), both of which are in the receipt.
-    //
-    // A retried hire — same client, same Idempotency-Key — is the SAME job.
-    // It used to insert a new row every time: the signer rightly returned the
-    // original transaction, so nothing was paid twice, but the retry answered
-    // with a job id no transaction backed, and the worker was offered work
-    // that had been paid for once.
-    const prior = await findHire(db, caller.agentId, idempotencyKey);
-    if (prior) {
-      if (prior.workerAgentId !== workerAgentId || canonicalize(prior.spec) !== canonicalize(body.spec)) {
-        throw new AgentxError(
-          ErrorCode.IDEMPOTENCY_CONFLICT,
-          `Idempotency-Key ${idempotencyKey} was already used for job ${prior.id}, a different hire`,
-        );
-      }
-      const txHash = await createdTxHash(db, prior.id);
-      // Finished before: answer exactly as then. If it never got as far as a
-      // transaction — the signer refused, or the wallet was out of gas — fall
-      // through and submit again for the SAME row; the signer retries a
-      // failed broadcast under the same key.
-      if (txHash) return reply.status(201).send(receipt(prior, chain, txHash));
-    }
-
-    const job = prior ?? (await insertHire());
-
-    async function insertHire() {
-      const [inserted] = await db
-        .insert(jobs)
-        .values({
-          chainId,
-          clientAgentId: caller.agentId,
-          workerAgentId,
-          path,
-          amount: price.toString(),
-          spec: body.spec,
-          specHash: '',
-          traceId: request.id,
-          idempotencyKey: hireKey,
-        })
-        .returning();
-      const hashed = await sha3(`${canonicalize(body.spec)}:${inserted!.id}`);
-      const [row] = await db.update(jobs).set({specHash: hashed}).where(eq(jobs.id, inserted!.id)).returning();
-      return row!;
-    }
-
-    const specHash = job.specHash;
-    const jobPath = job.path;
-    const amount = BigInt(job.amount);
-
-    const result = await submit({
-      agentId: caller.agentId,
-      chainId,
-      kind: jobPath === 'direct' ? 'directPay' : 'createJob',
-      job: {id: job.id, chainJobId: null},
-      spend: amount,
-      idempotencyKey,
-      payload: {
-        // ERC-8004 ids, never the database's.
-        clientChainAgentId: clientRow.chainAgentId,
-        workerChainAgentId: worker.chainAgentId,
-        amount: amount.toString(),
-        specHash,
-      },
-    });
-
-    // What the row says and what the response says must be the same thing.
-    //
-    // A direct-pay job is paid, settled and terminal on chain the moment it
-    // is created — `directPay` transfers, records the feedback and returns.
-    // The response said `settled` while the row stayed `created`, so the API
-    // reported one state and enforced another: every subsequent check read
-    // `created` and refused, including the worker's own delivery.
-    const settledNow = jobPath === 'direct';
-    const creationPatch: Record<string, unknown> = {
-      ...(result.chainJobId ? {chainJobId: result.chainJobId} : {}),
-      ...(settledNow ? {state: 'settled', settledAt: new Date()} : {}),
-    };
-    // An escrow hire whose chain id the indexer has not linked yet leaves
-    // nothing to write here, and drizzle rejects an empty `set` with "No
-    // values to set" — a 500 on the ordinary path.
-    if (Object.keys(creationPatch).length > 0) {
-      await db.update(jobs).set(creationPatch).where(eq(jobs.id, job.id));
-    }
-
-    await recordEvent(db, bus, job.id, chainId, 'job.created', {
-      jobId: String(job.id),
-      txHash: result.txHash,
-    });
-
-    return reply.status(201).send(
-      receipt({...job, chainJobId: result.chainJobId ?? job.chainJobId}, chain, result.txHash),
-    );
+    return reply
+      .status(201)
+      .send(await hire({db, bus, submit}, {caller, chainId, chain, idempotencyKey: hireKey, traceId: request.id}, body));
   });
 
   /**
@@ -575,6 +423,176 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
  * constraint keeps the two from colliding.
  */
 /** A hire the client already made under this key, if any. */
+/**
+ * Hire an agent: the part of `POST /v1/jobs` after the caller is known.
+ *
+ * Exported because an x402 payment IS a hire — a fast-path one, bound to a
+ * URL — and a second copy of this logic would be a second place for the
+ * rules about idempotency, ERC-8004 ids and the fast path to drift apart.
+ */
+export async function hire(
+  deps: Pick<JobRouteDeps, 'db' | 'bus' | 'submit'>,
+  ctx: {caller: Caller; chainId: number; chain: ChainConfig; idempotencyKey: string; traceId: string},
+  body: z.infer<typeof HireRequest>,
+): Promise<ReturnType<typeof receipt>> {
+  const {db, bus, submit} = deps;
+  const {caller, chainId, chain, idempotencyKey} = ctx;
+  const hireKey = idempotencyKey;
+  const workerAgentId = Number(body.workerAgentId);
+
+  if (workerAgentId === caller.agentId) {
+    throw new AgentxError(ErrorCode.INVALID_STATE, 'an agent cannot hire itself');
+  }
+
+  const worker = await db.query.agents.findFirst({
+    where: and(eq(agents.id, workerAgentId), eq(agents.chainId, chainId)),
+  });
+  if (!worker) {
+    throw new AgentxError(ErrorCode.AGENT_NOT_HIREABLE, `no agent ${workerAgentId} on chain ${chainId}`);
+  }
+
+  const clientRow = await db.query.agents.findFirst({where: eq(agents.id, caller.agentId)});
+
+  // The contract addresses agents by their ERC-8004 id; the database uses
+  // its own serial. Sending one where the other is expected targets a
+  // different agent entirely — the transaction still succeeds, and pays
+  // the wrong wallet. Refuse until both sides are known.
+  if (!clientRow?.chainAgentId || !worker.chainAgentId) {
+    throw new AgentxError(
+      ErrorCode.AGENT_NOT_HIREABLE,
+      'an agent is not yet registered on-chain (no ERC-8004 id) — retry once the indexer has seen it',
+      2,
+    );
+  }
+  if (!worker.active) {
+    throw new AgentxError(ErrorCode.AGENT_NOT_HIREABLE, `agent ${workerAgentId} is not accepting work`);
+  }
+
+  const price = BigInt(worker.pricePerTask);
+  const maxPrice = BigInt(body.maxPrice);
+  if (price > maxPrice) {
+    throw new AgentxError(
+      ErrorCode.PRICE_ABOVE_MAX,
+      `agent charges ${chain.formatToken(price)}, above your maxPrice of ${chain.formatToken(maxPrice)}`,
+    );
+  }
+
+  // Fast path vs escrow, decided here and always reported back, so a caller
+  // is never uncertain whether its money is protected.
+  //
+  // The fast path pays before any work is done and has no recourse, so it
+  // is a bet on the worker as much as a saving on gas: cheap is not enough,
+  // the worker must also have the record `fastPathMinScore` asks for. That
+  // parameter was configured and documented and read by nothing, so every
+  // cheap hire of an agent with no history paid up front. An explicit
+  // `path: 'direct'` is still the client's own call to make.
+  const fastPathMax = chain.params.fastPathMax as bigint;
+  const fastPathMinScore = Number(chain.params.fastPathMinScore ?? 0);
+  const workerStats = await db.query.agentStats.findFirst({where: eq(agentStats.agentId, worker.id)});
+  const earnedFastPath = (workerStats?.score ?? 0) >= fastPathMinScore;
+  const path =
+    body.path === 'auto' ? (price <= fastPathMax && earnedFastPath ? 'direct' : 'escrow') : body.path;
+
+  // Insert first so the job has an id, then commit to a hash that includes
+  // it.
+  //
+  // The hash of a spec alone is NOT unique: two jobs asking the same
+  // question produce the same hash, and the indexer — which links a job to
+  // its on-chain event by this hash — would match an unrelated earlier
+  // payment. Scoping the commitment to the job makes it identify THIS job,
+  // which is what it was always meant to do. A client can still verify it:
+  // keccak256(canonicalJson + ':' + jobId), both of which are in the receipt.
+  //
+  // A retried hire — same client, same Idempotency-Key — is the SAME job.
+  // It used to insert a new row every time: the signer rightly returned the
+  // original transaction, so nothing was paid twice, but the retry answered
+  // with a job id no transaction backed, and the worker was offered work
+  // that had been paid for once.
+  const prior = await findHire(db, caller.agentId, idempotencyKey);
+  if (prior) {
+    if (prior.workerAgentId !== workerAgentId || canonicalize(prior.spec) !== canonicalize(body.spec)) {
+      throw new AgentxError(
+        ErrorCode.IDEMPOTENCY_CONFLICT,
+        `Idempotency-Key ${idempotencyKey} was already used for job ${prior.id}, a different hire`,
+      );
+    }
+    const txHash = await createdTxHash(db, prior.id);
+    // Finished before: answer exactly as then. If it never got as far as a
+    // transaction — the signer refused, or the wallet was out of gas — fall
+    // through and submit again for the SAME row; the signer retries a
+    // failed broadcast under the same key.
+    if (txHash) return receipt(prior, chain, txHash);
+  }
+
+  const job = prior ?? (await insertHire());
+
+  async function insertHire() {
+    const [inserted] = await db
+      .insert(jobs)
+      .values({
+        chainId,
+        clientAgentId: caller.agentId,
+        workerAgentId,
+        path,
+        amount: price.toString(),
+        spec: body.spec,
+        specHash: '',
+        traceId: ctx.traceId,
+        idempotencyKey: hireKey,
+      })
+      .returning();
+    const hashed = await sha3(`${canonicalize(body.spec)}:${inserted!.id}`);
+    const [row] = await db.update(jobs).set({specHash: hashed}).where(eq(jobs.id, inserted!.id)).returning();
+    return row!;
+  }
+
+  const specHash = job.specHash;
+  const jobPath = job.path;
+  const amount = BigInt(job.amount);
+
+  const result = await submit({
+    agentId: caller.agentId,
+    chainId,
+    kind: jobPath === 'direct' ? 'directPay' : 'createJob',
+    job: {id: job.id, chainJobId: null},
+    spend: amount,
+    idempotencyKey,
+    payload: {
+      // ERC-8004 ids, never the database's.
+      clientChainAgentId: clientRow.chainAgentId,
+      workerChainAgentId: worker.chainAgentId,
+      amount: amount.toString(),
+      specHash,
+    },
+  });
+
+  // What the row says and what the response says must be the same thing.
+  //
+  // A direct-pay job is paid, settled and terminal on chain the moment it
+  // is created — `directPay` transfers, records the feedback and returns.
+  // The response said `settled` while the row stayed `created`, so the API
+  // reported one state and enforced another: every subsequent check read
+  // `created` and refused, including the worker's own delivery.
+  const settledNow = jobPath === 'direct';
+  const creationPatch: Record<string, unknown> = {
+    ...(result.chainJobId ? {chainJobId: result.chainJobId} : {}),
+    ...(settledNow ? {state: 'settled', settledAt: new Date()} : {}),
+  };
+  // An escrow hire whose chain id the indexer has not linked yet leaves
+  // nothing to write here, and drizzle rejects an empty `set` with "No
+  // values to set" — a 500 on the ordinary path.
+  if (Object.keys(creationPatch).length > 0) {
+    await db.update(jobs).set(creationPatch).where(eq(jobs.id, job.id));
+  }
+
+  await recordEvent(db, bus, job.id, chainId, 'job.created', {
+    jobId: String(job.id),
+    txHash: result.txHash,
+  });
+
+  return receipt({...job, chainJobId: result.chainJobId ?? job.chainJobId}, chain, result.txHash);
+}
+
 async function findHire(db: Db, clientAgentId: number, idempotencyKey: string) {
   return db.query.jobs.findFirst({
     where: and(eq(jobs.clientAgentId, clientAgentId), eq(jobs.idempotencyKey, idempotencyKey)),

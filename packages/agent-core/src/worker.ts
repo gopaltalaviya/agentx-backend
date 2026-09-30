@@ -1,5 +1,5 @@
 import {z} from 'zod';
-import {AgentxError, ErrorCode, type JobSpec} from '@agentx/shared';
+import {AgentxError, ErrorCode, isX402Spec, type JobSpec} from '@agentx/shared';
 import type {AgentxClient, JobSummary} from '@agentx/sdk';
 import type {Brain} from './brain.js';
 import {BrainInvalidOutput} from './brain.js';
@@ -139,6 +139,10 @@ export class Worker<T> {
 
     for (const offer of offers) {
       if (offer.spec.capability !== this.opts.capability) continue;
+      // An x402 payment is delivered over HTTP, to the request that paid for
+      // it, by `serveX402`. Producing it here as well would do the work twice
+      // and race the HTTP handler to submit.
+      if (isX402Spec(offer.spec)) continue;
       if (offer.hasResult) continue;
       if (offer.state === 'refunded' || offer.state === 'disputed') continue;
       if (this.declined.has(offer.jobId)) continue;
@@ -342,6 +346,15 @@ export class Worker<T> {
       // reputation is lost — but it says which of the two happened.
       throw new TriageUnavailable(message(err));
     }
+  }
+
+  /**
+   * Do the work for an input that did not arrive as a job offer — an x402
+   * request, paid for before it reached here. No triage: the payment is the
+   * decision. The result is still produced to this worker's schema.
+   */
+  async answer(input: Record<string, unknown>): Promise<{output: T; provider: string}> {
+    return this.produce({capability: this.opts.capability, input, deadlineSeconds: 120});
   }
 
   /** Do the work, to schema. */

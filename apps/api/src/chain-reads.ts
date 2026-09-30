@@ -1,4 +1,4 @@
-import {createPublicClient, http, type Abi, type Hex, type PublicClient} from 'viem';
+import {createPublicClient, http, parseEventLogs, type Abi, type Hex, type PublicClient} from 'viem';
 import {loadAbis, type AgentxConfig} from '@agentx/config';
 
 /**
@@ -153,5 +153,78 @@ export function makeIdentityReader(config: AgentxConfig): IdentityReader {
     } catch {
       return null;
     }
+  };
+}
+
+/** A `DirectPaid` event, as a transaction's receipt carries it. */
+export interface DirectPaidLog {
+  clientAgentId: bigint;
+  workerAgentId: bigint;
+  amount: bigint;
+  specHash: string;
+}
+
+export type PaymentReading =
+  | {status: 'pending'}
+  | {status: 'reverted'}
+  | {status: 'success'; directPaid: DirectPaidLog[]};
+
+export type PaymentReader = (args: {chainId: number; txHash: Hex}) => Promise<PaymentReading>;
+
+const DIRECT_PAID_ABI = [
+  {
+    type: 'event',
+    name: 'DirectPaid',
+    inputs: [
+      {name: 'jobId', type: 'uint256', indexed: true},
+      {name: 'clientAgentId', type: 'uint256', indexed: true},
+      {name: 'workerAgentId', type: 'uint256', indexed: true},
+      {name: 'amount', type: 'uint128', indexed: false},
+      {name: 'fee', type: 'uint128', indexed: false},
+      {name: 'specHash', type: 'bytes32', indexed: false},
+    ],
+  },
+] as const satisfies Abi;
+
+/**
+ * Real reader: what a payment's transaction actually did.
+ *
+ * An x402 receipt names a transaction, and a transaction hash proves only
+ * that something was broadcast. What the worker is owed an answer to is
+ * whether THE ESCROW paid THIS worker, for THIS job — so only `DirectPaid`
+ * events emitted by the chain's own `TaskEscrow` are returned. The same
+ * event from any other contract is a forgery with the right shape.
+ *
+ * No receipt yet is `pending`, not an error: Monad finalises in about a
+ * second, and a worker asked a moment too early should say "retry", not
+ * "unpaid". An unreachable RPC throws, because "could not check" must never
+ * read as either answer.
+ */
+export function makePaymentReader(config: AgentxConfig): PaymentReader {
+  return async ({chainId, txHash}) => {
+    const chain = config.chain(chainId);
+    const escrow = (chain.contracts['TaskEscrow'] as string | undefined)?.toLowerCase();
+    const pub = createPublicClient({transport: http(chain.rpcUrl)});
+
+    let receipt;
+    try {
+      receipt = await pub.getTransactionReceipt({hash: txHash});
+    } catch (err) {
+      if (err instanceof Error && err.name === 'TransactionReceiptNotFoundError') return {status: 'pending'};
+      throw err;
+    }
+    if (receipt.status !== 'success') return {status: 'reverted'};
+
+    const directPaid = parseEventLogs({
+      abi: DIRECT_PAID_ABI,
+      logs: receipt.logs.filter((l) => l.address.toLowerCase() === escrow),
+      eventName: 'DirectPaid',
+    }).map((e) => ({
+      clientAgentId: e.args.clientAgentId,
+      workerAgentId: e.args.workerAgentId,
+      amount: e.args.amount,
+      specHash: e.args.specHash,
+    }));
+    return {status: 'success', directPaid};
   };
 }

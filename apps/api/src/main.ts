@@ -3,7 +3,7 @@ import {loadConfig} from '@agentx/config';
 import {createDb} from '@agentx/db';
 import {buildApp} from './app.js';
 import {makeSignerSubmit} from './submit.js';
-import {makeBudgetReader, makeIdentityReader} from './chain-reads.js';
+import {makeBudgetReader, makeIdentityReader, makePaymentReader} from './chain-reads.js';
 import {makeRunExecutor} from './run-executor.js';
 
 const logger = pino({level: process.env['LOG_LEVEL'] ?? 'info'});
@@ -26,6 +26,7 @@ const app = await buildApp({
   defaultChainId: config.defaultChainId,
   readBudget: makeBudgetReader(config),
   readIdentity: makeIdentityReader(config),
+  readPayment: makePaymentReader(config),
   corsOrigins: (process.env['CORS_ORIGINS'] ?? '').split(',').map((o) => o.trim()).filter(Boolean),
   ...(runExecutor ? {runExecutor} : {}),
   submit: makeSignerSubmit({

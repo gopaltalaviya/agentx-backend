@@ -1,7 +1,12 @@
 import {
   AgentxError,
   ErrorCode,
+  X402_SCHEME,
   type BaseUnits,
+  type PaymentRequired,
+  type PaymentRequirements,
+  type SettleResponse,
+  type VerifyResponse,
   type Capability,
   type JobSpec,
   type JobState,
@@ -295,6 +300,72 @@ export class AgentxClient {
     return this.request<ActionReceipt>('POST', `/v1/jobs/${jobId}/cancel`, {});
   }
 
+  // ── x402 ───────────────────────────────────────────────────────────────
+
+  /**
+   * Pay for an x402 resource, as the client.
+   *
+   * @param idempotencyKey The payment's identity. Reuse it to retry the SAME
+   *   payment; omitted, a fresh one is generated, which is a new payment.
+   */
+  x402Settle(requirements: PaymentRequirements, idempotencyKey?: string): Promise<SettleResponse> {
+    return this.request<SettleResponse>('POST', '/v1/x402/settle', {
+      idempotencyKey: idempotencyKey ?? freshKey(),
+      body: {paymentRequirements: requirements},
+    });
+  }
+
+  /** As the worker: is this `X-PAYMENT` good for this resource? No side effects. */
+  x402Verify(requirements: PaymentRequirements, paymentHeader: string): Promise<VerifyResponse> {
+    return this.request<VerifyResponse>('POST', '/v1/x402/verify', {
+      body: {paymentRequirements: requirements, paymentHeader},
+    });
+  }
+
+  /** As the worker: verify, and mark the payment used. Call this before serving. */
+  x402Redeem(requirements: PaymentRequirements, paymentHeader: string): Promise<VerifyResponse> {
+    return this.request<VerifyResponse>('POST', '/v1/x402/redeem', {
+      body: {paymentRequirements: requirements, paymentHeader},
+    });
+  }
+
+  /**
+   * Fetch a URL that may answer `402 Payment Required`, paying if it does.
+   *
+   * `maxAmount` is required, not defaulted: a client that pays whatever a
+   * server asks is a client whose budget is set by the server. A quote above
+   * it is refused before anything is paid.
+   */
+  async payX402(
+    url: string,
+    opts: {maxAmount: BaseUnits; method?: string; body?: unknown; idempotencyKey?: string},
+  ): Promise<{response: Response; settlement: SettleResponse | null}> {
+    const init = (extra: Record<string, string> = {}): RequestInit => ({
+      method: opts.method ?? (opts.body !== undefined ? 'POST' : 'GET'),
+      headers: {...(opts.body !== undefined ? {'content-type': 'application/json'} : {}), ...extra},
+      ...(opts.body !== undefined ? {body: JSON.stringify(opts.body)} : {}),
+    });
+
+    const first = await this.doFetch(url, init());
+    if (first.status !== 402) return {response: first, settlement: null};
+
+    const quote = (await first.json()) as PaymentRequired;
+    const accepted = quote.accepts?.find((a) => a.scheme === X402_SCHEME);
+    if (!accepted) {
+      throw new AgentxError(ErrorCode.SCHEMA_MISMATCH, `${url} accepts no ${X402_SCHEME} payment`);
+    }
+    if (BigInt(accepted.maxAmountRequired) > BigInt(opts.maxAmount)) {
+      throw new AgentxError(
+        ErrorCode.PRICE_ABOVE_MAX,
+        `${url} asks ${accepted.maxAmountRequired}, above your maxAmount of ${opts.maxAmount}`,
+      );
+    }
+
+    const settlement = await this.x402Settle(accepted, opts.idempotencyKey);
+    const response = await this.doFetch(url, init({'x-payment': settlement.paymentHeader}));
+    return {response, settlement};
+  }
+
   /**
    * Block until a job reaches a terminal state.
    *
@@ -471,6 +542,9 @@ export class AgentxClient {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** A new payment's identity. Random, because two payments for one URL are two payments. */
+const freshKey = () => `x402_${globalThis.crypto.randomUUID()}`;
 
 /** Exponential backoff with jitter, so retries do not synchronise. */
 const backoff = (attempt: number) => 2 ** attempt * 250 + Math.random() * 250;

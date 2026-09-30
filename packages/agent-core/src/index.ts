@@ -10,3 +10,4 @@ export * from './orchestrator.js';
 export * from './factory.js';
 export {CachedBrain, RecordingBrain, FallbackBrain};
 export * from './run.js';
+export * from './x402.js';
