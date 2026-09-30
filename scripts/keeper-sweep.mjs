@@ -63,7 +63,9 @@ if (ids.length > 0) {
   for (const id of ids) {
     const job = await readJob(id);
     const exit = dueExit(job, now);
-    const waitFor = [0n, job.acceptDeadline, job.workDeadline, job.reviewDeadline][job.state] ?? 0n;
+    const waitFor =
+      [0n, job.acceptDeadline, job.workDeadline, job.reviewDeadline, job.disputeDeadline ?? 0n][job.state] ??
+      0n;
     console.log(
       `  job ${id}: ${STATE[job.state]}` +
         (exit
@@ -81,7 +83,9 @@ let failures = result.failed.length;
 for (const s of result.sent) {
   const after = await readJob(BigInt(s.chainJobId));
   const state = STATE[after.state];
-  const expected = s.exit === 'autoApprove' ? 'SETTLED' : 'REFUNDED';
+  // An expired dispute settles in the worker's favour (outcome UNRESOLVED),
+  // so it ends SETTLED like an auto-approval; only the refunds end REFUNDED.
+  const expected = s.exit === 'autoApprove' || s.exit === 'expireDispute' ? 'SETTLED' : 'REFUNDED';
   if (state === expected) {
     console.log(`  ✓ job ${s.chainJobId}: ${s.exit} → ${state}  ${chain.explorerTx(s.txHash)}`);
   } else {
