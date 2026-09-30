@@ -3,7 +3,7 @@
 > **START HERE every session.** This file is the memory that survives a closed
 > terminal. Read it top to bottom before doing anything else.
 
-- Last updated: **2026-09-30** (Session 27 — 20%-lossy RPC chaos on v2: two retry defects found live and fixed; indexer re-verified)
+- Last updated: **2026-09-30** (Session 27 — chaos at 20%, M5-06 three timed clean runs, deploy-ready from one repo; three defects found live and fixed)
 - Days to deadline: **13** — verified: **2026-10-13, 11:59 PM ET**
 - Target track: **4 — Trust, Identity & AI Infrastructure** ($30,000)
 - Current state: **v2 live on Monad testnet, end to end, re-verified.** The
@@ -12,8 +12,8 @@
   chain, including a real dispute expired by the keeper after its 1 h
   timeout. Backend and interface have lint, formatting, coverage floors, CI,
   containers, metrics, graceful shutdown and a browser smoke test.
-- Overall: `██████████████████░░` 91% — **105 / 115 tasks**, **695 tests green**
-  (184 contracts · 471 backend · 40 interface) + 9 browser smoke tests
+- Overall: `██████████████████░░` 92% — **106 / 115 tasks**, **699 tests green**
+  (184 contracts · 475 backend · 40 interface) + 9 browser smoke tests
 
 ---
 
@@ -30,13 +30,13 @@
    stolen key, `SameOwner`, below-minimum — in ~232 s at the recorded pace, or
    **162 s** with `AGENT_REPLAY_MAX_MS=2000`. Screenshots:
    `agentx-interface/docs/screenshots/`.
-3. **Testnet MON — DEPLOYER is nearly empty.** Session 27's four chaos runs
-   left it at **0.018 MON**; a run costs ~0.5. Top it up (from FUNDER, 3.82,
-   or a faucet) before recording. AGENT_A 4.00, AGENT_B 3.95. In Session 26
-   6 MON each of AGENT_A → DEPLOYER and AGENT_B → FUNDER were moved, as you allowed.
-4. **Railway + Vercel.** When you deploy: `SIGNER_TOKEN` in BOTH the API and
-   the signer; `KEEPER_PRIVATE_KEY` (a gas-only key the signer never uses) in
-   the signer; `CORS_ORIGINS` = the Vercel URL in the API.
+3. **Testnet MON.** You topped DEPLOYER up; after M5-06 and the screenshot
+   run it holds **~23 MON** — about 45 demo runs. A run costs ~0.5.
+4. **Railway + Vercel** — follow [docs/13-deploy.md](docs/13-deploy.md): every
+   service, every variable, in order. The backend now builds from its own repo
+   (`chain/`), and the images were rehearsed locally. Afterwards:
+   `node scripts/check-deployment.mjs <api-url> <site-url>`. A hosted *run*
+   needs a model key on the API (your quota); browsing does not.
 5. **`EXPLORER_API_KEY`** in `agentx-contracts/.env` for verified source.
    Deployed source is untouched on purpose so verification still matches.
 6. **Gemini — tried, as asked; not used for the video.** The key works. The
@@ -130,11 +130,11 @@ cd ../agentx-contracts && forge build
 
 # 3. Prove it is all still green
 FOUNDRY_PROFILE=ci forge test              # expect 184 passed
-cd ../agentx-backend && npx tsc -b && npx vitest run   # expect 471 passed
+cd ../agentx-backend && npx tsc -b && npx vitest run   # expect 475 passed
 cd ../agentx-interface && npx tsc --noEmit && npx vitest run && NEXT_PUBLIC_API_URL=http://127.0.0.1:8080 npx next build   # expect 40 passed
 ```
 
-Expected totals as of 2026-09-30: **184 contracts + 471 backend + 40 interface = 695** (Session 27), plus 9 Playwright smoke tests.
+Expected totals as of 2026-09-30: **184 contracts + 475 backend + 40 interface = 699** (Session 27), plus 9 Playwright smoke tests.
 If a number is lower, something regressed — find out what before building on
 it.
 
@@ -467,7 +467,7 @@ Playwright smoke test of every page in CI.
 | | Item | Detail |
 |---|---|---|
 | ✅ | 3 GitHub repos, per-repo SSH identity, secret-scanning hooks | full-history scan for real secrets: clean (Sep 30) |
-| ⚠️ | Wallets | end of Session 27: DEPLOYER **0.018** (top up before the video), FUNDER 3.82, AGENT_A 4.00, AGENT_B 3.95 MON — a run costs ~0.5 |
+| ✅ | Wallets | end of Session 27: DEPLOYER ~23 (topped up by you), FUNDER 3.82, AGENT_A 4.00, AGENT_B 3.95 MON — a run costs ~0.5 |
 | ✅ | Docker Postgres 16 | `127.0.0.1:5442`, migrations `0000`…`0005` (`0004` = `api_keys.key_id`, `0005` = `public_id` on jobs and runs) |
 | ✅ | Local model | Ollama `llama3:latest` |
 | 👤 | Railway, Vercel, repos public, `EXPLORER_API_KEY` | see Next actions |
@@ -486,10 +486,10 @@ and metrics ports; every service validates its environment at boot.
 | Suite | Count | State |
 |---|---|---|
 | Contracts — unit, fuzz, invariant (3 suites), adversarial, v2 findings | **184** | ✅ 100% branch on StakeVault/AgentAccount/Factory, 96.5% TaskEscrow |
-| Backend — 29 files | **471** | ✅ lint, format, typecheck of tests, coverage floors 75/78/74/75 |
+| Backend — 29 files | **475** | ✅ lint, format, typecheck of tests, coverage floors 75/78/74/75 |
 | Interface — unit | **40** | ✅ plus lint, `next build`, audit |
 | Interface — Playwright smoke | **9** | ✅ every page, production build, mocked API |
-| **Total** | **695** + 9 | |
+| **Total** | **699** + 9 | |
 
 Every test that guards a Session 26 fix was run against the old code first
 and seen to fail.
@@ -506,6 +506,8 @@ and seen to fail.
 | ✅ | Chaos: worker silent after accepting | re-hired; chain job 23 refunded by the keeper at its deadline |
 | ✅ | Chaos: slow, lossy RPC (5%) | first run **failed — found a real worker defect** (fixed, `8c56c2c`); re-run 4/4 settled |
 | ✅ | Chaos: slow, lossy RPC (20%) | Session 27. First run **2/4 — the signer called an HTTP 503 `INVALID_STATE`**, so a worker gave up an accept and another finished work (fixed, `69f7dd2`); second run **3/4 — a late accept made the cancel fail and the orchestrator abandoned the delivery** (fixed, `b81ccd8`); third run 4/4. Then 20% + **30% on broadcasts** (25/78 failed): a submit hit a 503, was retried, 4/4 settled · 858 s |
+| ✅ | **M5-06: three consecutive timed runs** (the video command) | first attempt 2/3 — **found the indexer walking a job backwards** (fixed, `b80db6f`); then 3/3 clean, 25/25 checks each · **149 / 153 / 168 s** |
+| ✅ | Deploy rehearsal | production images built from `agentx-backend` alone; API migrates an empty DB pre-deploy; signer + API bound to `::`; `check-deployment.mjs` all green against a production interface build, and red on a wrong CORS origin |
 | ✅ | `verify-indexer.mjs` | Session 27, v2: directPay job 41 decoded, linked, projected; reputation from settlement; replay a no-op; reorg rewind clean |
 | ✅ | Param drift · secret scan (tracked + full history) | no drift · clean in all three repos |
 
@@ -517,6 +519,8 @@ encoded it.
 
 | Severity | Defect | Found by |
 |---|---|---|
+| 🟠 | The **indexer walked a job's state backwards** (it trails the head; the API writes ahead of it) — a delivered job read `accepted` and the approve was refused | M5-06 timed runs, normal RPC, Session 27 |
+| 🟠 | **A Railway build could not have built**: the Dockerfile read chain facts from a sibling checkout a hosted build does not have | deploy rehearsal, Session 27 |
 | 🟠 | An **HTTP 503 from the RPC was reported `INVALID_STATE`** (viem puts the status on the error, not in its words) — workers were told not to retry, and gave up an accept and a finished submit | 20%-lossy chaos run, Session 27 |
 | 🟠 | When a late accept made the cancel fail, the orchestrator **abandoned the worker's delivery** unjudged | the same chaos run, once the first fix let accepts retry |
 | 🔴 | The signer's per-agent **advisory lock could stay held forever** (taken and released on different pooled connections) — a deadlock of that agent | Session 26 audit, reproduced in a test |
@@ -661,7 +665,22 @@ run, `verify-indexer.mjs` and the balances. Docker Desktop had to be started.
   the traffic, and viem retries those itself), so it proved nothing about
   fix 1. `slow-rpc.mjs` gained `SLOW_RPC_FAIL_SEND` (`1caf1fb`); at 30% on
   broadcasts (25/78 failed) a submit hit a 503, retried, and 4/4 settled.
-- Cost: DEPLOYER is down to 0.018 MON — see Next actions.
+- Cost: the chaos runs took DEPLOYER to 0.018 MON; you topped it up.
+
+**Then, on "complete the full product first":**
+- **Deploy-ready from one repo** (`19cab28`). A Railway build clones one repo
+  and could not have built: the Dockerfile read chain facts from a sibling
+  checkout. They now live in `chain/` (13 JSON files, byte-exact, CI
+  `--check`s drift); `deploy/railway/*.json`; runbook `docs/13-deploy.md`;
+  `scripts/check-deployment.mjs`. Rehearsed on the production images — see
+  Testing. The contracts' DEPLOYMENT.md gained the sync step (`6f08cb9`).
+- **M5-06** — the first three timed runs went 2/3: the indexer projected an
+  older `JobAccepted` over the API's `submitted`, and approve was refused.
+  Projection is now forward-only, same-state writes still land the fee
+  (`b80db6f`; a first version dropped the fee and its test caught it). Then
+  3/3 clean: 149, 153, 168 s. `verify-indexer.mjs` re-run: passed.
+- **Screenshots** refreshed from a real v2 run through `POST /v1/runs`
+  (`55e55f3` in the interface).
 
 ### Session 26 — 2026-09-30 (industrial-standard hardening · contracts v2 · everything re-verified live)
 

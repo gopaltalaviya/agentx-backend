@@ -9,6 +9,13 @@ Notable changes. Dates are UTC. The full history, with evidence, is in
   an accept and a finished submit.
 - Orchestrator: when a late accept makes the cancel fail, wait for the
   delivery and settle it, instead of abandoning it; still never re-hire.
+- Indexer: job state only moves forward — a trailing indexer no longer
+  overwrites the API's newer state with an older event (a delivered job read
+  `accepted`, and approve was refused). Found by the M5-06 timed runs.
+- Deploy: images build from this repo alone (`chain/`, drift-checked in CI);
+  Railway configs in `deploy/railway/`; runbook `docs/13-deploy.md`;
+  `scripts/check-deployment.mjs` checks a hosted API and site.
+- M5-06: three consecutive clean timed demo runs — 149, 153, 168 s.
 - `slow-rpc.mjs`: `SLOW_RPC_FAIL_SEND`, a separate failure rate for
   broadcasts. Verified live at 20% + 30% on broadcasts: 4/4 settled.
 

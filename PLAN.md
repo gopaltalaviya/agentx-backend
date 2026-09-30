@@ -167,8 +167,8 @@ Spec: [docs/04 §4–5](docs/04-how-it-works.md#4-database-schema).
 | M2-19 | ✅ API: RFC 7807 errors, all codes from 04 §5.3 | 🤖 | B | M2-17 |
 | M2-20 | ✅ API: rate limits, idempotency middleware, trace IDs | 🤖 | B | M2-19 |
 | M2-21 | `scripts/e2e.sh` — full lifecycle via curl, asserted | 🤖 | B | M2-20 |
-| M2-22 | 👤 Railway: 5 services + Postgres + Redis, env vars set | 👤 | B | M2-21 |
-| M2-23 | 👤 Run `./scripts/e2e.sh` against Railway | 👤 | B | M2-22 |
+| M2-22 | 👤 Railway: api, signer, indexer (+ optional workers) + Postgres — configs in `deploy/railway/`, runbook [docs/13](docs/13-deploy.md) | 👤 | B | M2-21 |
+| M2-23 | 👤 Run `node scripts/check-deployment.mjs <api> <site>` against Railway + Vercel | 👤 | B | M2-22 |
 
 **Done when:** `./scripts/e2e.sh` passes unattended against the deployed
 backend and asserts on-chain balances, fee, score change, and 5 `job_events`
@@ -241,7 +241,7 @@ without narration.
 | M5-03 | Security pass against [04 §9](docs/04-how-it-works.md#9-security-model-and-threats), T1–T16 | 🤖 | M5-02 |
 | M5-04 | SSRF guard on `metadataURI` fetches | 🤖 | M5-03 |
 | M5-05 | Confirm: no keys in logs, rate limits live, idempotency enforced | 🤖 | M5-03 |
-| M5-06 | 👤 3 consecutive clean demo runs on testnet, timed | 👤 | M5-02 |
+| M5-06 | ✅ 3 consecutive clean demo runs on testnet, timed — 149 / 153 / 168 s, Sep 30 | 🤖 | M5-02 |
 | M5-07 | 👤 **Record backup video** | 👤 | M5-06 |
 
 **Done when:** three clean runs in a row and a backup video exists.

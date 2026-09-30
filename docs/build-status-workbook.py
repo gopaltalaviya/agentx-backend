@@ -189,7 +189,7 @@ tests = [
     ("agentx-backend", "sdk/client", 29, "Retries, idempotency keys, typed errors, NotAccepted"),
     ("agentx-backend", "agent-core/fallback", 25, "Provider chain, cached replay and its pacing cap, recorders, no key in a URL"),
     ("agentx-backend", "api/x402", 25, "Facilitator: settle, verify, redeem once, every forged receipt refused against the chain"),
-    ("agentx-backend", "indexer/replay", 25, "Replay safety, v2 events, unresolved disputes earn nothing, reorgs, RPC blips are not reorgs"),
+    ("agentx-backend", "indexer/replay", 29, "Replay safety, v2 events, unresolved disputes earn nothing, reorgs, RPC blips are not reorgs, state only moves forward"),
     ("agentx-backend", "agent-core/injection", 23, "Untrusted-content containment; the judge's rating scale"),
     ("agentx-backend", "api/chaos", 23, "Malformed result, daily cap, result shape, on-chain hash"),
     ("agentx-backend", "db/constraints", 21, "Every documented database guarantee, tried by writing the bad row"),
@@ -274,6 +274,8 @@ rows(
         ("High", "Jobs and runs were enumerable by serial id", "Session 26 audit", "Fixed: uuid public ids"),
         ("High", "A worker abandoned finished work when a submit failed transiently", "Slow-RPC chaos run on v2", "Fixed"),
         ("High", "Explorer links from the API went straight into href (a javascript: URL would run)", "Interface audit, Sep 30", "Fixed: allowlist"),
+        ("High", "The indexer walked a job state backwards; a delivered job read accepted and approve was refused", "M5-06 timed runs, Session 27", "Fixed: forward-only projection"),
+        ("High", "A Railway build could not have built: chain facts came from a sibling checkout", "Deploy rehearsal, Session 27", "Fixed: chain/ + drift check"),
         ("High", "An HTTP 503 from the RPC was reported INVALID_STATE, so workers gave up accepts and finished submits", "20%-lossy chaos run, Session 27", "Fixed"),
         ("High", "A late accept made the cancel fail and the orchestrator abandoned the delivery", "20%-lossy chaos run, Session 27", "Fixed"),
         ("Medium", "An unreachable signer was reported as INSUFFICIENT_FUNDS", "Session 26 audit", "Fixed"),
@@ -302,7 +304,7 @@ ws = sheet(
 rows(
     ws,
     [
-        ("Deploy", "Railway (api, signer, indexer) + Vercel", "User", "P1", "Set SIGNER_TOKEN in both API and signer, KEEPER_PRIVATE_KEY in the signer, CORS_ORIGINS in the API."),
+        ("Deploy", "Railway (api, signer, indexer) + Vercel", "User", "P1", "Follow docs/13-deploy.md; then node scripts/check-deployment.mjs <api> <site>."),
         ("Submit", "2-3 minute video", "User", "P1", "Record the cached replay (v2 Ollama recording of Sep 30; 162 s with AGENT_REPLAY_MAX_MS=2000) and the interface. Claude cannot record video."),
         ("Contracts", "Verify source on the explorer", "User", "P1", "Needs EXPLORER_API_KEY; the config defect is fixed."),
         ("Submit", "Make the three repos public", "User", "P0", "Required by Oct 13. Full-history scan for every real secret: clean (Sep 30)."),
