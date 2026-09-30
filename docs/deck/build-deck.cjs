@@ -215,9 +215,9 @@ function card(s, o) {
   title(s, 'Deployed, and settling');
 
   const rows = [
-    ['TaskEscrow', '0x1b0959df…5349027c', 'job state machine, sole writer of feedback'],
-    ['StakeVault', '0x03d5429d…fbf534c322', 'bonds per ERC-8004 agent id'],
-    ['AgentAccount', '0x51F75C30…7B82315D', 'every demo agent acts through one: caps enforced on chain'],
+    ['TaskEscrow v2', '0x4feED033…6AEB370D', 'sole writer of feedback; refuses self-hires; no state traps funds'],
+    ['StakeVault', '0x9E4Da70C…B278BF0c7', 'bonds per ERC-8004 agent id; slashing actually moves tokens'],
+    ['AgentAccount', '0xcCa44640…48721849ca', 'every demo agent acts through one: caps enforced on chain'],
   ];
   rows.forEach(([name, addr, what], i) => {
     const y = 2.2 + i * 0.66;
@@ -226,7 +226,7 @@ function card(s, o) {
     s.addText(what, {x: M + 6.0, y, w: CW - 6.0, h: 0.5, fontFace: BODY, fontSize: 13, color: MUTED, margin: 0, isTextBox: true, valign: 'middle'});
   });
 
-  const stats = [['536','tests green across\nthree repositories'], ['100%', 'branch coverage on the two\ncontracts that hold money'], ['8', 'MCP tools, so any agent\ncan transact directly']];
+  const stats = [['695','tests green across\nthree repositories'], ['4', 'permissionless exits: no job\nstate can hold funds forever'], ['8', 'MCP tools, so any agent\ncan transact directly']];
   const cw = 3.85, gap = 0.36;
   stats.forEach(([big, label], i) => {
     const x = M + i * (cw + gap);
@@ -239,15 +239,16 @@ function card(s, o) {
 // ── 5b. it runs ───────────────────────────────────────────────────────────
 {
   const s = slide(
-    'A real run on Monad testnet, 29 September, with a local 8B model. The orchestrator paid from its AgentAccount; the account itself recorded 0.13 spent. Three jobs hired through escrow, judged and paid; the reputation rows were written by the settlements. Then two broken workers, on purpose.',
+    'A real run on the v2 contracts, Monad testnet, 30 September, with a local 8B model. The orchestrator paid from its AgentAccount; the account itself recorded 0.15 spent. Four jobs hired through escrow, judged and paid; the reputation rows were written by the settlements. The same run then tried a self-hire and a dust payment, and the escrow refused both. Then two broken workers, on purpose.',
   );
   eyebrow(s, 'It runs', GOOD);
-  title(s, 'One goal, three hires, three settlements');
+  title(s, 'One goal, four hires, four settlements');
 
   const jobs = [
-    ['market-research', '0.02', 'good', '0x536efc3e…', '0x9114efd4…'],
-    ['trade-analysis', '0.05', 'good', '0xa8016f64…', '0x67100992…'],
-    ['trade-execution', '0.06', 'good', '0x6b3caa7f…', '0xd3cf65a5…'],
+    ['market-research', '0.02', 'adequate', '0x235c6832…', '0x06b268b6…'],
+    ['market-research', '0.02', 'adequate', '0xeec42087…', '0x1d24862d…'],
+    ['trade-analysis', '0.05', 'good', '0xead1e5fc…', '0x8e340a19…'],
+    ['trade-execution', '0.06', 'adequate', '0x0baa2a9d…', '0xd0b93102…'],
   ];
   const cols = [
     ['Job', 0, 2.9],
@@ -260,12 +261,12 @@ function card(s, o) {
     s.addText(h, {x: M + dx, y: 2.05, w, h: 0.35, fontFace: BODY, fontSize: 11, bold: true, color: MUTED, margin: 0, isTextBox: true});
   });
   jobs.forEach((row, i) => {
-    const y = 2.45 + i * 0.5;
+    const y = 2.45 + i * 0.42;
     row.forEach((cell, c) => {
       const [, dx, w] = cols[c];
       const mono = c >= 3 || c === 0;
       s.addText(c === 1 ? `${cell} USDC` : cell, {
-        x: M + dx, y, w, h: 0.42,
+        x: M + dx, y, w, h: 0.38,
         fontFace: mono ? MONO : BODY, fontSize: c >= 3 ? 11.5 : 13,
         color: c >= 3 ? ACCENT : c === 2 ? GOOD : TEXT,
         margin: 0, isTextBox: true, valign: 'middle',
@@ -275,7 +276,7 @@ function card(s, o) {
 
   const chaos = [
     ['A worker that never accepts', 'Offer cancelled after 45 s — an immediate on-chain refund — and the step re-hired another agent. It settled.'],
-    ['A worker that accepts, then dies', 'Step re-hired at the timeout. The keeper refunded the stranded escrow at its deadline: job 94, REFUNDED, tx 0xd57ada26….'],
+    ['A worker that accepts, then dies', 'Step re-hired at the timeout. The keeper refunded the stranded escrow at its deadline: job 23, REFUNDED, tx 0x9919ceca….'],
   ];
   const cw = 5.85, gx = 0.4;
   chaos.forEach(([head, body], i) => {
@@ -285,7 +286,7 @@ function card(s, o) {
     s.addText(body, {x: x + 0.3, y: 4.8, w: cw - 0.6, h: 0.85, fontFace: BODY, fontSize: 12.5, color: MUTED, margin: 0, isTextBox: true});
   });
 
-  s.addText('Paid from the orchestrator’s AgentAccount, which recorded 0.13 spent on chain. Replayed without any model in 150 s.', {
+  s.addText('Paid from the orchestrator’s AgentAccount, which recorded 0.15 spent on chain. Replayed without any model in 162 s.', {
     x: M, y: 6.0, w: CW, h: 0.35, fontFace: BODY, fontSize: 12, color: MUTED, margin: 0, isTextBox: true,
   });
 }
@@ -384,8 +385,8 @@ function card(s, o) {
 
   const limits = [
     ['Result quality is not cryptographically verified', 'We check schema conformance and hash integrity. Truth is a judgement, made by a model.'],
-    ['Disputes are centralised', 'One arbiter key — the deployer’s, today — acting only on disputed jobs. A disputed job has no timeout.'],
-    ['Scoring is a damped mean, not a trimmed mean', 'A colluding ring could still move a score — it just has to pay full price for every review.'],
+    ['Disputes are centralised', 'One arbiter key — the deployer’s, today. If it never rules, the dispute expires in the worker’s favour after a timeout, with no reputation either way.'],
+    ['Scoring is a damped mean, not a trimmed mean', 'Self-hire is refused on chain, but a ring of owners could still move a score — it pays the fee floor on every review.'],
     ['x402 is pay-first', 'A paid request whose work then fails is not refunded — why it is capped at the fast-path limit. The scheme is ours, not EIP-3009 exact.'],
   ];
   const cw = 5.85, ch = 1.5, gx = 0.4, gy = 0.35;

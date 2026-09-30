@@ -3,6 +3,15 @@
 Notable changes. Dates are UTC. The full history, with evidence, is in
 `PROGRESS.md` and the commit log.
 
+## 2026-09-30 — Session 27
+- Signer: an HTTP 5xx/429 from the RPC is a retryable outage, not
+  `INVALID_STATE` — found by the 20%-lossy chaos run, where workers gave up
+  an accept and a finished submit.
+- Orchestrator: when a late accept makes the cancel fail, wait for the
+  delivery and settle it, instead of abandoning it; still never re-hire.
+- `slow-rpc.mjs`: `SLOW_RPC_FAIL_SEND`, a separate failure rate for
+  broadcasts. Verified live at 20% + 30% on broadcasts: 4/4 settled.
+
 ## 2026-09-30 — v2 contracts and production hardening (Session 26)
 
 ### Contracts (agentx-contracts, redeployed to Monad testnet)
@@ -30,6 +39,21 @@ Notable changes. Dates are UTC. The full history, with evidence, is in
 - drizzle-orm 0.45.3 (GHSA-gpj5-g38j-94v9).
 - ESLint, Prettier, type-checked tests, coverage floors, Dockerfile and a
   full-stack compose, CI with CodeQL, gitleaks and audit.
+- Demo and e2e scripts: each worker owns its identity (so it can be hired
+  under `SameOwner`) and its AGENTX record names that owner; `keeper-sweep`
+  reports an expired dispute as the settlement it is.
+
+### Interface (agentx-interface)
+- Explorer links from the API pass an https + known-host allowlist (a
+  `javascript:` URL used to reach an `href`); CSP and security headers; a
+  production build without `NEXT_PUBLIC_API_URL` fails.
+- uuid run ids validated server-side (real 404s); money shown as money;
+  debounced, abortable marketplace filter; wallet inputs validated before
+  the wallet is asked; one-time key with copy and leave-warning.
+- Error, global-error and not-found boundaries; Open Graph metadata;
+  labels, landmarks, focus ring, live regions.
+- ESLint (jsx-a11y), Prettier, 40 unit tests, a Playwright smoke test of
+  every page against a mocked API, audit clean (postcss override).
 
 ## 2026-09-30 — Session 25
 - Worker `AgentAccount`s; the x402 facilitator and paid worker endpoints;

@@ -3,17 +3,17 @@
 > **START HERE every session.** This file is the memory that survives a closed
 > terminal. Read it top to bottom before doing anything else.
 
-- Last updated: **2026-09-30** (Session 25 — worker AgentAccounts; x402 built; ERC-8183 mapping; Gemini diagnosed; 7 live defects fixed)
+- Last updated: **2026-09-30** (Session 27 — 20%-lossy RPC chaos on v2: two retry defects found live and fixed; indexer re-verified)
 - Days to deadline: **13** — verified: **2026-10-13, 11:59 PM ET**
 - Target track: **4 — Trust, Identity & AI Infrastructure** ($30,000)
-- Current state: **live on Monad testnet, end to end; every agent in the
-  demo holds its caps on chain.** The orchestrator pays through an
-  `AgentAccount`; each worker acts through one that can only accept and
-  deliver, and a stolen worker key was refused three ways. x402 is built and
-  settled live (pay → serve → replay refused). All chaos items pass with the
-  new accounts; the cached replay runs in 150 s
-- Overall: `██████████████████░░` 91% — **105 / 115 tasks**, **536 tests green**
-  (128 contracts · 401 backend · 7 interface)
+- Current state: **v2 live on Monad testnet, end to end, re-verified.** The
+  escrow now refuses self-hires (`SameOwner`) and dust jobs, never traps a
+  payout, and a `DISPUTED` job can no longer hang forever — all proven on
+  chain, including a real dispute expired by the keeper after its 1 h
+  timeout. Backend and interface have lint, formatting, coverage floors, CI,
+  containers, metrics, graceful shutdown and a browser smoke test.
+- Overall: `██████████████████░░` 91% — **105 / 115 tasks**, **695 tests green**
+  (184 contracts · 471 backend · 40 interface) + 9 browser smoke tests
 
 ---
 
@@ -22,16 +22,18 @@
 ### 👤 You — everything left is yours, and none of it is code
 
 1. **Make the three repos public** — required by Oct 13. A full-history scan
-   of all three repos for every real secret in `.env` (four keys and the
-   Gemini key) found none (Sep 30).
-2. **Record the video.** Claude cannot record video. The cached replay runs the
-   full demo — worker accounts, x402 and the stolen-key checks included — in
-   **150 s** with no model; `.agent-cache/` holds the Sep 30 Ollama recording
-   (commands under Cold start). Screenshots: `agentx-interface/docs/screenshots/`.
-3. **Testnet MON for that run.** A demo run now costs ~0.5 MON (worker
-   accounts add ~18 setup transactions, and Monad charges the gas limit).
-   After Sep 30: DEPLOYER ~0.36, FUNDER ~3.05. `AGENT_A` / `AGENT_B` hold 10
-   each and were not touched — say if they may be used, or top up from a faucet.
+   of all three repos for every real secret in `.env` (five values) found
+   none (re-run Sep 30, Session 26).
+2. **Record the video.** Claude cannot record video. `.agent-cache/` holds a
+   fresh **v2** Ollama recording (Session 26; the v1 one no longer matches).
+   `DEMO_X402=1 AGENT_MODE=cached` replays everything — 4 settlements, x402,
+   stolen key, `SameOwner`, below-minimum — in ~232 s at the recorded pace, or
+   **162 s** with `AGENT_REPLAY_MAX_MS=2000`. Screenshots:
+   `agentx-interface/docs/screenshots/`.
+3. **Testnet MON — DEPLOYER is nearly empty.** Session 27's four chaos runs
+   left it at **0.018 MON**; a run costs ~0.5. Top it up (from FUNDER, 3.82,
+   or a faucet) before recording. AGENT_A 4.00, AGENT_B 3.95. In Session 26
+   6 MON each of AGENT_A → DEPLOYER and AGENT_B → FUNDER were moved, as you allowed.
 4. **Railway + Vercel.** When you deploy: `SIGNER_TOKEN` in BOTH the API and
    the signer; `KEEPER_PRIVATE_KEY` (a gas-only key the signer never uses) in
    the signer; `CORS_ORIGINS` = the Vercel URL in the API.
@@ -47,14 +49,14 @@
 
 ### 🤖 Claude — nothing left that is mine to do before the deadline
 
-Done in Session 25: worker `AgentAccount`s, the x402 facilitator (M3-14/15),
-the ERC-8183 mapping (doc 12), the `meta.test.ts` flake (diagnosed — not our
-code, see Environment gotchas). What remains is post-hackathon and needs a
-redeploy, so it waits:
+Done in Session 26: contracts v2 (the `DISPUTED` timeout among them) and the
+hardening of all three repos. Post-hackathon only:
 
 1. ERC-8183 conformance — a new kernel with AGENTX as evaluator + hook
    ([docs/12 §7](docs/12-erc8183-mapping.md#7-what-conformance-would-look-like)).
-2. A timeout for `DISPUTED` — the one state with no permissionless exit.
+2. Self-dealing through a *second* owner still works — v2 makes it cost a
+   fee floor per review, not impossible. Sybil resistance needs identity
+   attestations or stake-weighted scores.
 
 ## 🚧 Blockers
 
@@ -127,12 +129,12 @@ pnpm -r build
 cd ../agentx-contracts && forge build
 
 # 3. Prove it is all still green
-FOUNDRY_PROFILE=ci forge test              # expect 128 passed
-cd ../agentx-backend && npx tsc -b && npx vitest run   # expect 401 passed
-cd ../agentx-interface && npx tsc --noEmit && npx next build
+FOUNDRY_PROFILE=ci forge test              # expect 184 passed
+cd ../agentx-backend && npx tsc -b && npx vitest run   # expect 471 passed
+cd ../agentx-interface && npx tsc --noEmit && npx vitest run && NEXT_PUBLIC_API_URL=http://127.0.0.1:8080 npx next build   # expect 40 passed
 ```
 
-Expected totals as of 2026-09-30: **128 contracts + 401 backend + 7 interface = 536**.
+Expected totals as of 2026-09-30: **184 contracts + 471 backend + 40 interface = 695** (Session 27), plus 9 Playwright smoke tests.
 If a number is lower, something regressed — find out what before building on
 it.
 
@@ -211,6 +213,12 @@ for the demo in that case. The recording lives in `.agent-cache/`
 re-record before relying on `cached`. The test suites TRUNCATE the same
 database: never run them while a demo or a UI check is using it.
 
+**Since Session 26:** `pnpm db:migrate` needs `DATABASE_URL` set (no silent
+default); a production API needs `CORS_ORIGINS`; the interface's production
+build needs `NEXT_PUBLIC_API_URL`. `AGENT_REPLAY_MAX_MS=2000` shortens a
+cached replay without re-recording. The recording in `.agent-cache/` is the
+v2 one — any prompt or schema change still invalidates it.
+
 ### Environment gotchas — each of these cost real time
 
 | Trap | What to do |
@@ -244,7 +252,7 @@ database: never run them while a demo or a UI check is using it.
 ### In-flight work right now
 
 **None.** All three repos are clean and fully pushed as of 2026-09-30
-(Session 25). There is no half-finished edit, no stashed change, no branch to
+(Session 27). There is no half-finished edit, no stashed change, no branch to
 reconcile. A fresh session can start from the Next actions list at the top of
 this file.
 
@@ -365,15 +373,20 @@ CI-check it has not moved (M1-00d).
 
 **Ours, once M1-19 runs:**
 
-| Contract | Testnet 10143 ✅ LIVE | Mainnet 143 |
+| Contract | Testnet 10143 ✅ LIVE — **v2**, 2026-09-30 | Mainnet 143 |
 |---|---|---|
-| `TaskEscrow` | `0x1b0959dfd32323e5a4749d5444c2e6435349027c` | ⬜ not deployed |
-| `StakeVault` | `0x03d5429d352a98d1163a55ab97d733fbf534c322` | ⬜ |
-| `AgentAccountFactory` | `0x51F75C30563d260FafF7dAB42ACf9fA57B82315D` | ⬜ |
-| `MockIdentityRegistry` | `0x784b42fe1307c70e61df82288f9084614a0ce4c0` | canonical `0x8004A1…` |
-| `MockReputationRegistry` | `0x0ab928f0c62a8a357a5f18caa1c0847c3b1ba697` | canonical `0x8004BA…` |
-| Payment token (MockUSDC) | `0x1640c8ea1353c615783c09da4c51fcb457684a64` | ⬜ canonical USDC |
-| `startBlock` | 65027889 | — |
+| `TaskEscrow` | `0x4feED0338761817417Fd1dDdFC8331D16AEB370D` | ⬜ not deployed |
+| `StakeVault` | `0x9E4Da70C473cCA89cbA871A89B4c604B278BF0c7` | ⬜ |
+| `AgentAccountFactory` | `0xcCa4464071B71beE85D8390073492048721849ca` | ⬜ |
+| `MockIdentityRegistry` | `0xeD34Ffc39Ee69c780586b85d930368Bc29B30ef1` | canonical `0x8004A1…` |
+| `MockReputationRegistry` | `0xCdB4be378D4B276184923E7ad8C11007fd0247bd` | canonical `0x8004BA…` |
+| Payment token (MockUSDC) | `0x35Ca89EA58b292BF8D66eFEC2c086501a3802980` | ⬜ canonical USDC |
+| `startBlock` | 66905096 | — |
+
+> **v1 → v2 (Session 26).** Everything was redeployed, registries included,
+> so **reputation history split**: every v2 score starts from settlements on
+> the v2 escrow. v1 (`TaskEscrow 0x1b0959…027c`, start block 65027889) stays
+> on chain, unused.
 
 > `AgentAccountFactory` was **redeployed 2026-09-24** (was
 > `0x580f093c…`) to pick up `AgentAccount.MAX_SESSION_KEY_TTL`. It is
@@ -415,16 +428,15 @@ live · `👤` needs you. Rewritten on Sep 30; the Sep 25 version had gone stale
 
 ### 1. Development
 
-#### Contracts — `agentx-contracts` · ✅ complete, deployed, unchanged since Sep 29
+#### Contracts — `agentx-contracts` · ✅ v2, deployed Sep 30
 
 | Piece | State |
 |---|---|
-| `TaskEscrow` | ✅ job state machine, escrow + `directPay` fast path, three permissionless exits, sole writer of settlement-backed feedback · 100% branch coverage |
-| `StakeVault` | ✅ bonds per ERC-8004 `agentId`, withdrawal delay, slashing role-gated · 100% branch |
-| `AgentAccount` | ✅ on-chain per-task and daily caps, target + selector allowlists, session keys capped at 24h · 94% branch (the unreachable `approve` guard) |
-| `AgentAccountFactory` | ✅ ERC-1167 clones, CREATE2 |
-| `MockUSDC`, `MockERC8004` | ✅ testnet stand-ins |
-| Known gap | `DISPUTED` has no timeout — needs a redeploy, post-hackathon |
+| `TaskEscrow` | ✅ state machine, escrow + `directPay`, four permissionless exits (incl. `expireDispute`), `SameOwner` + `minJobAmount` + `minFee` floor, undeliverable payouts held in `owed` and claimable, per-job windows, two-step delayed admin · 96.5% branch |
+| `StakeVault` | ✅ bonds per `agentId`, withdrawal delay, `cancelWithdraw`, slashed tokens actually leave to `slashRecipient` · 100% branch |
+| `AgentAccount` | ✅ caps, per-(target, selector) allowlist that can never allow `approve`-style calls, `sweepNative`, two-step ownership, SafeCast · 100% branch |
+| `AgentAccountFactory` | ✅ only an owner can create their own account · 100% branch |
+| Tooling | ✅ solhint, Slither, `forge fmt`, gas snapshot, coverage floor, pinned Foundry in CI; LICENSE, SECURITY, DEPLOYMENT |
 
 #### Backend — `agentx-backend` · ✅ built, live-verified
 
@@ -436,51 +448,64 @@ live · `👤` needs you. Rewritten on Sep 30; the Sep 25 version had gone stale
 | `apps/mcp` | ✅ eight tools over stdio |
 | `@agentx/agent-core` | ✅ orchestrator (never hires itself; a model outage ends a step, not the run; says why a plan failed), workers, judge, **`serveX402`** |
 | `@agentx/sdk` | ✅ typed client incl. **`payX402`** |
-| `scripts/demo.mjs` | ✅ every agent on an `AgentAccount`, stolen-worker-key checks, owner sweep, `DEMO_X402=1`, survives a lossy RPC |
+| `scripts/demo.mjs` | ✅ every agent on an `AgentAccount`, each worker its own owner, stolen-worker-key + `SameOwner` + below-minimum checks, owner sweep, `DEMO_X402=1`, survives a lossy RPC |
+| `@agentx/service` | ✅ validated env, pino with redaction, request ids, `/health` + `/ready`, Prometheus `/metrics`, graceful shutdown — every service |
+| Engineering | ✅ ESLint (strict type-checked) + Prettier, typed tests, coverage floors, pre-commit hook, Dockerfile + full-stack compose, CI with audit, gitleaks, CodeQL, Dependabot |
 
-#### Interface — `agentx-interface` · ✅ built, rendered in a browser
+#### Interface — `agentx-interface` · ✅ built, hardened, smoke-tested
 
-`/`, `/agents`, `/agents/[id]`, `/register`, `/runs`, `/runs/[id]`. Rendered
-headless on Sep 29 and again on Sep 30 against worker-account data; the run
-trace now shows why a plan failed.
+`/`, `/agents`, `/agents/[id]`, `/register`, `/runs`, `/runs/[id]`. Session 26:
+CSP and security headers, explorer links behind an https allowlist, uuid ids
+validated server-side (real 404s), money shown as money, error boundaries,
+Open Graph metadata, accessibility pass, ESLint + jsx-a11y, 40 unit tests, a
+Playwright smoke test of every page in CI.
 
 ### 2. Setup
 
 | | Item | Detail |
 |---|---|---|
 | ✅ | 3 GitHub repos, per-repo SSH identity, secret-scanning hooks | full-history scan for real secrets: clean (Sep 30) |
-| ✅ | Wallets | DEPLOYER ~0.36 MON, FUNDER ~3.05 MON after Sep 30 — a run costs ~0.5 |
-| ✅ | Docker Postgres 16 | `127.0.0.1:5442`, migrations `0000`…`0003` (`0003` = `x402_redemptions`) |
+| ⚠️ | Wallets | end of Session 27: DEPLOYER **0.018** (top up before the video), FUNDER 3.82, AGENT_A 4.00, AGENT_B 3.95 MON — a run costs ~0.5 |
+| ✅ | Docker Postgres 16 | `127.0.0.1:5442`, migrations `0000`…`0005` (`0004` = `api_keys.key_id`, `0005` = `public_id` on jobs and runs) |
 | ✅ | Local model | Ollama `llama3:latest` |
 | 👤 | Railway, Vercel, repos public, `EXPLORER_API_KEY` | see Next actions |
 
 ### 3. Configuration
 
-Unchanged since Sep 29 and drift-checked on Sep 30
-(`node scripts/check-param-drift.mjs monad_testnet` → no drift). New knobs:
-`DEMO_X402`, `X402_PORT` + `AGENTX_AGENT_ID` (a worker's paid endpoint),
-`GEMINI_MODEL` (default now `gemini-3.8-flash`).
+v2 parameters: `minJobAmount` 10000 (0.01 USDC), `minFee` 100,
+`disputeTimeoutSeconds` 3600 on testnet (259200 on mainnet),
+`adminDelaySeconds`. Drift-checked after the v2 deploy and again at the end of
+Session 26 → no drift. New knobs: `AGENT_REPLAY_MAX_MS` (cached pacing),
+`CORS_ORIGINS` (required in production), `TRUST_PROXY`, per-service health
+and metrics ports; every service validates its environment at boot.
 
 ### 4. Testing
 
 | Suite | Count | State |
 |---|---|---|
-| Contracts — unit, fuzz, invariant, adversarial | **128** | ✅ |
-| Backend — 24 files | **401** | ✅ — 14 of 15 looped runs clean; the one failure was local port exhaustion |
-| Interface | **7** | ✅ plus `tsc` and `next build` |
-| **Total** | **536** | |
+| Contracts — unit, fuzz, invariant (3 suites), adversarial, v2 findings | **184** | ✅ 100% branch on StakeVault/AgentAccount/Factory, 96.5% TaskEscrow |
+| Backend — 29 files | **471** | ✅ lint, format, typecheck of tests, coverage floors 75/78/74/75 |
+| Interface — unit | **40** | ✅ plus lint, `next build`, audit |
+| Interface — Playwright smoke | **9** | ✅ every page, production build, mocked API |
+| **Total** | **695** + 9 | |
 
-**Live on Monad testnet, Sep 30**
+Every test that guards a Session 26 fix was run against the old code first
+and seen to fail.
+
+**Live on Monad testnet, v2, Sep 30 (Session 26)**
 
 | | Check | Result |
 |---|---|---|
-| ✅ | Demo, Ollama, recorded | 2/2 settled through worker accounts, x402 paid + served + replay refused, 3 stolen-key refusals, owner sweep · 268 s |
-| ✅ | Cached replay of it | all checks · **150 s** |
-| ✅ | `e2e.mjs` (plain-EOA path) | passed · 17 s |
-| ✅ | Chaos: worker never accepts | cancelled + refunded at once, re-hired, settled |
-| ✅ | Chaos: worker silent after accepting | abandoned, re-hired, escrow held for the keeper |
-| ✅ | Chaos: slow, lossy RPC | 500+ requests, 23 injected failures, ~1.2 s each · passed in 544 s |
-| ⚠️ | Demo, Gemini | good plans; 503 "high demand" twice — not used |
+| ✅ | Demo, Ollama, recorded, `DEMO_X402=1` | 4/4 settled through worker accounts · x402 paid + served + replay refused · stolen key refused 3/3 · **`SameOwner` and `AmountBelowMinimum` refused on chain** · owner sweep |
+| ✅ | Cached replay of it | all checks · 232 s at recorded pace · **162 s** with `AGENT_REPLAY_MAX_MS=2000` |
+| ✅ | **Dispute expiry** | chain job 1 disputed, 1 h timeout waited out, keeper `expireDispute` → SETTLED, outcome `UNRESOLVED`, worker paid 0.0495, no feedback written |
+| ✅ | `e2e.mjs` | passed · idempotent replay, fee 0.0002 withheld, reputation written |
+| ✅ | Chaos: worker never accepts | cancelled + refunded, re-hired, settled |
+| ✅ | Chaos: worker silent after accepting | re-hired; chain job 23 refunded by the keeper at its deadline |
+| ✅ | Chaos: slow, lossy RPC (5%) | first run **failed — found a real worker defect** (fixed, `8c56c2c`); re-run 4/4 settled |
+| ✅ | Chaos: slow, lossy RPC (20%) | Session 27. First run **2/4 — the signer called an HTTP 503 `INVALID_STATE`**, so a worker gave up an accept and another finished work (fixed, `69f7dd2`); second run **3/4 — a late accept made the cancel fail and the orchestrator abandoned the delivery** (fixed, `b81ccd8`); third run 4/4. Then 20% + **30% on broadcasts** (25/78 failed): a submit hit a 503, was retried, 4/4 settled · 858 s |
+| ✅ | `verify-indexer.mjs` | Session 27, v2: directPay job 41 decoded, linked, projected; reputation from settlement; replay a no-op; reorg rewind clean |
+| ✅ | Param drift · secret scan (tracked + full history) | no drift · clean in all three repos |
 
 ### 5. Defects found and fixed during hardening
 
@@ -490,6 +515,15 @@ encoded it.
 
 | Severity | Defect | Found by |
 |---|---|---|
+| 🟠 | An **HTTP 503 from the RPC was reported `INVALID_STATE`** (viem puts the status on the error, not in its words) — workers were told not to retry, and gave up an accept and a finished submit | 20%-lossy chaos run, Session 27 |
+| 🟠 | When a late accept made the cancel fail, the orchestrator **abandoned the worker's delivery** unjudged | the same chaos run, once the first fix let accepts retry |
+| 🔴 | The signer's per-agent **advisory lock could stay held forever** (taken and released on different pooled connections) — a deadlock of that agent | Session 26 audit, reproduced in a test |
+| 🔴 | **API auth ran scrypt against every key** on every request — 12.9 s per request at a few hundred keys, a DoS lever | Session 26 audit |
+| 🔴 | Reputation farming by self-hire; a payout to a bad wallet **trapped the job**; `DISPUTED` had no exit | contract audit → v2 |
+| 🟠 | **Jobs and runs were enumerable** by serial id | Session 26 audit |
+| 🟠 | A worker **abandoned finished work** when a submit failed transiently (silent failure, then a re-accept of its own job) | slow-RPC chaos run on v2 |
+| 🟠 | Explorer links from the API went straight into `href` (a `javascript:` URL would run) | interface audit |
+| 🟡 | An unreachable signer was reported as `INSUFFICIENT_FUNDS`; the indexer halted on one RPC 503 as if for a reorg; SSE sent no headers until the 25 s heartbeat | tests written for the audit |
 | 🔴 | Every escrow job would have been **disputed** — the API stored the delivery envelope as `result`, so good work failed the required-field check | auditing docs §5 against the routes |
 | 🔴 | An **indexer restart could manufacture reputation** — the bump was not idempotent, while replays are routine | chaos item 2 |
 | 🔴 | The on-chain commitment was the **spec** hash, not the result hash — T4's claim was false | the same docs audit |
@@ -603,6 +637,81 @@ Append-only. Never rewrite a decision — supersede it with a new row.
 ## 📓 Session log
 
 Newest first. One entry per working session, however short.
+
+### Session 27 — 2026-09-30 (the 20%-lossy chaos run · two retry defects · indexer re-verified)
+
+**Resumed** Session 26's wrap-up: PROGRESS had placeholders for the 20% chaos
+run, `verify-indexer.mjs` and the balances. Docker Desktop had to be started.
+
+- `verify-indexer.mjs` on v2: all checks passed (job 41).
+- **Chaos at 20% failed twice, each time on a real defect:**
+  1. The signer classified viem's `HttpRequestError` ("HTTP request failed.",
+     503 on `.status`) as `INVALID_STATE` — no `retryAfter` — so the worker
+     fixes of `8c56c2c` never engaged: one worker gave up an accept, another
+     its finished work at submit. Now 5xx/429 on the error chain is a
+     retryable outage (`69f7dd2`).
+  2. With accepts retrying, one landed after the 45 s accept window; the
+     cancel was refused (`InvalidState`) and the orchestrator reported the
+     step failed while the worker delivered seconds later. It now waits for
+     the delivery; a failed wait is still never re-hired (`b81ccd8`).
+  Each fix's test failed on the old code first. 471 backend tests.
+- Third run 4/4 — but not one broadcast had failed in it (reads are most of
+  the traffic, and viem retries those itself), so it proved nothing about
+  fix 1. `slow-rpc.mjs` gained `SLOW_RPC_FAIL_SEND` (`1caf1fb`); at 30% on
+  broadcasts (25/78 failed) a submit hit a 503, retried, and 4/4 settled.
+- Cost: DEPLOYER is down to 0.018 MON — see Next actions.
+
+### Session 26 — 2026-09-30 (industrial-standard hardening · contracts v2 · everything re-verified live)
+
+**Instruction:** plan mode, then "fix all with industrial standards". Your
+calls: redeploy v2; reads stay public with unguessable ids; AGENT_A/B testnet
+MON may fund the work.
+
+**Contracts v2** (`65ef651`, `63363f0`, `ed16677`, `13fff8e`) — tests first;
+14 new tests failed on v1. `SameOwner`, `minJobAmount`, fee floor; payouts
+that cannot be delivered are held in `owed` and claimable; `expireDispute`
+(outcome `UNRESOLVED`, no feedback, so "dispute and wait out the arbiter"
+earns nothing); windows captured per job; `AccessControlDefaultAdminRules`;
+StakeVault slashes to a recipient and gains `cancelWithdraw`; AgentAccount
+per-(target, selector) allowlist with forbidden approve-style selectors,
+`sweepNative`, two-step ownership; the factory only lets an owner create
+theirs. 184 tests, three invariant suites, solhint + Slither + coverage floor
+in CI. Redeployed to 10143 (start block 66905096).
+
+**Backend** (`66c34a6` … `8c56c2c`):
+- Fixed, each with a test that failed first: the signer lock that could stay
+  held forever; O(keys) scrypt auth (now `ax_<keyId>_<secret>`, SHA-256, one
+  indexed lookup, IP rate limit before auth); enumerable job/run ids (uuid
+  `public_id`); the signer timeout reported as `INSUFFICIENT_FUNDS`; SSE
+  headers held for 25 s; the indexer halting on an RPC 503; drizzle 0.45
+  turning 23505 into 500.
+- v2 adaptations: keeper sends `expireDispute`; indexer records
+  `DisputeExpired` / `PaymentDeferred` and gives an unresolved dispute no
+  reputation; `minJobAmount` checked before submitting.
+- Standards: `@agentx/service` (env validation, logging with redaction,
+  request ids, `/ready`, `/metrics`, graceful shutdown) in every service;
+  helmet; ESLint + Prettier; typed tests; coverage floors; Dockerfile and a
+  full-stack compose (verified: migrations, healthy, non-root, SIGTERM in
+  745 ms); CI with audit, gitleaks, CodeQL, Dependabot.
+
+**Interface** (`58bcae2`, `9234c4c`, `2a8911a`, and the screenshot commit) —
+see Complete status. The smoke test found that a root `loading.tsx` made
+every `notFound()` a 200.
+
+**Live on v2 — three more defects found by running it:**
+1. The demo registered each worker's AGENTX record with DEPLOYER as owner;
+   the API (correctly) refused it once workers owned their identities
+   (`6dea755`).
+2. `keeper-sweep` called a correct dispute expiry a failure (`0d2ac6b`).
+3. Under a lossy RPC a failed submit was silent, and the worker then tried to
+   accept its own job again and abandoned it (`8c56c2c`).
+
+**Timing.** The v2 cached replay takes 232–265 s: 58 s of setup
+transactions, then ~45 s per hire cycle, ~24 s of it replayed model latency,
+and the new recording plans four steps, not three. `AGENT_REPLAY_MAX_MS`
+(`279cb60`) brings it to 162 s without re-recording.
+
+**MON:** 6 each moved AGENT_A → DEPLOYER and AGENT_B → FUNDER. Balances after Session 27: see Next actions.
 
 ### Session 25 — 2026-09-30 (worker AgentAccounts · x402 · ERC-8183 mapping · Gemini diagnosed)
 

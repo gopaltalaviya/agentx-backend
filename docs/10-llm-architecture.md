@@ -178,8 +178,9 @@ and fast enough to watch.
 > (override with `GEMINI_MODEL`), and the key is sent in the `x-goog-api-key`
 > header, never in the URL. With the new model Gemini produced good plans but
 > returned 503 "high demand" on two consecutive live runs, so the run recorded
-> for the video is again local Ollama `llama3` (live 268 s; cached replay
-> 150 s, every check passing, including x402 and the worker accounts).
+> for the video is again local Ollama `llama3` (re-recorded on the v2
+> contracts in Session 26; cached replay 232 s at the recorded pace, 162 s
+> with `AGENT_REPLAY_MAX_MS=2000`, every check passing).
 
 ---
 

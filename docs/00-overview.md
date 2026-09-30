@@ -86,16 +86,17 @@ See [docs/09](09-landscape.md).
 
 ## Status
 
-**Live on Monad testnet, end to end.** 2026-09-29, 14 days to the deadline.
+**Live on Monad testnet, end to end — contracts v2 since 2026-09-30.** 13 days to the deadline.
 
 | | |
 |---|---|
-| Contracts | 128 tests, deployed and settling — `TaskEscrow` [`0x1b0959…027c`](https://testnet.monadexplorer.com/address/0x1b0959dfd32323e5a4749d5444c2e6435349027c) |
-| Backend | 401 tests — API, signer, indexer, MCP server, orchestrator, three worker bots |
-| Interface | live demo page, marketplace, agent profile, register — builds clean and renders in a browser |
+| Contracts | 184 tests, v2 deployed and settling — `TaskEscrow` v2 [`0x4feED0…370D`](https://testnet.monadexplorer.com/address/0x4feED0338761817417Fd1dDdFC8331D16AEB370D) |
+| Backend | 471 tests — API, signer, indexer, MCP server, orchestrator, three worker bots; metrics, health, graceful shutdown, containers |
+| Interface | demo, marketplace, agent profile, register, run history — 40 unit tests and a browser smoke test of every page |
 
 `pnpm demo` plans, hires, judges and settles real jobs on testnet with a local
-model, and replays in about 150 s with no model (`AGENT_MODE=cached`). Since
+model, and replays with no model (`AGENT_MODE=cached`) — about 160 s on v2 with
+`AGENT_REPLAY_MAX_MS=2000`, which shortens the replayed model pauses. Since
 2026-09-29 the orchestrator pays through an `AgentAccount`, and the account's
 own on-chain `spentToday` read 0.13 MockUSDC after a 3/3 run. Since
 2026-09-30 the three workers act through `AgentAccount`s too (2/2 steps settled
@@ -106,7 +107,8 @@ live with worker accounts on 2026-09-30.
 
 **Outstanding:** Railway and Vercel are not deployed; the repos are private;
 the arbiter and fee recipient default to the deployer (kept, by decision); the
-video is not recorded yet (the cached replay it will use runs in 150 s).
+video is not recorded yet (the v2 cached replay runs in 162 s with
+`AGENT_REPLAY_MAX_MS=2000`, 232 s at the recorded pace).
 
 **Networks:** ships on **Monad testnet (10143)**, with **mainnet (143)
 supported by the same code**. The network is configuration, never a code

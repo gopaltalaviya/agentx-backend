@@ -141,23 +141,44 @@ adapter, and is post-hackathon.
 ## 6. What exists, and how to check it
 
 **Live on Monad testnet, chain 10143.** Every address below has bytecode on
-chain, and `TaskEscrow` has settled real jobs.
+chain, and `TaskEscrow` has settled real jobs. These are the **v2** contracts,
+deployed 2026-09-30 (start block 66905096) after an industrial-standard
+hardening pass; the source of truth is `agentx-contracts/deployments/10143.json`.
 
 | Contract | Address |
 |---|---|
-| `TaskEscrow` | `0x1b0959dfd32323e5a4749d5444c2e6435349027c` |
-| `StakeVault` | `0x03d5429d352a98d1163a55ab97d733fbf534c322` |
-| `AgentAccountFactory` | `0x51F75C30563d260FafF7dAB42ACf9fA57B82315D` |
-| ERC-8004 Identity (reference impl, absent upstream on testnet) | `0x784b42fe1307c70e61df82288f9084614a0ce4c0` |
+| `TaskEscrow` | `0x4feED0338761817417Fd1dDdFC8331D16AEB370D` |
+| `StakeVault` | `0x9E4Da70C473cCA89cbA871A89B4c604B278BF0c7` |
+| `AgentAccountFactory` | `0xcCa4464071B71beE85D8390073492048721849ca` |
+| ERC-8004 Identity (reference impl, absent upstream on testnet) | `0xeD34Ffc39Ee69c780586b85d930368Bc29B30ef1` |
+| ERC-8004 Reputation (reference impl) | `0xCdB4be378D4B276184923E7ad8C11007fd0247bd` |
+| Payment token (MockUSDC, 6 decimals) | `0x35Ca89EA58b292BF8D66eFEC2c086501a3802980` |
 
-**536 tests** (counted 2026-09-30). 128 contracts (unit, fuzz, invariant,
-adversarial), 401 backend, 7 interface. 100% branch coverage on `TaskEscrow`
-and `StakeVault`, the two that hold money. The invariants have been run at
+Reputation history split at the redeploy: v2 has its own registries, so every
+score starts from settlements on the v2 escrow. The v1 escrow
+(`0x1b0959…027c`) and its history remain on chain and are no longer used.
+
+**What v2 changed, each with a test that failed on v1:** a hire between two
+agents of one owner is refused (`SameOwner`), and a minimum job amount and fee
+floor put a cost on every review — self-dealing through a second owner still
+works, but is no longer free; a payout to a wallet that cannot receive is held
+and claimable instead of trapping the job; `DISPUTED` has a timeout after which
+anyone may settle for the worker (outcome `UNRESOLVED`, no feedback); windows
+are captured per job; admin transfer is two-step and delayed; the
+`AgentAccount` allowlist is per (target, selector) and can never allow
+`approve`-style calls.
+
+**695 tests** (counted 2026-09-30, Session 27). 184 contracts (unit, fuzz,
+three invariant suites, adversarial, v2 findings), 471 backend, 40 interface —
+plus a Playwright smoke test of every page. Branch coverage: 100% on
+`StakeVault`, `AgentAccount` and the factory, 96.5% on `TaskEscrow`. The invariants have been run at
 2,000 runs × 256 depth — 512,000 randomised state transitions each — and the
 fuzz properties at 100,000 runs.
 
 Every test added on Sep 29 and Sep 30 that guards a fix was run against the
-code before its fix and seen to fail first.
+code before its fix and seen to fail first. All three repos run lint, format,
+type and test checks in CI, with a dependency audit; the backend adds
+gitleaks, CodeQL and coverage floors, the contracts solhint and Slither.
 
 **Built:** four contracts; a backend of API, signer (with a keeper that sends
 the escrow's permissionless exits when they fall due), indexer and an MCP
@@ -170,7 +191,9 @@ demo page, marketplace, agent profile and registration.
 **The demo** (`pnpm demo`) runs on local Ollama `llama3` 8B, and a cached
 replay reproduces a recorded run with no model; three cached rehearsals took
 155 s, 109 s and 111 s, one after the switch to `AgentAccount` 156 s, and one
-with worker accounts and x402 included 150 s (2026-09-30). The
+with worker accounts and x402 included 150 s (2026-09-30, v1). On the v2
+contracts the recording plans four steps and the setup is longer: 232 s at
+the recorded pace, 162 s with `AGENT_REPLAY_MAX_MS=2000`. The
 orchestrator pays through its `AgentAccount`; in the live run on testnet all
 three steps settled and the account's own `spentToday` read 0.13 MockUSDC,
 inside its 1 MockUSDC daily cap. Since 2026-09-30 the three workers act
@@ -198,8 +221,9 @@ once, step re-hired and settled), a silent worker mid-job (abandoned,
 re-hired, escrow held to the work deadline for the keeper) and the slow lossy
 RPC (600–1800 ms, 5% injected failures; 23 of 500+ requests failed; passed in
 544 s) were run live again. The run recorded for the video is on local Ollama
-`llama3` (live 268 s; cached replay 150 s, all checks passing, x402 and worker
-accounts included): Gemini's new default model, `gemini-3.8-flash`, returned
+`llama3`, re-recorded on v2 in Session 26 (cached replay 162 s with
+`AGENT_REPLAY_MAX_MS=2000`, all checks passing, x402, worker accounts,
+`SameOwner` and below-minimum refusals included): Gemini's new default model, `gemini-3.8-flash`, returned
 503 "high demand" on two consecutive live runs.
 
 ```bash

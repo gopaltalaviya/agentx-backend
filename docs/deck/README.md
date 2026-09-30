@@ -35,10 +35,12 @@ $d.Close(); $pp.Quit()
 
 ## The demo slide
 
-Slide 6 carries a real run: Monad testnet, 29 September, local llama3 8B.
-Three jobs hired through escrow, judged and settled, with the hire and
-settlement hashes; then the two chaos runs — a worker that never accepts, and
-one that accepts and dies, whose stranded escrow the keeper refunded (job 94).
+Slide 6 carries a real run on the **v2** contracts: Monad testnet, 30
+September (Session 26), local llama3 8B. Four jobs hired through escrow,
+judged and settled, with the hire and settlement hashes; then the two chaos
+runs — a worker that never accepts, and one that accepts and dies, whose
+stranded escrow the keeper refunded (chain job 23, tx `0x9919ceca…`). Rendered
+through PowerPoint after the change; slides 5, 6 and 10 inspected.
 Until that run existed the deck had no demo slide at all, deliberately.
 
 ## Deck order
