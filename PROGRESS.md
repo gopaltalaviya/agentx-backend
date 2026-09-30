@@ -251,8 +251,10 @@ v2 one — any prompt or schema change still invalidates it.
 
 ### In-flight work right now
 
-**None.** All three repos are clean and fully pushed as of 2026-09-30
-(Session 27). There is no half-finished edit, no stashed change, no branch to
+**None.** All three repos are clean as of 2026-09-30 (Session 27). **The
+Session 26–27 commits were not pushed** (backend, contracts and interface
+are all ahead of `origin`) — run `git push` in each repo, or check with
+`git status -sb`. There is no half-finished edit, no stashed change, no branch to
 reconcile. A fresh session can start from the Next actions list at the top of
 this file.
 
