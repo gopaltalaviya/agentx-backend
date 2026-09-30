@@ -5,6 +5,7 @@ import {z} from 'zod';
 import {
   EnvError,
   bearerMatches,
+  buildInfo,
   createMetrics,
   env,
   installShutdown,
@@ -170,5 +171,79 @@ describe('shutdown', () => {
     await handle.shutdown('x');
     expect(order).toEqual(['db']);
     expect(exits).toEqual([1]);
+  });
+});
+
+describe('build info', () => {
+  const pkg = new URL('file:///app/package.json');
+  const files = (map: Record<string, string>) => (url: URL) => {
+    const hit = map[url.pathname];
+    if (hit === undefined) throw new Error('ENOENT');
+    return hit;
+  };
+
+  it('reports the version, and the commit and build time baked into the image', () => {
+    const info = buildInfo({
+      service: 'api',
+      packageJsonUrl: pkg,
+      env: {},
+      readFile: files({
+        '/app/package.json': JSON.stringify({version: '0.1.0'}),
+        '/app/build-info.json': JSON.stringify({
+          commit: 'A1B2C3D4E5F60718293A4B5C6D7E8F9012345678',
+          builtAt: '2026-09-30T12:00:00Z',
+        }),
+      }),
+    });
+    expect(info).toEqual({
+      service: 'api',
+      version: '0.1.0',
+      commit: 'a1b2c3d4e5f6',
+      builtAt: '2026-09-30T12:00:00Z',
+    });
+  });
+
+  it("falls back to GIT_SHA, then Railway's commit variable, then 'unknown'", () => {
+    const noFiles = files({});
+    expect(buildInfo({service: 's', env: {GIT_SHA: 'abcdef1'}, readFile: noFiles}).commit).toBe('abcdef1');
+    expect(
+      buildInfo({service: 's', env: {RAILWAY_GIT_COMMIT_SHA: '0123456789abcdef'}, readFile: noFiles}).commit,
+    ).toBe('0123456789ab');
+    expect(buildInfo({service: 's', env: {}, readFile: noFiles})).toEqual({
+      service: 's',
+      version: 'unknown',
+      commit: 'unknown',
+      builtAt: null,
+    });
+  });
+
+  /** Whatever is in the environment must never be echoed into a public response unless it is a commit. */
+  it('never echoes a value that is not a commit, a version or a timestamp', () => {
+    const info = buildInfo({
+      service: 's',
+      packageJsonUrl: pkg,
+      env: {GIT_SHA: 'postgres://user:secret@db.internal:5432/x', BUILD_TIME: 'yesterday <script>'},
+      readFile: files({'/app/package.json': JSON.stringify({version: 'secret-token'})}),
+    });
+    expect(info).toEqual({service: 's', version: 'unknown', commit: 'unknown', builtAt: null});
+  });
+});
+
+describe('metrics exposure', () => {
+  it('serves no /metrics at all when a token is required and none is configured', async () => {
+    const app = Fastify();
+    registerMetrics(app, createMetrics('t1'), {requireToken: true});
+    expect((await app.inject({url: '/metrics'})).statusCode).toBe(404);
+    await app.close();
+  });
+
+  it('still serves /metrics behind the token when one is configured', async () => {
+    const app = Fastify();
+    registerMetrics(app, createMetrics('t2'), {requireToken: true, token: 'tok'});
+    expect((await app.inject({url: '/metrics'})).statusCode).toBe(401);
+    expect((await app.inject({url: '/metrics', headers: {authorization: 'Bearer tok'}})).statusCode).toBe(
+      200,
+    );
+    await app.close();
   });
 });

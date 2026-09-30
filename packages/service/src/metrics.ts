@@ -29,7 +29,16 @@ export function createMetrics(service: string): Metrics {
   };
 }
 
-export function registerMetrics(app: FastifyInstance, metrics: Metrics, opts: {token?: string} = {}): void {
+/**
+ * @param opts.requireToken with no `token`, record durations but serve no
+ *   `/metrics` at all. For a service with a public domain (the API): without
+ *   it, every route name, status and request count was readable by anyone.
+ */
+export function registerMetrics(
+  app: FastifyInstance,
+  metrics: Metrics,
+  opts: {token?: string; requireToken?: boolean} = {},
+): void {
   const duration = new Histogram({
     name: 'http_request_duration_seconds',
     help: 'HTTP request duration, by route template (never by raw URL — ids would explode the cardinality)',
@@ -43,6 +52,8 @@ export function registerMetrics(app: FastifyInstance, metrics: Metrics, opts: {t
     if (route === '/metrics') return;
     duration.labels(request.method, route, String(reply.statusCode)).observe(reply.elapsedTime / 1000);
   });
+
+  if (opts.requireToken && !opts.token) return;
 
   app.get('/metrics', async (request, reply) => {
     if (!bearerMatches(request.headers.authorization, opts.token)) {
