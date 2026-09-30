@@ -561,3 +561,56 @@ describe('after a reorg', () => {
     }
   });
 });
+
+/**
+ * The API advances a job optimistically when a transaction is broadcast; the
+ * indexer trails the head by its confirmations. So the indexer routinely
+ * reaches an event OLDER than the state the API already wrote. Projecting it
+ * walked the job backwards: live, a result was stored and the job read
+ * "accepted" again, and the orchestrator's approve was refused ("job is
+ * accepted, this action needs submitted") — one of three timed demo runs.
+ */
+describe('a trailing indexer never walks a job backwards', () => {
+  async function stateOf(jobId: number) {
+    const [row] = (await db.execute(sql`SELECT state FROM jobs WHERE id = ${jobId}`)) as unknown as {
+      state: string;
+    }[];
+    return row!.state;
+  }
+
+  it('keeps "submitted" when the older JobAccepted arrives', async () => {
+    const {jobId} = await seedJob();
+    await db.execute(sql`UPDATE jobs SET state = 'submitted' WHERE id = ${jobId}`);
+    await feed(settledLog({logIndex: 21}), 'accepted', {jobId: '7'});
+    expect(await stateOf(jobId)).toBe('submitted');
+  });
+
+  it('keeps "settled" when the older ResultSubmitted arrives', async () => {
+    const {jobId} = await seedJob();
+    await db.execute(sql`UPDATE jobs SET state = 'settled' WHERE id = ${jobId}`);
+    await feed(settledLog({logIndex: 22}), 'submitted', {jobId: '7', resultHash: '0x01'});
+    expect(await stateOf(jobId)).toBe('settled');
+  });
+
+  /** The API wrote "settled" first; the chain's fee must still land on the row. */
+  it('still records the chain facts when the API already wrote the same state', async () => {
+    const {jobId} = await seedJob();
+    await db.execute(sql`UPDATE jobs SET state = 'settled' WHERE id = ${jobId}`);
+    await feed(settledLog({logIndex: 26}), 'settled', {jobId: '7', paid: '19800', fee: '200', outcome: 0});
+    const [row] = (await db.execute(sql`SELECT state, fee FROM jobs WHERE id = ${jobId}`)) as unknown as {
+      state: string;
+      fee: string;
+    }[];
+    expect(row).toMatchObject({state: 'settled', fee: '200'});
+  });
+
+  it('still moves forward, including out of a dispute', async () => {
+    const {jobId} = await seedJob();
+    await feed(settledLog({logIndex: 23}), 'accepted', {jobId: '7'});
+    expect(await stateOf(jobId)).toBe('accepted');
+    await feed(settledLog({logIndex: 24}), 'disputed', {jobId: '7'});
+    expect(await stateOf(jobId)).toBe('disputed');
+    await feed(settledLog({logIndex: 25}), 'refunded', {jobId: '7', reason: 'dispute'});
+    expect(await stateOf(jobId)).toBe('refunded');
+  });
+});

@@ -1,5 +1,5 @@
 import {createPublicClient, hexToString, http, type Abi, type Log, type PublicClient} from 'viem';
-import {and, eq, gte, isNotNull, isNull, lte, sql} from 'drizzle-orm';
+import {and, eq, gte, inArray, isNotNull, isNull, lte, sql} from 'drizzle-orm';
 import type {ChainConfig} from '@agentx/config';
 import {type Db, indexerCursor, jobEvents, jobs, agents, agentStats, payments} from '@agentx/db';
 
@@ -64,6 +64,24 @@ export interface IndexerDeps {
   abis: Record<string, Abi>;
   logger?: {info: (o: unknown, m?: string) => void; warn: (o: unknown, m?: string) => void};
 }
+
+type JobState = 'created' | 'accepted' | 'submitted' | 'disputed' | 'settled' | 'refunded';
+
+/**
+ * The states a job may be in for an event to move it to each state: any
+ * earlier one, or the same one — the API often writes a state first, and the
+ * event must still land its chain facts (the fee, the result hash). The
+ * lifecycle only goes one way — created → accepted → submitted → disputed →
+ * settled or refunded — with every step skippable (a directPay is created and
+ * settled at once; an unaccepted offer is refunded).
+ */
+const AT_OR_BEFORE: Record<Exclude<JobState, 'created'>, JobState[]> = {
+  accepted: ['created', 'accepted'],
+  submitted: ['created', 'accepted', 'submitted'],
+  disputed: ['created', 'accepted', 'submitted', 'disputed'],
+  settled: ['created', 'accepted', 'submitted', 'disputed', 'settled'],
+  refunded: ['created', 'accepted', 'submitted', 'disputed', 'refunded'],
+};
 
 export class Indexer {
   private readonly client: PublicClient;
@@ -402,6 +420,13 @@ export class Indexer {
     };
     const next = stateOf[kind];
     if (next) {
+      // Forward only. The API advances a job when its transaction is
+      // broadcast, and this indexer trails the head by its confirmations — so
+      // it routinely reaches an event older than the state already written.
+      // Projecting that walked the job backwards: a delivered job read
+      // "accepted" again and the client's approve was refused. A reorg that
+      // drops an applied event halts the indexer instead (checkRewindWindow),
+      // so there is no legitimate backwards move to allow.
       await db
         .update(jobs)
         .set({
@@ -409,7 +434,7 @@ export class Indexer {
           ...(next === 'settled' ? {settledAt: new Date(), fee: text(payload['fee'], '0')} : {}),
           ...(kind === 'submitted' ? {resultHash: text(payload['resultHash'])} : {}),
         })
-        .where(eq(jobs.id, jobId));
+        .where(and(eq(jobs.id, jobId), inArray(jobs.state, AT_OR_BEFORE[next])));
     }
 
     // ONLY on 'settled'. directPay emits DirectPaid *and* JobSettled for the
