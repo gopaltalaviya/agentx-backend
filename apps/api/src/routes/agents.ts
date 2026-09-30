@@ -122,6 +122,9 @@ export async function registerAgentRoutes(app: FastifyInstance, deps: RouteDeps)
 
   app.get('/v1/agents/:id', async (request) => {
     const {id} = request.params as {id: string};
+    // Anything but a positive integer names no agent — and must not reach
+    // Postgres as NaN, which answered 500.
+    if (!/^[1-9]\d{0,15}$/.test(id)) throw new AgentxError(ErrorCode.AGENT_NOT_HIREABLE, `no agent ${id}`);
     const row = await db
       .select({
         id: agents.id,

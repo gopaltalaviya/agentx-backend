@@ -69,6 +69,15 @@ describe('the HTTP surface', () => {
     await app.close();
   });
 
+  /** Found by the operations audit: `Number('abc')` reached Postgres as NaN and answered 500. */
+  it('answers a non-numeric agent id as an unknown agent, not a 500', async () => {
+    const app = await build();
+    const res = await app.inject({url: '/v1/agents/abc'});
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe('AGENT_NOT_HIREABLE');
+    await app.close();
+  });
+
   it('refuses a malformed list limit with 422, not a 500 from Postgres', async () => {
     const app = await build();
     const res = await app.inject({url: '/v1/runs?limit=abc', headers: {authorization: 'Bearer x'}});
