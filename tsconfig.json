@@ -8,6 +8,9 @@
       "path": "packages/config"
     },
     {
+      "path": "packages/service"
+    },
+    {
       "path": "packages/db"
     },
     {
