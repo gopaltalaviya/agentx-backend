@@ -13,7 +13,7 @@
   timeout. Backend and interface have lint, formatting, coverage floors, CI,
   containers, metrics, graceful shutdown and a browser smoke test.
 - Overall: `██████████████████░░` 92% — **106 / 115 tasks**, **725 tests green**
-  (184 contracts · 496 backend · 45 interface) + 12 browser smoke tests
+  (184 contracts · 496 backend · 45 interface) + 14 browser smoke tests
 
 ---
 
@@ -138,7 +138,7 @@ cd ../agentx-backend && npx tsc -b && npx vitest run   # expect 496 passed
 cd ../agentx-interface && npx tsc --noEmit && npx vitest run && NEXT_PUBLIC_API_URL=http://127.0.0.1:8080 npx next build   # expect 40 passed
 ```
 
-Expected totals as of 2026-09-30: **184 contracts + 496 backend + 45 interface = 725** (Session 27, UI + operations), plus 12 Playwright smoke tests.
+Expected totals as of 2026-09-30: **184 contracts + 496 backend + 45 interface = 725** (Session 27, UI + operations), plus 14 Playwright smoke tests.
 If a number is lower, something regressed — find out what before building on
 it.
 
@@ -492,8 +492,8 @@ and metrics ports; every service validates its environment at boot.
 | Contracts — unit, fuzz, invariant (3 suites), adversarial, v2 findings | **184** | ✅ 100% branch on StakeVault/AgentAccount/Factory, 96.5% TaskEscrow |
 | Backend — 31 files | **496** | ✅ lint, format, typecheck of tests, coverage floors 75/78/74/75 |
 | Interface — unit | **45** | ✅ plus lint, `next build`, audit |
-| Interface — Playwright smoke | **12** | ✅ every page, production build, mocked API; status page, 375 px layout + mobile menu, reduced motion |
-| **Total** | **725** + 12 | |
+| Interface — Playwright smoke | **14** | ✅ every page, production build, mocked API; status page, 375 px layout + mobile menu, reduced motion |
+| **Total** | **725** + 14 | |
 
 Every test that guards a Session 26 fix was run against the old code first
 and seen to fail.
@@ -678,6 +678,19 @@ the audit kept that for consistency and documented it. The interface's agent
 page branches on `NOT_FOUND`, and its mock API had always answered 404, so the
 smoke test agreed with the assumption: against the real API the page showed
 "could not load" and a useless retry. Now 404 (`e2ba24c`); 496 tests.
+
+### Session 27 — a product site (interface `ef54dd8`)
+
+On "still looks old; make it production level, a real company project to
+raise money": `/` is now a landing page (animated escrow diagram, live figures
+and deployed contracts from the API, problem → how it works → features →
+developer code tabs → security → roadmap → FAQ), `/docs` has eight pages
+(quickstart, how it works with the four exits and the score formula, build an
+agent, MCP, HTTP API, security model incl. what it does not claim, FAQ), and
+the console moved to `/demo` with a getting-a-key guide. Nothing invented: no
+logos, quotes or metrics; every fact read from the contracts, SDK, MCP tools
+and docs/15. Two new smoke tests (landing, every docs page); the 375 px check
+caught two overflows, fixed. 45 unit + 14 smoke.
 
 ### Session 27 — modern UI/UX (interface `04f89ee`, `2a9e838`, `4ba71e9`)
 
