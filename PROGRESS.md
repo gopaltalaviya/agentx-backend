@@ -12,8 +12,8 @@
   chain, including a real dispute expired by the keeper after its 1 h
   timeout. Backend and interface have lint, formatting, coverage floors, CI,
   containers, metrics, graceful shutdown and a browser smoke test.
-- Overall: `██████████████████░░` 92% — **106 / 115 tasks**, **719 tests green**
-  (184 contracts · 495 backend · 40 interface) + 9 browser smoke tests
+- Overall: `██████████████████░░` 92% — **106 / 115 tasks**, **725 tests green**
+  (184 contracts · 496 backend · 45 interface) + 12 browser smoke tests
 
 ---
 
@@ -46,6 +46,10 @@
    answered 503 "high demand" on two consecutive runs, so the recording is the
    Ollama one. Re-try any time: `BRAIN_CHAIN=gemini BRAIN_CHAIN_ORCHESTRATOR=gemini AGENT_MODE=record`.
 7. **Arbiter / fee recipient** — left on DEPLOYER, as you decided (Sep 30).
+8. **Operations decisions** — [docs/17 §14](docs/17-production-readiness.md):
+   when you deploy, enable Railway Postgres backups and point an uptime
+   monitor at `/v1/status`; set `METRICS_TOKEN` if metrics will be scraped.
+   The site's `/status` page reads the same endpoint.
 
 ### 🤖 Claude — nothing left that is mine to do before the deadline
 
@@ -130,11 +134,11 @@ cd ../agentx-contracts && forge build
 
 # 3. Prove it is all still green
 FOUNDRY_PROFILE=ci forge test              # expect 184 passed
-cd ../agentx-backend && npx tsc -b && npx vitest run   # expect 495 passed
+cd ../agentx-backend && npx tsc -b && npx vitest run   # expect 496 passed
 cd ../agentx-interface && npx tsc --noEmit && npx vitest run && NEXT_PUBLIC_API_URL=http://127.0.0.1:8080 npx next build   # expect 40 passed
 ```
 
-Expected totals as of 2026-09-30: **184 contracts + 495 backend + 40 interface = 719** (Session 27, operations audit), plus 9 Playwright smoke tests.
+Expected totals as of 2026-09-30: **184 contracts + 496 backend + 45 interface = 725** (Session 27, UI + operations), plus 12 Playwright smoke tests.
 If a number is lower, something regressed — find out what before building on
 it.
 
@@ -486,10 +490,10 @@ and metrics ports; every service validates its environment at boot.
 | Suite | Count | State |
 |---|---|---|
 | Contracts — unit, fuzz, invariant (3 suites), adversarial, v2 findings | **184** | ✅ 100% branch on StakeVault/AgentAccount/Factory, 96.5% TaskEscrow |
-| Backend — 31 files | **495** | ✅ lint, format, typecheck of tests, coverage floors 75/78/74/75 |
-| Interface — unit | **40** | ✅ plus lint, `next build`, audit |
-| Interface — Playwright smoke | **9** | ✅ every page, production build, mocked API |
-| **Total** | **719** + 9 | |
+| Backend — 31 files | **496** | ✅ lint, format, typecheck of tests, coverage floors 75/78/74/75 |
+| Interface — unit | **45** | ✅ plus lint, `next build`, audit |
+| Interface — Playwright smoke | **12** | ✅ every page, production build, mocked API; status page, 375 px layout + mobile menu, reduced motion |
+| **Total** | **725** + 12 | |
 
 Every test that guards a Session 26 fix was run against the old code first
 and seen to fail.
@@ -667,6 +671,36 @@ served in production without `METRICS_TOKEN` · `GET /v1/agents/abc` was a 500.
 reported its commit. 475 → 495 backend tests. **Owner decisions** are listed
 in docs/17 §14 — above all, enable Railway Postgres backups and point an
 uptime monitor at `/v1/status`.
+
+**Reviewing the audit found one more:** `GET /v1/agents/:id` answered 409
+`AGENT_NOT_HIREABLE` (a hiring refusal) for an agent that does not exist —
+the audit kept that for consistency and documented it. The interface's agent
+page branches on `NOT_FOUND`, and its mock API had always answered 404, so the
+smoke test agreed with the assumption: against the real API the page showed
+"could not load" and a useless retry. Now 404 (`e2ba24c`); 496 tests.
+
+### Session 27 — modern UI/UX (interface `04f89ee`, `2a9e838`, `4ba71e9`)
+
+On "make it modern UIUX, latest animations", filtered to what AGENTX has (no
+trading, charts or WebSockets to design for):
+- **Design system** `components/ui/` — Button, Card, Badge, Field (clear,
+  reveal, paste), CopyButton, PageHeader, loading/empty/error states, Reveal,
+  CountUp — and tokens in `globals.css`; every page uses them.
+- **Every page rebuilt**: sticky header marking the current page + mobile
+  menu; hero with live figures, how-it-works and chain facts; a run console
+  with a progress stepper; sliding ranking control, `/` search, skeletons;
+  score ring; step timeline and trace rail; register step guide with the
+  API's capability rule checked before the wallet signs; new **`/status`**
+  page over `GET /v1/status`.
+- **Motion** is transforms/opacity only; reduced motion shows everything at
+  once. Found on the way: a hydration mismatch in the new paste action.
+- **Verified**: 45 unit, 12 smoke (new: status page, 375 px no-overflow +
+  menu, reduced motion — which failed with its CSS rule removed); against the
+  real signer + indexer + API on testnet: `check:contract` holds incl.
+  `/v1/status`, `check-deployment.mjs` all green, screenshots refreshed.
+- The other project on this machine runs an e2e harness on ports 3100/8787
+  and kills whatever holds them: smoke-test ports are now `E2E_PORT` /
+  `MOCK_API_PORT`.
 
 ### Session 27 — 2026-09-30 (the 20%-lossy chaos run · two retry defects · indexer re-verified)
 

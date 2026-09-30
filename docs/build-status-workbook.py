@@ -199,12 +199,14 @@ tests = [
     ("agentx-backend", "api/runs", 11, "Run lifecycle, durable trace, terminal state"),
     ("agentx-backend", "signer/app", 11, "Validated /sign, RFC 7807, no internal message in a 500"),
     ("agentx-backend", "signer/keeper", 11, "Which exit is due at every deadline, including expireDispute"),
-    ("agentx-backend", "service", 10, "Env validation, bearer compare, timeouts, shutdown, metrics"),
+    ("agentx-backend", "service", 15, "Env validation, bearer compare, timeouts, shutdown, metrics, build metadata, token-gated /metrics"),
+    ("agentx-backend", "api/status", 12, "Public /v1/status: states and numbers only, cached, bounded checks, indexer lag"),
+    ("agentx-backend", "indexer/progress", 2, "Head, indexed-block and lag gauges"),
     ("agentx-backend", "indexer/loop", 10, "Backoff, recovery, clean shutdown"),
     ("agentx-backend", "config/money", 8, "Base-unit formatting and parsing"),
     ("agentx-backend", "sdk/stream", 8, "SSE frames split at every byte offset"),
     ("agentx-backend", "agent-core/x402", 7, "Paid endpoint: 402 quote, redeem before work"),
-    ("agentx-backend", "api/hardening", 7, "Helmet, body limit, SSE cap, rate limit before auth"),
+    ("agentx-backend", "api/hardening", 9, "Helmet, body limit, SSE cap, rate limit before auth; a non-numeric or unknown agent id is 404"),
     ("agentx-backend", "api/identity", 6, "ERC-8004 id verified against the registry before it is stored"),
     ("agentx-backend", "api/submit", 6, "Signer token, timeout, an unreachable signer is a retryable outage"),
     ("agentx-backend", "mcp/server", 6, "A real MCP session: schemas, annotations, tool errors"),
@@ -215,6 +217,7 @@ tests = [
     ("agentx-interface", "lib/links", 9, "Explorer links: https + known host only; uuid and agent id parsing"),
     ("agentx-interface", "components", 12, "RunTrace (hostile links, money, live region), NetworkBadge (never assumes testnet)"),
     ("agentx-interface", "lib/wallet", 6, "Addresses and RPC validated before the wallet is asked; chain added on 4902"),
+    ("agentx-interface", "lib/format", 5, "Relative time and durations, refusing nonsense input"),
 ]
 last = rows(ws, tests)
 ws.cell(row=last + 1, column=2, value="TOTAL").font = BOLD

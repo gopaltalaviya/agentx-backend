@@ -168,8 +168,8 @@ are captured per job; admin transfer is two-step and delayed; the
 `AgentAccount` allowlist is per (target, selector) and can never allow
 `approve`-style calls.
 
-**699 tests** (counted 2026-09-30, Session 27). 184 contracts (unit, fuzz,
-three invariant suites, adversarial, v2 findings), 475 backend, 40 interface —
+**725 tests** (counted 2026-09-30, Session 27). 184 contracts (unit, fuzz,
+three invariant suites, adversarial, v2 findings), 496 backend, 45 interface —
 plus a Playwright smoke test of every page. Branch coverage: 100% on
 `StakeVault`, `AgentAccount` and the factory, 96.5% on `TaskEscrow`. The invariants have been run at
 2,000 runs × 256 depth — 512,000 randomised state transitions each — and the
