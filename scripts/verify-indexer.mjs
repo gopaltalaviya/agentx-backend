@@ -11,6 +11,7 @@
 
 import {createPublicClient, createWalletClient, http, parseAbi, keccak256, toHex} from 'viem';
 import {privateKeyToAccount} from 'viem/accounts';
+import {registerAgent, topUp} from './lib/chain.mjs';
 import {foundry} from 'viem/chains';
 import postgres from 'postgres';
 import {loadConfig, loadAbis} from '@agentx/config';
@@ -71,10 +72,16 @@ const erc20 = parseAbi([
   'function balanceOf(address) view returns (uint256)',
 ]);
 
-await write(identity, idAbi, 'register', ['ipfs://client', DEPLOYER.address]);
-await write(identity, idAbi, 'register', ['ipfs://worker', DEPLOYER.address]);
-const clientAgentId = 1n;
-const workerAgentId = 2n;
+// Two owners, two wallets: v2 refuses a hire between agents of one owner
+// (SameOwner) or one wallet (SelfDealing). Ids are READ from the events —
+// `1n` and `2n` held only on a fresh local chain.
+const WORKER = privateKeyToAccount(
+  process.env.AGENT_B_PRIVATE_KEY ?? '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d', // anvil #1
+);
+const workerClient = createWalletClient({account: WORKER, chain: viemChain, transport: http(RPC)});
+await topUp(pub, wallet, WORKER.address, 100_000_000_000_000_000n);
+const clientAgentId = await registerAgent(pub, wallet, {identity, abi: idAbi, uri: 'ipfs://client', wallet: DEPLOYER.address});
+const workerAgentId = await registerAgent(pub, workerClient, {identity, abi: idAbi, uri: 'ipfs://worker', wallet: WORKER.address});
 ok(`registered agents ${clientAgentId} and ${workerAgentId} in ERC-8004`);
 
 await write(token, erc20, 'mint', [DEPLOYER.address, 1_000_000_000n]);

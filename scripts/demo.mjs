@@ -23,9 +23,10 @@
  */
 
 import {spawn} from 'node:child_process';
+import {registerAgent, send as sendTx, topUp} from './lib/chain.mjs';
 import {randomBytes} from 'node:crypto';
 import {createWriteStream, mkdirSync} from 'node:fs';
-import {createPublicClient, createWalletClient, encodeFunctionData, http, keccak256, parseAbi, parseEventLogs, toFunctionSelector} from 'viem';
+import {createPublicClient, createWalletClient, decodeErrorResult, encodeFunctionData, http, parseAbi, parseEventLogs, toFunctionSelector} from 'viem';
 import {privateKeyToAccount} from 'viem/accounts';
 import {foundry} from 'viem/chains';
 import postgres from 'postgres';
@@ -169,34 +170,10 @@ try {
     'function approve(address,uint256) returns (bool)',
     'function balanceOf(address) view returns (uint256)',
   ]);
-  // Sign ONCE, then broadcast the same bytes until the node has them.
-  //
-  // viem does not retry `eth_sendRawTransaction`, rightly: re-running
-  // `writeContract` after a dropped response signs a NEW transaction on a new
-  // nonce, and if the first one had landed, the action happens twice. But the
-  // same signed bytes are idempotent — same hash, same nonce — so resending
-  // them is safe whatever happened to the first attempt. The slow-RPC chaos
-  // run found this: one injected 503 on the harness's own setup transaction
-  // aborted the demo, while every service behind it rode the same failures out.
-  const send = async (client, request) => {
-    const prepared = await client.prepareTransactionRequest(request);
-    const raw = await client.signTransaction(prepared);
-    const hash = keccak256(raw);
-    for (let attempt = 0; ; attempt++) {
-      try {
-        await pub.sendRawTransaction({serializedTransaction: raw});
-        break;
-      } catch (err) {
-        const msg = `${err.shortMessage ?? ''} ${err.details ?? ''} ${err.message ?? ''}`;
-        // Already there: an earlier attempt reached the node after all.
-        if (/already known|nonce too low|replacement transaction underpriced/i.test(msg)) break;
-        const transient = err.name === 'HttpRequestError' || err.name === 'TimeoutError' || /50[234]|fetch failed|ECONNRESET/i.test(msg);
-        if (!transient || attempt >= 5) throw err;
-        await sleep(500 * 2 ** attempt);
-      }
-    }
-    return pub.waitForTransactionReceipt({hash});
-  };
+  // Every harness transaction survives a dropped response: signed once, the
+  // same bytes re-broadcast (scripts/lib/chain.mjs). One injected 503 under the
+  // slow-RPC chaos run used to abort the demo here.
+  const send = (client, request) => sendTx(pub, client, request);
   const write = (address, abi, fn, args) =>
     send(wallet, {to: address, data: encodeFunctionData({abi, functionName: fn, args})});
 
@@ -205,55 +182,37 @@ try {
   const vault = chain.contracts['StakeVault'];
   const escrow = chain.contracts['TaskEscrow'];
 
-  const firstId = await pub.readContract({
-    address: identity,
-    abi: abis['MockIdentityRegistry'],
-    functionName: 'nextId',
-  });
-
   await write(token, erc20, 'mint', [DEPLOYER.address, 1_000_000_000n]);
   await write(token, erc20, 'approve', [vault, 1_000_000_000n]);
   await write(token, erc20, 'approve', [escrow, 1_000_000_000n]);
 
-  // The orchestrator, then one identity per worker.
-  //
-  // Each worker holds its OWN key, and the address it is registered to is the
-  // address that key controls. That is not decoration: `TaskEscrow` resolves
-  // a job's worker through the identity registry and requires `msg.sender` to
-  // match, so an agent whose wallet nobody holds the key to can be hired and
-  // paid, but can never accept a job or submit a result.
-  //
-  // These were `0x1111…`, `0x2222…`, `0x3333…` — addresses with no key
-  // behind them at all. Every accept reverted with `NotAgentWallet`, which
-  // viem reports as "execution reverted for an unknown reason", and the
-  // escrow path had therefore never once completed.
+  const idAbi = abis['MockIdentityRegistry'];
+  const escrowSelector = (fn) =>
+    toFunctionSelector(abis['TaskEscrow'].find((x) => x.type === 'function' && x.name === fn));
+
   // ── the orchestrator spends through an AgentAccount ─────────────────
   // The claim this project rests on is that a hijacked agent cannot spend
-  // past caps its owner set — enforced by a contract, not by our server.
-  // Until now no agent used one. The orchestrator is the only agent that
-  // spends, so it gets an account: the OWNER (the deployer, standing in for
-  // a human) creates it, sets its caps and allowlists, funds it, grants the
-  // escrow an allowance, and gives the signer's hot key a session key that
-  // expires within a day. The hot key can then spend — but only through the
-  // account, only to the escrow, only within the caps.
+  // past caps its owner set — enforced by a contract, not by our server. The
+  // OWNER (the deployer, standing in for a human) creates the account, sets
+  // its caps and its allowlist (per target AND selector, since v2), funds it,
+  // grants the escrow an allowance, and gives the signer's hot key a session
+  // key that expires within a day. The hot key can then spend — but only
+  // through the account, only to the escrow, only within the caps.
   const factory = chain.contracts['AgentAccountFactory'];
   const accountAbi = abis['AgentAccount'];
-  // CREATE2 salts, unique per RUN, not per agent id. They were the next
-  // ERC-8004 id alone — but a run that aborts after creating an account and
-  // before registering an identity leaves that id unused, so the next run
-  // derives the same salt and `createAccount` reverts on the address it
-  // already occupies. The run's start time goes in the high bits.
-  const runSalt = (n) => `0x${((BigInt(Date.now()) << 64n) | n).toString(16).padStart(64, '0')}`;
-  const salt = runSalt(firstId);
+  // CREATE2 salts, unique per RUN: the run's start time in the high bits, an
+  // index in the low. A salt derived from the next agent id collided after an
+  // aborted run, and createAccount reverted on the address it had occupied.
+  const runStart = BigInt(Date.now());
+  const runSalt = (n) => `0x${((runStart << 64n) | BigInt(n)).toString(16).padStart(64, '0')}`;
+  const salt = runSalt(0);
   const orchestratorWallet = await pub.readContract({
     address: factory, abi: abis['AgentAccountFactory'], functionName: 'predictAddress', args: [DEPLOYER.address, salt],
   });
   const caps = {perTaskCap: BigInt(chain.params.defaultPerTaskCap), dailyCap: BigInt(chain.params.defaultDailyCap), allowlistOnly: true};
   await write(factory, abis['AgentAccountFactory'], 'createAccount', [DEPLOYER.address, salt, caps]);
-  await write(orchestratorWallet, accountAbi, 'setAllowedTarget', [escrow, true]);
   for (const fn of ['createJob', 'directPay', 'approve', 'dispute', 'cancel']) {
-    const item = abis['TaskEscrow'].find((x) => x.type === 'function' && x.name === fn);
-    await write(orchestratorWallet, accountAbi, 'setAllowedSelector', [toFunctionSelector(item), true]);
+    await write(orchestratorWallet, accountAbi, 'setAllowedCall', [escrow, escrowSelector(fn), true]);
   }
   await write(orchestratorWallet, accountAbi, 'setAllowance', [escrow, 1_000_000_000n]);
   await write(token, erc20, 'mint', [orchestratorWallet, 1_000_000n]); // 1 MockUSDC to spend
@@ -263,80 +222,70 @@ try {
   await write(orchestratorWallet, accountAbi, 'grantSessionKey', [hot.address, block.timestamp + 23n * 3600n, caps.dailyCap]);
   ok(`orchestrator spends through AgentAccount ${orchestratorWallet} — caps ${chain.formatToken(caps.perTaskCap)}/task, ${chain.formatToken(caps.dailyCap)}/day, escrow-only, session key ${hot.address.slice(0, 10)}…`);
 
-  await write(identity, abis['MockIdentityRegistry'], 'register', ['ipfs://orchestrator', orchestratorWallet]);
+  // Ids are READ from the Registered event, never assumed as nextId + i: on a
+  // shared testnet anyone may register between two of our transactions.
+  const orchestratorId = await registerAgent(pub, wallet, {
+    identity, abi: idAbi, uri: 'ipfs://orchestrator', wallet: orchestratorWallet,
+  });
 
+  // Each worker holds its OWN key. That key is the worker account's session
+  // key (the chain checks msg.sender against the registered wallet), AND it
+  // registers the worker's identity — so the worker's owner is not the
+  // orchestrator's. v2's escrow refuses a hire between two agents of one
+  // owner (SameOwner): a demo that registered everyone from one key could no
+  // longer hire anybody, which is the point.
   const workerKeys = WORKERS.map(
     (_, i) => `0x${(i + 1).toString(16).padStart(2, '0').repeat(32)}`,
   );
   const workerAccounts = workerKeys.map((k) => privateKeyToAccount(k));
 
+  // Gas first: the workers now pay for their own registration. 0.5 MON each —
+  // every accept and submit is a call wrapped in AgentAccount.execute, and
+  // Monad reserves the full gas LIMIT, about 0.054 MON per wrapped call. The
+  // wallets are the same every run, so this is paid once, not per run. It
+  // comes from FUNDER, whose documented job this is, and runs before the
+  // signer starts, so it cannot race the keeper for FUNDER's nonces.
+  const GAS_TOPUP = 500_000_000_000_000_000n;
+  const gasPayer = process.env.FUNDER_PRIVATE_KEY
+    ? createWalletClient({account: privateKeyToAccount(process.env.FUNDER_PRIVATE_KEY), chain: viemChain, transport: http(chain.rpcUrl)})
+    : wallet;
+  for (const account of [...workerAccounts, hot]) {
+    await topUp(pub, gasPayer, account.address, GAS_TOPUP);
+  }
+
   // ── the workers act through AgentAccounts too ───────────────────────
   // A worker never spends, so its account is the narrowest one possible:
-  // caps of zero, a session key with a budget of zero, and the escrow as the
-  // only target with `acceptJob` and `submitResult` as the only selectors. A
-  // stolen worker key can then accept and deliver work — which is all it
-  // could ever legitimately do — and nothing else: it cannot move the
-  // account's earnings, hire anyone, or grant itself an allowance.
-  //
-  // Each worker's OWN key is its session key. One shared hot key would race
-  // for nonces: the signer locks per agent, but a nonce belongs to a key.
-  //
-  // Payouts land in the account, so the earnings are the owner's to sweep —
-  // the account's kill switch, and the only way money leaves it.
+  // caps of zero, a session key with a budget of zero, and exactly two
+  // allowed calls — acceptJob and submitResult, on the escrow. A stolen
+  // worker key can accept and deliver work — all it could ever legitimately
+  // do — and nothing else. Payouts land in the account; the owner sweeps them.
   const workerCaps = {perTaskCap: 0n, dailyCap: 0n, allowlistOnly: true};
-  const workerSelectors = ['acceptJob', 'submitResult'].map((fn) =>
-    toFunctionSelector(abis['TaskEscrow'].find((x) => x.type === 'function' && x.name === fn)),
-  );
   const workerWallets = [];
   for (const [i, key] of workerAccounts.entries()) {
-    const workerSalt = runSalt(firstId + BigInt(i + 1));
+    const workerSalt = runSalt(i + 1);
     const account = await pub.readContract({
       address: factory, abi: abis['AgentAccountFactory'], functionName: 'predictAddress', args: [DEPLOYER.address, workerSalt],
     });
     await write(factory, abis['AgentAccountFactory'], 'createAccount', [DEPLOYER.address, workerSalt, workerCaps]);
-    await write(account, accountAbi, 'setAllowedTarget', [escrow, true]);
-    for (const selector of workerSelectors) {
-      await write(account, accountAbi, 'setAllowedSelector', [selector, true]);
+    for (const fn of ['acceptJob', 'submitResult']) {
+      await write(account, accountAbi, 'setAllowedCall', [escrow, escrowSelector(fn), true]);
     }
     await write(account, accountAbi, 'grantSessionKey', [key.address, block.timestamp + 23n * 3600n, 0n]);
     workerWallets.push(account);
   }
-  ok(`${WORKERS.length} workers act through AgentAccounts — zero caps, escrow-only, acceptJob + submitResult only, each on its own session key`);
+  ok(`${WORKERS.length} workers act through AgentAccounts — zero caps, only acceptJob + submitResult on the escrow, each on its own session key`);
 
+  const workerIds = [];
   for (const [i, w] of WORKERS.entries()) {
-    await write(identity, abis['MockIdentityRegistry'], 'register', [`ipfs://${w.capability}`, workerWallets[i]]);
-    await write(vault, abis['StakeVault'], 'deposit', [firstId + BigInt(i + 1), 10_000_000n]);
+    const workerClient = createWalletClient({account: workerAccounts[i], chain: viemChain, transport: http(chain.rpcUrl)});
+    const id = await registerAgent(pub, workerClient, {
+      identity, abi: idAbi, uri: `ipfs://${w.capability}`, wallet: workerWallets[i],
+    });
+    workerIds.push(id);
+    // Anyone may bond an agent; the deployer does, standing in for the owner.
+    await write(vault, abis['StakeVault'], 'deposit', [id, 10_000_000n]);
   }
-
-  // Gas for each worker. A worker that cannot pay for its own accept is a
-  // worker that silently never accepts, and the signer's gas floor would
-  // refuse before broadcasting — correctly, but the demo would just look
-  // slow.
-  // 0.5 MON. It was 0.02, which covered the fast path; then 0.1, when an
-  // unproven worker was always hired through escrow — accept AND submit, two
-  // transactions a job. Now every one of those is wrapped in
-  // AgentAccount.execute, and Monad reserves the full gas LIMIT — about
-  // 0.054 MON per wrapped call — so the workers need what the orchestrator's
-  // session key needs. These wallets are the same every run, so this is paid
-  // once, not per run.
-  const GAS_TOPUP = 500_000_000_000_000_000n;
-  // Gas comes from FUNDER, whose documented job this is, rather than
-  // draining DEPLOYER, which pays for every registration and bond. This runs
-  // before the signer starts, so it cannot race the keeper for FUNDER's
-  // nonces.
-  const gasPayer = process.env.FUNDER_PRIVATE_KEY
-    ? createWalletClient({account: privateKeyToAccount(process.env.FUNDER_PRIVATE_KEY), chain: viemChain, transport: http(chain.rpcUrl)})
-    : wallet;
-  // The orchestrator's session key needs more: every call it makes goes
-  // through AgentAccount.execute, and Monad reserves the full gas LIMIT —
-  // about 0.054 MON per wrapped call — so 0.1 MON ran dry after two.
-  const topups = [...workerAccounts.map((a) => [a, GAS_TOPUP]), [hot, GAS_TOPUP]];
-  for (const [account, target] of topups) {
-    const balance = await pub.getBalance({address: account.address});
-    if (balance >= target) continue;
-    await send(gasPayer, {to: account.address, value: target - balance});
-  }
-  ok(`${WORKERS.length + 1} agents on-chain (ids ${firstId}…${firstId + BigInt(WORKERS.length)}), ${WORKERS.length} workers bonded and funded for gas`);
+  ok(`${WORKERS.length + 1} agents on-chain (orchestrator ${orchestratorId}, workers ${workerIds.join(', ')} — each worker its own owner), bonded and funded for gas`);
 
   // ── 2. services ───────────────────────────────────────────────────────
   const env = {
@@ -424,11 +373,11 @@ try {
     return body;
   };
 
-  const orchestratorAgent = await register('Orchestrator', 'orchestration', '0', firstId, orchestratorWallet);
+  const orchestratorAgent = await register('Orchestrator', 'orchestration', '0', orchestratorId, orchestratorWallet);
   const workerAgents = [];
   for (const [i, w] of WORKERS.entries()) {
     workerAgents.push(
-      await register(titleCase(w.capability), w.capability, w.price, firstId + BigInt(i + 1), workerWallets[i]),
+      await register(titleCase(w.capability), w.capability, w.price, workerIds[i], workerWallets[i]),
     );
   }
   ok(`registered ${WORKERS.length} workers and the orchestrator through the API`);
@@ -628,8 +577,8 @@ try {
     // The chain, not our word for it.
     const x402Receipt = await pub.getTransactionReceipt({hash: settlement.transaction});
     const directPaid = parseEventLogs({abi: abis['TaskEscrow'], logs: x402Receipt.logs, eventName: 'DirectPaid'});
-    directPaid.some((e) => e.args.workerAgentId === firstId + BigInt(r + 1))
-      ? ok(`x402: DirectPaid on chain to worker ${firstId + BigInt(r + 1)}, ${chain.formatToken(directPaid[0].args.amount)}`)
+    directPaid.some((e) => e.args.workerAgentId === workerIds[r])
+      ? ok(`x402: DirectPaid on chain to worker ${workerIds[r]}, ${chain.formatToken(directPaid[0].args.amount)}`)
       : fail('x402: no DirectPaid to the research worker in the settlement receipt');
 
     const replayed = await fetch(x402Url, {
@@ -668,10 +617,48 @@ try {
   );
   await refusedBy(
     'hire another agent (createJob)',
-    {functionName: 'execute', args: [escrow, encodeFunctionData({abi: abis['TaskEscrow'], functionName: 'createJob', args: [firstId + 1n, firstId + 2n, 1n, `0x${'00'.repeat(32)}`, 3600n, 3600n]})]},
+    {functionName: 'execute', args: [escrow, encodeFunctionData({abi: abis['TaskEscrow'], functionName: 'createJob', args: [workerIds[0], workerIds[1], 20_000n, `0x${'00'.repeat(32)}`, 3600n, 3600n]})]},
     'SelectorNotAllowed',
   );
   await refusedBy('sweep the account to itself', {functionName: 'sweep', args: [workerAccounts[0].address, 1n]}, 'NotOwner');
+
+  // ── v2's escrow rules, tried on chain as the orchestrator's session key ──
+  // Simulated (eth_call): the same checks a broadcast meets, no gas. The
+  // account wraps the escrow's revert in CallFailed(bytes); unwrap it to read
+  // which escrow rule refused.
+  const escrowRefusal = async (label, data, expected) => {
+    try {
+      await pub.simulateContract({account: hot, address: orchestratorWallet, abi: accountAbi, functionName: 'execute', args: [escrow, data]});
+      fail(`the escrow accepted ${label}`);
+    } catch (err) {
+      let name = err.cause?.data?.errorName;
+      const inner = err.cause?.data?.args?.[0];
+      if (name === 'CallFailed' && typeof inner === 'string') {
+        try {
+          name = decodeErrorResult({abi: abis['TaskEscrow'], data: inner}).errorName;
+        } catch {
+          // leave as CallFailed
+        }
+      }
+      name === expected
+        ? ok(`the escrow refuses ${label} — ${expected}`)
+        : fail(`${label}: expected ${expected}, got ${name ?? err.shortMessage}`);
+    }
+  };
+  // A puppet identity owned by the orchestrator's own owner: the v1 hole.
+  const puppetId = await registerAgent(pub, wallet, {
+    identity, abi: idAbi, uri: 'ipfs://puppet', wallet: `0x${'5a'.repeat(20)}`,
+  });
+  await escrowRefusal(
+    'a hire between two agents of one owner',
+    encodeFunctionData({abi: abis['TaskEscrow'], functionName: 'directPay', args: [orchestratorId, puppetId, 20_000n, `0x${'01'.repeat(32)}`]}),
+    'SameOwner',
+  );
+  await escrowRefusal(
+    'a payment below the minimum job',
+    encodeFunctionData({abi: abis['TaskEscrow'], functionName: 'directPay', args: [orchestratorId, workerIds[0], 1n, `0x${'02'.repeat(32)}`]}),
+    'AmountBelowMinimum',
+  );
 
   // The earnings are the owner's. `sweep` is the one way money leaves a
   // worker's account, and only the owner can call it.

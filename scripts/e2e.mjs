@@ -16,6 +16,7 @@ import {spawn} from 'node:child_process';
 import {randomBytes} from 'node:crypto';
 import {createPublicClient, createWalletClient, http, parseAbi} from 'viem';
 import {privateKeyToAccount} from 'viem/accounts';
+import {registerAgent, topUp} from './lib/chain.mjs';
 import {foundry} from 'viem/chains';
 import postgres from 'postgres';
 import {loadConfig, loadAbis} from '@agentx/config';
@@ -75,17 +76,20 @@ try {
   const vault = chain.contracts['StakeVault'];
   const escrow = chain.contracts['TaskEscrow'];
 
-  const firstId = await pub.readContract({
-    address: identity, abi: abis['MockIdentityRegistry'], functionName: 'nextId',
-  });
-  // The worker is paid to a DIFFERENT address so the balance assertion below
-  // measures something real. Paying the client's own wallet would net to zero
-  // and prove nothing.
-  const WORKER_WALLET = process.env.AGENT_B_ADDRESS ?? '0x2Ff72eE6B8de27dD8F2D9FbFf7102EfbaD8D37D6';
-  await write(identity, abis['MockIdentityRegistry'], 'register', ['ipfs://client', DEPLOYER.address]);
-  await write(identity, abis['MockIdentityRegistry'], 'register', ['ipfs://worker', WORKER_WALLET]);
-  const clientChainId = firstId;
-  const workerChainId = firstId + 1n;
+  // The worker is a DIFFERENT owner with a different wallet. v2's escrow
+  // refuses a hire between two agents of one owner (SameOwner), and paying
+  // the client's own wallet would net to zero and prove nothing. The worker
+  // registers its own identity, so it owns it.
+  const WORKER = privateKeyToAccount(
+    process.env.AGENT_B_PRIVATE_KEY ??
+      '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d', // anvil #1
+  );
+  const WORKER_WALLET = WORKER.address;
+  const workerClient = createWalletClient({account: WORKER, chain: viemChain, transport: http(chain.rpcUrl)});
+  await topUp(pub, wallet, WORKER.address, 100_000_000_000_000_000n); // 0.1 native for one registration
+  const idAbi = abis['MockIdentityRegistry'];
+  const clientChainId = await registerAgent(pub, wallet, {identity, abi: idAbi, uri: 'ipfs://client', wallet: DEPLOYER.address});
+  const workerChainId = await registerAgent(pub, workerClient, {identity, abi: idAbi, uri: 'ipfs://worker', wallet: WORKER_WALLET});
 
   await write(token, erc20, 'mint', [DEPLOYER.address, 1_000_000_000n]);
   await write(token, erc20, 'approve', [vault, 1_000_000_000n]);
