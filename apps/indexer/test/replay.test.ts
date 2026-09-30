@@ -331,6 +331,35 @@ describe('real refund and settlement logs', () => {
     expect(Number((await refund('dispute', 14)).failed)).toBe(1);
   });
 
+  /**
+   * v2: a dispute nobody ruled on expires, and the escrow pays the worker
+   * with outcome UNRESOLVED (3) — and writes NO feedback, so disputed work
+   * never earns reputation by default. The projection must agree: the money
+   * moved, so there is a payment row; the reputation must not rise.
+   */
+  it('records the payment of an unresolved dispute but credits no reputation', async () => {
+    const {workerId} = await seedJob();
+    const before = await statsOf(workerId);
+    const log = realLog('JobSettled', {jobId: 7n, paid: 19_800n, fee: 200n, outcome: 3}, 16);
+    await (indexer as unknown as {handleLog: (e: unknown) => Promise<void>}).handleLog(log);
+
+    const after = await statsOf(workerId);
+    expect(Number(after.completed)).toBe(Number(before.completed));
+    const rows = (await db.execute(sql`SELECT count(*)::int AS n FROM payments`)) as unknown as {n: number}[];
+    expect(rows[0]!.n).toBe(1);
+  });
+
+  it('keeps the v2 events in the job trail', async () => {
+    await seedJob();
+    const handle = (indexer as unknown as {handleLog: (e: unknown) => Promise<void>}).handleLog.bind(indexer);
+    await handle(realLog('DisputeExpired', {jobId: 7n}, 17));
+    await handle(realLog('PaymentDeferred', {jobId: 7n, agentId: 2n, amount: 19_800n}, 18));
+    const kinds = (
+      (await db.execute(sql`SELECT kind FROM job_events ORDER BY id`)) as unknown as {kind: string}[]
+    ).map((r) => r.kind);
+    expect(kinds).toEqual(expect.arrayContaining(['dispute_expired', 'payment_deferred']));
+  });
+
   it('records the transaction a payment landed in', async () => {
     await seedJob();
     const log = realLog('JobSettled', {jobId: 7n, paid: 19_800n, fee: 200n, outcome: 0}, 15);

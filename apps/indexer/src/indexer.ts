@@ -4,6 +4,9 @@ import type {ChainConfig} from '@agentx/config';
 import {type Db, indexerCursor, jobEvents, jobs, agents, agentStats, payments} from '@agentx/db';
 
 /** Refund reasons the contract records as the worker's failure (TaskEscrow `_refund` callers). */
+/** `ITaskEscrow.Outcome.SUCCESS`. Only this outcome earns reputation. */
+const OUTCOME_SUCCESS = 0;
+
 const WORKER_FAULT = new Set(['undelivered', 'dispute']);
 
 /** `JobRefunded.reason` is a left-aligned bytes32 string. */
@@ -334,6 +337,9 @@ export class Indexer {
         DisputeResolved: 'dispute_resolved',
         DirectPaid: 'direct_paid',
         FeedbackFailed: 'feedback_failed',
+        // v2: a dispute nobody ruled on, and a payment held for its recipient.
+        DisputeExpired: 'dispute_expired',
+        PaymentDeferred: 'payment_deferred',
       };
       const kind = ev.eventName ? kindOf[ev.eventName] : undefined;
       if (!kind) return null;
@@ -406,7 +412,13 @@ export class Indexer {
         })
         .onConflictDoNothing();
 
-      await this.bumpReputation(db, job.workerAgentId, true, job.amount);
+      // An UNRESOLVED settlement — a dispute that timed out — pays the worker
+      // but earns nothing: the escrow writes no feedback for it, and the
+      // projection must not credit what the chain did not. Money moved, so
+      // the payment row above still stands.
+      if (Number(payload['outcome'] ?? OUTCOME_SUCCESS) === OUTCOME_SUCCESS) {
+        await this.bumpReputation(db, job.workerAgentId, true, job.amount);
+      }
     }
 
     if (kind === 'refunded') {
