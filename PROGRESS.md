@@ -24,7 +24,7 @@
 1. **Make the three repos public** — required by Oct 13. A full-history scan
    of all three repos for every real secret in `.env` (five values) found
    none (re-run Sep 30, Session 26).
-2. **The video.** A full cut is in `docs/video/` (Session 28). To record your own: `.agent-cache/` holds a
+2. **The video is made: [`docs/video/agentx-demo.mp4`](docs/video/agentx-demo.mp4)** — 2:35, 1080p, a live testnet run started from the site. Upload it and put the link in docs/11 §"For the submission form". To re-record: [docs/video/README.md](docs/video/README.md). For your own terminal recording: `.agent-cache/` holds a
    fresh **v2** Ollama recording (Session 26; the v1 one no longer matches).
    `DEMO_X402=1 AGENT_MODE=cached` replays everything — 4 settlements, x402,
    stolen key, `SameOwner`, below-minimum — in ~232 s at the recorded pace, or
@@ -686,6 +686,30 @@ the audit kept that for consistency and documented it. The interface's agent
 page branches on `NOT_FOUND`, and its mock API had always answered 404, so the
 smoke test agreed with the assumption: against the real API the page showed
 "could not load" and a useless retry. Now 404 (`e2ba24c`); 496 tests.
+
+### Session 28, part 2 — 2026-10-01 (brand · independent review · the video)
+
+- **Brand**: the AGENTX mark (four agents whose lines cross at the escrow),
+  favicon, 180 px app icon, a 1200×630 link preview generated at build,
+  web manifest, logo in header/footer/README/deck cover, `docs/brand/`.
+  `NEXT_PUBLIC_SITE_URL` must be set on Vercel or previews point at localhost.
+- **Independent read-only review** of every claim against the code (a
+  sub-agent): found v2's dispute timeout still described as missing in six
+  docs, a landing code sample that said "escrow" while the default path can
+  pay directly (and did not typecheck — now verified against the real SDK),
+  "caps enforced on chain" overclaimed for plain-wallet agents, the fee
+  described as added rather than deducted, stale counts, unlabelled v1
+  evidence. All fixed; 11-submission gained a submission-form block and a
+  copy-paste "run it yourself".
+- **The video** (`docs/video/`, scripts in `scripts/video/`): recorded with
+  Playwright from the real site against a held demo on Monad testnet —
+  title → problem → landing → a live run from the Run button (4/4 settled,
+  shown at 1.5×) → the settlement's receipt read from the RPC → run record,
+  marketplace, ERC-8004 identity → status → end card. Two takes were
+  corrected before the final: the run scrolled off-screen, and the receipt
+  card labelled the orchestrator's AgentAccount as the escrow (the tx is sent
+  to the account, which calls TaskEscrow) — caught by checking the frames.
+- Final: 184 + 497 + 49 = 730 tests, + 30 browser; all green.
 
 ### Session 28 — 2026-10-01 (recheck · ERC-8004 agent cards · PLAN in sync)
 
