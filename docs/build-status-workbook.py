@@ -87,7 +87,7 @@ milestones = [
     ("M3", "Agents + MCP", "Oct 3-5", "Done", 15, 15),
     ("M4", "Frontend", "Oct 6-8", "Deploy left (you)", 10, 11),
     ("M5", "Harden", "Oct 9-11", "Video left (you)", 6, 7),
-    ("M6", "Submit", "Oct 12-13", "In progress", 2, 8),
+    ("M6", "Submit", "Oct 12-13", "In progress", 3, 8),
 ]
 last = rows(ws, milestones, colors={4})
 for r in range(2, last + 1):

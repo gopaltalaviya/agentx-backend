@@ -460,10 +460,11 @@ processes drawing nonces from one account would race). Every
    the boundary second): `CREATED` past `acceptDeadline` →
    `expireUnaccepted`, `ACCEPTED` past `workDeadline` → `expireUndelivered`,
    `SUBMITTED` past `reviewDeadline` → `autoApprove`;
+   `DISPUTED` past its dispute timeout → `expireDispute` (v2);
 4. simulates, then sends, and waits for the receipt. One job failing (most
    likely someone else sent the exit first) does not stop the sweep.
 
-`DISPUTED` is not touched: it has no permissionless exit. The raw keeper key
+The raw keeper key
 is refused on a non-testnet chain. `scripts/keeper-sweep.mjs` runs a single
 sweep, optionally for explicit on-chain job ids (a demo run wipes the
 database), and reads each result back from the chain. Without
@@ -1619,10 +1620,11 @@ so plainly. On testnet `ARBITER_ROLE` is held by the **deployer EOA**, granted
 at construction. `Deploy.s.sol` can now hand it to a separate
 `ARBITER_ADDRESS` (replacing the deployer), but the current deployment was not
 redeployed with one. A multisig is the mainnet intent, not yet done. The arbiter
-can only act on `DISPUTED` jobs and cannot touch funds outside a dispute, but
-a disputed job has **no timeout**: if the arbiter never rules, its funds stay
-locked. The path beyond it is an optimistic challenge window with staked
-challengers — designed for, not built in three weeks.
+can only act on `DISPUTED` jobs and cannot touch funds outside a dispute.
+Since v2 a dispute times out: if the arbiter never rules, anyone may call
+`expireDispute`, which settles for the worker (outcome `UNRESOLVED`) and
+writes no review. The path beyond a single arbiter is an optimistic challenge
+window with staked challengers — designed for, not built in three weeks.
 
 ### 9.2 Threat table
 
@@ -1654,8 +1656,9 @@ State these in the submission rather than letting a judge find them:
   *schema conformance and hash integrity*, not truth. Semantic verification
   (attestation, redundant execution, staked challenges) is future work.
 - **Disputes are centralised** to a single arbiter (the deployer key on
-  testnet), with no timeout on a disputed job, and the keeper cannot help:
-  `DISPUTED` has no permissionless exit.
+  testnet). Since v2 an unruled dispute expires after its timeout
+  (`expireDispute`, sent by the keeper), settling for the worker with no
+  review — so an absent arbiter can delay money, not trap it.
 - **No slashing game.** `slash()` exists and is role-gated but the MVP never
   calls it automatically.
 - **On-chain caps cover the demo's agents, not every agent.** The demo

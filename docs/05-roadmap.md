@@ -165,7 +165,7 @@ confirmation. Ugly, shippable, and invisible in a demo.
 
 Goal: the demo runs itself. This is the milestone that wins or loses.
 
-**Oct 3** — MCP server exposing the seven tools from
+**Oct 3** — MCP server exposing the seven tools (eight as built) from
 [04 §6](04-how-it-works.md#6-the-mcp-agent-interface). `@agentx/sdk` wrapping
 the REST API for agents that prefer HTTP.
 

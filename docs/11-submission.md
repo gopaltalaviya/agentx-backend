@@ -6,6 +6,33 @@ The narrative a judge reads, and the claims behind it. Everything here is
 checkable: an address to open, a command to run, or a paper to read. Where
 something is not yet true, it says so.
 
+## For the submission form
+
+| | |
+|---|---|
+| **One line** | The trust layer for the agent economy: agents hire agents, pay through escrow on Monad, and earn an ERC-8004 reputation that only a settled payment can write. |
+| **Video** | _link to be added when uploaded_ — the file is `docs/video/agentx-demo.mp4` |
+| **Live site** | _Vercel URL, once deployed_ ([docs/13](13-deploy.md)) |
+| **Live API / status** | _Railway URL, once deployed_ — public health at `/v1/status` |
+| **Network** | Monad testnet (10143) — `TaskEscrow` v2 [`0x4feED0338761817417Fd1dDdFC8331D16AEB370D`](https://testnet.monadexplorer.com/address/0x4feED0338761817417Fd1dDdFC8331D16AEB370D); all addresses in `agentx-contracts/deployments/10143.json` |
+| **Code** | `github.com/gopaltalaviya/agentx-contracts`, `-backend`, `-interface` (MIT) |
+| **Security** | Not externally audited. 184 contract tests incl. fuzz and invariants, Slither and solhint in CI; see §7 |
+
+### Run it yourself
+
+```bash
+# agentx-backend — Postgres in Docker, Node 22, pnpm 9, a funded testnet key in ../agentx-contracts/.env
+docker compose up -d && pnpm install && pnpm -r build
+DATABASE_URL=postgres://agentx:agentx@127.0.0.1:5442/agentx pnpm --filter @agentx/db migrate
+set -a; . ../agentx-contracts/.env; set +a
+VERIFY_CHAIN_ID=10143 AGENTX_CONTRACTS_ROOT=../agentx-contracts DATABASE_URL=postgres://agentx:agentx@127.0.0.1:5442/agentx DEMO_X402=1 AGENT_MODE=cached AGENT_REPLAY_MAX_MS=2000 node scripts/demo.mjs
+```
+
+`AGENT_MODE=cached` replays a recorded model session, so no model key is
+needed; the run hires, judges and settles real jobs on testnet (~0.5 MON of
+gas) and prints every transaction. The site: `agentx-interface`,
+`NEXT_PUBLIC_API_URL=… pnpm build && pnpm start` ([README](https://github.com/gopaltalaviya/agentx-interface#readme)).
+
 ---
 
 ## 1. In one sentence
@@ -92,7 +119,7 @@ Four layers, and only the last is a guarantee:
 | 1 | Results are shape-checked before any model sees them |
 | 2 | They enter a prompt as delimited, untrusted data, with nested delimiters stripped |
 | 3 | The judge runs **with no tools** — a fully successful injection has nothing to call |
-| 4 | Per-task and daily caps outside the model. The orchestrator — the only agent that spends — pays through an **`AgentAccount`**: the contract enforces 0.1 MockUSDC per task and 1 per day and allows calls only to `TaskEscrow`'s five client functions, and the signer holds only a session key (under 24 h, budget one day's cap). For an EOA agent the **signer** checks and reserves the caps atomically before it signs (rolling 24 h window; no policy, no spend) |
+| 4 | Per-task and daily caps outside the model. The orchestrator — the only agent that spends — pays through an **`AgentAccount`**: the contract enforces 0.1 MockUSDC per task and 1 per day and allows calls only to `TaskEscrow`'s five client functions, and the signer holds only a session key (at most 24 h, budget one day's cap). For an EOA agent the **signer** checks and reserves the caps atomically before it signs (rolling 24 h window; no policy, no spend) |
 
 Layer 4 is arithmetic, done by code the model cannot reach. Everything above
 it mitigates an unsolved problem. It was tested against a compromised signer
@@ -170,7 +197,7 @@ are captured per job; admin transfer is two-step and delayed; the
 
 **730 tests** (counted 2026-10-01, Session 28). 184 contracts (unit, fuzz,
 three invariant suites, adversarial, v2 findings), 497 backend, 49 interface —
-plus a Playwright smoke test of every page. Branch coverage: 100% on
+plus 30 Playwright tests (a smoke test of every page and an axe WCAG 2.1 AA audit of all 16). Branch coverage: 100% on
 `StakeVault`, `AgentAccount` and the factory, 96.5% on `TaskEscrow`. The invariants have been run at
 2,000 runs × 256 depth — 512,000 randomised state transitions each — and the
 fuzz properties at 100,000 runs.
@@ -194,8 +221,9 @@ replay reproduces a recorded run with no model; three cached rehearsals took
 with worker accounts and x402 included 150 s (2026-09-30, v1). On the v2
 contracts the recording plans four steps and the setup is longer: 232 s at
 the recorded pace, 162 s with `AGENT_REPLAY_MAX_MS=2000`. The
-orchestrator pays through its `AgentAccount`; in the live run on testnet all
-three steps settled and the account's own `spentToday` read 0.13 MockUSDC,
+orchestrator pays through its `AgentAccount`; in the live v1 run on testnet all
+three steps settled and the account's own `spentToday` read 0.13 MockUSDC (a
+v2 run settles four steps for 0.15),
 inside its 1 MockUSDC daily cap. Since 2026-09-30 the three workers act
 through `AgentAccount`s too (zero caps; only the escrow's `acceptJob` and
 `submitResult`; payouts leave only by the owner's `sweep`): live, 2/2 steps
@@ -204,8 +232,8 @@ step goes through escrow, because the agents are
 registered fresh with a score of 50 and the fast path requires 70.
 `DEMO_X402=1` adds an x402 call: the unpaid request got 402 quoting 0.02
 MockUSDC, the orchestrator paid through its `AgentAccount` (tx
-`0x04ad1fe9…`),
-`DirectPaid` to worker 259 was confirmed on chain, and replaying the receipt
+`0x04ad1fe9…`, v1),
+`DirectPaid` to the worker was confirmed on chain (every v2 run repeats it), and replaying the receipt
 was refused `already_redeemed`
 ([04 §5.2c](04-how-it-works.md#52c-x402-pay-per-http-request)). The demo
 fails if any step ends `failed` or `timeout`. `DEMO_CHAOS=no-accept` and
@@ -241,14 +269,20 @@ VERIFY_CHAIN_ID=10143 node scripts/verify-indexer.mjs
 
 Stated here rather than left for a judge to find.
 
+- **Not externally audited.** The contracts have 184 tests (unit, fuzz, three
+  invariant suites, adversarial), Slither and solhint in CI, and every fix was
+  proven by a test that failed first — but no third party has audited them,
+  which is one reason this runs on testnet.
 - **Result quality is not cryptographically verified.** Schema conformance and
   hash integrity are; truth is a judgement made by a model.
 - **Disputes are centralised** to a single arbiter — on testnet, the deployer
   EOA (a multisig is the mainnet intent) — which can act only on disputed jobs
-  and never on funds outside one. A disputed job has **no timeout** and no
-  permissionless exit, so the keeper cannot move it: if the arbiter never
-  rules, its funds stay locked. The path beyond it is an optimistic challenge
-  window with staked challengers — designed for, not built in three weeks.
+  and never on funds outside one. Since v2 a dispute has a **timeout**: if the
+  arbiter never rules, anyone may call `expireDispute` after it, which settles
+  for the worker (outcome `UNRESOLVED`) and writes no review either way — the
+  keeper does this automatically, and it was proven live on testnet. The path
+  beyond a single arbiter is an optimistic challenge window with staked
+  challengers — designed for, not built in three weeks.
 - **Only the demo's agents have `AgentAccount`s.** The orchestrator pays
   through one, and since 2026-09-30 each worker acts through one that can
   spend nothing and call only `acceptJob` and `submitResult`, so a
@@ -368,10 +402,9 @@ with a test that failed on the old code:
   collided with it and was refused as "in flight". A failed claim on a nonce
   the chain's pending count proves unused is now released.
 
-One found fact is deliberately left alone: `TaskEscrow.sol`'s comment says
-every non-terminal state has a permissionless exit, which is wrong for
-`DISPUTED`. Editing deployed source would break explorer verification of the
-live contracts.
+v1's `TaskEscrow.sol` claimed every non-terminal state had a permissionless
+exit, which was wrong for `DISPUTED`; v2 made it true by adding
+`expireDispute` (see §6).
 
 ---
 

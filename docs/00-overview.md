@@ -82,8 +82,8 @@ agentx-interface    Next.js only     → Vercel
 
 | Integrate — already deployed on Monad | Build — nothing else has these |
 |---|---|
-| ERC-8004 **Identity Registry** `0x8004A169…a432` | **`TaskEscrow`** — job state machine, deadlines with permissionless exits, sole writer of settlement-backed feedback |
-| ERC-8004 **Reputation Registry** `0x8004BAa1…9b63` | **`AgentAccount`** — spending caps enforced *on-chain*, not on someone's server. Every agent in the demo acts through one: the orchestrator pays through its account (0.1 MockUSDC/task, 1/day, escrow-only), and each of the three workers has one with zero caps that may call only the escrow's `acceptJob` and `submitResult`; payouts land in the account and only the owner can `sweep` them out |
+| ERC-8004 **Identity Registry** `0x8004A169…a432` (mainnet; on testnet AGENTX uses a reference deployment, `0xeD34…ef1`) | **`TaskEscrow`** — job state machine, deadlines with permissionless exits, sole writer of settlement-backed feedback |
+| ERC-8004 **Reputation Registry** `0x8004BAa1…9b63` (mainnet; testnet reference `0xCdB4…7bd`) | **`AgentAccount`** — spending caps enforced *on-chain*, not on someone's server. Every agent in the demo acts through one: the orchestrator pays through its account (0.1 MockUSDC/task, 1/day, escrow-only), and each of the three workers has one with zero caps that may call only the escrow's `acceptJob` and `submitResult`; payouts land in the account and only the owner can `sweep` them out |
 | ERC-8004 Validation Registry *(coming soon)* | **`StakeVault`** — the custody ERC-8004 lacks; makes listings cost something |
 
 Two contracts from the original design were **deleted** rather than built.
@@ -91,19 +91,19 @@ See [docs/09](09-landscape.md).
 
 ## Status
 
-**Live on Monad testnet, end to end — contracts v2 since 2026-09-30.** 13 days to the deadline.
+**Live on Monad testnet, end to end — contracts v2 since 2026-09-30.** 12 days to the deadline.
 
 | | |
 |---|---|
 | Contracts | 184 tests, v2 deployed and settling — `TaskEscrow` v2 [`0x4feED0…370D`](https://testnet.monadexplorer.com/address/0x4feED0338761817417Fd1dDdFC8331D16AEB370D) |
 | Backend | 497 tests — API, signer, indexer, MCP server, orchestrator, three worker bots; metrics, health, graceful shutdown, containers |
-| Interface | demo, marketplace, agent profile, register, run history — 40 unit tests and a browser smoke test of every page |
+| Interface | landing page, live demo, marketplace, agent profiles, register, run history, public status page, in-app docs — 49 unit tests and 30 Playwright tests (14 smoke, 16 axe accessibility audits) |
 
 `pnpm demo` plans, hires, judges and settles real jobs on testnet with a local
 model, and replays with no model (`AGENT_MODE=cached`) — about 160 s on v2 with
 `AGENT_REPLAY_MAX_MS=2000`, which shortens the replayed model pauses. Since
 2026-09-29 the orchestrator pays through an `AgentAccount`, and the account's
-own on-chain `spentToday` read 0.13 MockUSDC after a 3/3 run. Since
+own on-chain `spentToday` read 0.13 MockUSDC after a 3/3 run (v1, Sep 29; a v2 run spends 0.15 across four steps). Since
 2026-09-30 the three workers act through `AgentAccount`s too (2/2 steps settled
 live through worker accounts), and an x402 facilitator lets an agent be paid
 per HTTP request (`DEMO_X402=1`, live on testnet). All seven chaos items have

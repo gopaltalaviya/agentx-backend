@@ -3,7 +3,7 @@
 > **START HERE every session.** This file is the memory that survives a closed
 > terminal. Read it top to bottom before doing anything else.
 
-- Last updated: **2026-10-01** (Session 28 — recheck; ERC-8004 agent cards verified on chain; PLAN in sync; all open tasks are yours)
+- Last updated: **2026-10-01** (Session 28 — recheck; ERC-8004 agent cards verified on chain; PLAN in sync; every open task is yours except the final docs pass)
 - Days to deadline: **12** — verified: **2026-10-13, 11:59 PM ET**
 - Target track: **4 — Trust, Identity & AI Infrastructure** ($30,000)
 - Current state: **v2 live on Monad testnet, end to end, re-verified.** The
@@ -12,7 +12,7 @@
   chain, including a real dispute expired by the keeper after its 1 h
   timeout. Backend and interface have lint, formatting, coverage floors, CI,
   containers, metrics, graceful shutdown and a browser smoke test.
-- Overall: `██████████████████░░` 91% — **106 / 116 tasks** (4 cut, recorded in PLAN), **730 tests green**
+- Overall: `██████████████████░░` 92% — **107 / 116 tasks** (4 cut, recorded in PLAN), **730 tests green**
   (184 contracts · 497 backend · 49 interface) + 30 browser tests (14 smoke, 16 accessibility)
 
 ---
@@ -24,7 +24,7 @@
 1. **Make the three repos public** — required by Oct 13. A full-history scan
    of all three repos for every real secret in `.env` (five values) found
    none (re-run Sep 30, Session 26).
-2. **Record the video.** Claude cannot record video. `.agent-cache/` holds a
+2. **The video.** A full cut is in `docs/video/` (Session 28). To record your own: `.agent-cache/` holds a
    fresh **v2** Ollama recording (Session 26; the v1 one no longer matches).
    `DEMO_X402=1 AGENT_MODE=cached` replays everything — 4 settlements, x402,
    stolen key, `SameOwner`, below-minimum — in ~232 s at the recorded pace, or
@@ -197,7 +197,7 @@ export VERIFY_CHAIN_ID=10143 AGENTX_CONTRACTS_ROOT=../agentx-contracts \
 # Live, local model, no API quota spent (needs Ollama with llama3 pulled)
 AGENT_MODE=record node scripts/demo.mjs
 
-# Replay that recording — no model at all. The backup-video path, ~150 s.
+# Replay that recording — no model at all. ~162 s with AGENT_REPLAY_MAX_MS=2000.
 # DEMO_X402=1 adds the x402 stage (402 → pay → serve → replay refused);
 # the Sep 30 recording in .agent-cache/ was made with it on.
 DEMO_X402=1 AGENT_MODE=cached node scripts/demo.mjs

@@ -88,9 +88,9 @@ address (the backend picks them up from `deployments/10143.json`), and the
 demo's history on the old contracts stays on the old contracts.
 
 A plain EOA arbiter is acceptable for the MVP as long as the docs say so.
-They do ([04 §9.1](04-how-it-works.md#91-trust-assumptions)). Note that a
-disputed job has no timeout, so an arbiter who never acts leaves its funds
-locked.
+They do ([04 §9.1](04-how-it-works.md#91-trust-assumptions)). Since v2 a dispute
+times out (`expireDispute`), so an arbiter who never acts delays the money but
+cannot lock it.
 
 ---
 

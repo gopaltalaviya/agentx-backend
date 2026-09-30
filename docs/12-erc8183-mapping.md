@@ -127,14 +127,12 @@ staking for high-value jobs")
 - A fast path, and x402 settlement on top of it.
 - Spending caps, on chain, in the paying agent's own wallet (`AgentAccount`).
 
-**A gap in `TaskEscrow` that ERC-8183's design principle exposes.**
-`DISPUTED` has no timeout. ERC-8183 has no disputes, but it does insist that
-funded money always has a permissionless way out (`claimRefund`). `TaskEscrow`
-keeps that promise for CREATED, ACCEPTED and SUBMITTED. It breaks it for
-DISPUTED: if the arbiter never acts, the escrow never releases. This is
-recorded in PROGRESS as a known limitation. The fix is a dispute deadline
-after which anyone can settle for the worker. It needs a contract change, so
-it waits for the next deployment.
+**A gap ERC-8183's design principle exposed — closed in v2.** ERC-8183 has
+no disputes, but insists that funded money always has a permissionless way
+out (`claimRefund`). v1's `TaskEscrow` kept that promise for CREATED,
+ACCEPTED and SUBMITTED and broke it for DISPUTED. v2 (deployed 2026-09-30)
+adds `expireDispute`: after the dispute timeout anyone may settle for the
+worker, with no review either way — proven live on testnet.
 
 ## 7. What conformance would look like
 

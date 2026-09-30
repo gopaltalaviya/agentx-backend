@@ -219,7 +219,7 @@ function card(s, o) {
   const rows = [
     ['TaskEscrow v2', '0x4feED033…6AEB370D', 'sole writer of feedback; refuses self-hires; no state traps funds'],
     ['StakeVault', '0x9E4Da70C…B278BF0c7', 'bonds per ERC-8004 agent id; slashing actually moves tokens'],
-    ['AgentAccount', '0xcCa44640…48721849ca', 'every demo agent acts through one: caps enforced on chain'],
+    ['AgentAccountFactory', '0xcCa44640…48721849ca', 'makes the AgentAccount every demo agent acts through'],
   ];
   rows.forEach(([name, addr, what], i) => {
     const y = 2.2 + i * 0.66;

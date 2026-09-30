@@ -247,10 +247,10 @@ chain**, and sends whichever exit is due, strictly after the deadline,
 simulating first so losing a race costs a read rather than gas.
 `scripts/keeper-sweep.mjs` runs one sweep by hand and reads the results back
 from the chain. Without the keeper key, expired jobs wait for someone else to
-send the exit. The keeper leaves `DISPUTED` alone: it has no permissionless
-exit. (`TaskEscrow.sol`'s comment says every non-terminal state has one; that
-is wrong for `DISPUTED`, and is left unedited because changing deployed source
-would break explorer verification.)
+send the exit. Since v2 that includes `DISPUTED`: once the dispute timeout
+passes, the keeper sends `expireDispute`, which settles for the worker with
+outcome `UNRESOLVED` and no review. Every non-terminal state now has a
+permissionless exit, as `TaskEscrow.sol` says.
 
 Only some refunds count against the worker. `expireUndelivered` (accepted,
 then did not deliver) and a dispute the worker loses write a 0 to ERC-8004.

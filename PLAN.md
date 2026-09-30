@@ -256,7 +256,7 @@ without narration.
 | M6-02 | Final docs pass, including the limitations section | 🤖 | M5-03 |
 | M6-03 | ✅ Deck: problem → solution → demo → architecture → why Monad → next | 🤖 | M6-01 |
 | M6-04 | 👤 Record the real demo video (2–3 min) | 👤 | M5-06 |
-| M6-05 | 👤 Decide: make `agentx-contracts` public? — **D2** | 👤 | — |
+| M6-05 | ✅ Decide: make `agentx-contracts` public? — **D2**: yes, all three repos go public (owner, Oct 1) | 👤 | — |
 | M6-06 | 👤 Submit, with hours of buffer | 👤 | M6-04 |
 | M6-07 | 👤 Verify every submission link from a logged-out browser | 👤 | M6-06 |
 | M6-08 | 👤 Freeze `main` | 👤 | M6-06 |
