@@ -57,6 +57,9 @@ interface ChainState {
   lastTx?: {to: string | undefined; data: Hex | undefined; raw: Hex};
   /** When set, eth_sendRawTransaction fails with this message. */
   broadcastError?: string;
+  /** When set, eth_sendRawTransaction is answered with this HTTP status and a
+   *  plain-text body, the way a proxy or load balancer in front of a node does. */
+  broadcastHttpStatus?: number;
   /** When set, eth_estimateGas reverts with this ABI-encoded error data. */
   estimateRevert?: Hex;
   broadcasts: number;
@@ -166,6 +169,11 @@ beforeAll(async () => {
     req.on('data', (c) => (body += c));
     req.on('end', () => {
       const parsed = JSON.parse(body) as {id: number; method: string; params: unknown[]};
+      if (parsed.method === 'eth_sendRawTransaction' && state.broadcastHttpStatus) {
+        res.statusCode = state.broadcastHttpStatus;
+        res.end('upstream unavailable');
+        return;
+      }
       res.setHeader('content-type', 'application/json');
       try {
         res.end(
@@ -747,6 +755,20 @@ describe('what a failed broadcast is reported as', () => {
     state.broadcastError = 'execution reverted: 0x4d11988c00005035030eb20edae3';
     const err = await expectRefusal(makeSigner().sign(request(agentId)), ErrorCode.INVALID_STATE);
     expect(err.message).not.toMatch(/unreachable/);
+  });
+
+  /**
+   * A 503 from whatever sits in front of the node. viem reports it as
+   * "HTTP request failed." with the status on the error, not in its words —
+   * so it was called INVALID_STATE, the worker was told not to retry, and a
+   * 20%-lossy chaos run abandoned finished work at submit.
+   */
+  it('reports an HTTP 503 from the RPC as safe to retry, having broadcast nothing', async () => {
+    const agentId = await anAgent();
+    state.broadcastHttpStatus = 503;
+    const err = await expectRefusal(makeSigner().sign(request(agentId)), ErrorCode.CHAIN_NOT_ENABLED);
+    expect(err.retryAfter).toBeDefined();
+    expect(state.broadcasts).toBe(0);
   });
 });
 

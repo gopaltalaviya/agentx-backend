@@ -1,4 +1,6 @@
 import {
+  BaseError,
+  HttpRequestError,
   createPublicClient,
   createWalletClient,
   decodeErrorResult,
@@ -598,7 +600,16 @@ function asActionableError(
     );
   }
 
-  if (/fetch failed|ECONNREFUSED|ETIMEDOUT|socket hang up|\b50[234]\b/i.test(said)) {
+  // A proxy or load balancer answering for the node puts its status on the
+  // error, not in its words: viem says only "HTTP request failed." — which was
+  // called INVALID_STATE, so a worker gave up a submit that was safe to retry.
+  const httpStatus =
+    err instanceof BaseError
+      ? (err.walk((c) => c instanceof HttpRequestError) as HttpRequestError | null)?.status
+      : undefined;
+  const transportDown = httpStatus !== undefined && (httpStatus === 429 || httpStatus >= 500);
+
+  if (transportDown || /fetch failed|ECONNREFUSED|ETIMEDOUT|socket hang up|\b50[234]\b/i.test(said)) {
     return new AgentxError(
       ErrorCode.CHAIN_NOT_ENABLED,
       `the RPC endpoint is unreachable — the transaction was NOT broadcast, so retrying the same request is safe (${message})`,
