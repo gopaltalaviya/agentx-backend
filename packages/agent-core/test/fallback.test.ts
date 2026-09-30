@@ -276,3 +276,51 @@ describe('a key never travels in a URL', () => {
 
 // Keep the unused import meaningful to the reader.
 void writeFileSync;
+
+describe('cached replay pacing', () => {
+  // A recording whose one call took 3 s. Replay re-enacts that (capped at
+  // 8 s) so a cached demo keeps the rhythm of a live one; AGENT_REPLAY_MAX_MS
+  // lets a rehearsal or a recording session shorten it without re-recording.
+  async function slowRecording(name: string): Promise<string> {
+    const cacheDir = join(dir, name);
+    const path = join(cacheDir, 'worker.json');
+    await new RecordingBrain(new StubBrain('live', 'ok'), path).complete(req);
+    const {readFileSync} = await import('node:fs');
+    const file = JSON.parse(readFileSync(path, 'utf8')) as Record<string, {latencyMs: number}>;
+    for (const entry of Object.values(file)) entry.latencyMs = 3_000;
+    writeFileSync(path, JSON.stringify(file));
+    return cacheDir;
+  }
+
+  it('caps the replayed latency at AGENT_REPLAY_MAX_MS', async () => {
+    const cacheDir = await slowRecording('capped');
+    const brain = buildBrain({
+      role: 'worker',
+      cacheDir,
+      env: {AGENT_MODE: 'cached', AGENT_REPLAY_MAX_MS: '50'},
+    });
+    const started = Date.now();
+    await brain.complete(req);
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  it('replays instantly with AGENT_REPLAY_MAX_MS=0', async () => {
+    const cacheDir = await slowRecording('instant');
+    const brain = buildBrain({
+      role: 'worker',
+      cacheDir,
+      env: {AGENT_MODE: 'cached', AGENT_REPLAY_MAX_MS: '0'},
+    });
+    const started = Date.now();
+    await brain.complete(req);
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  it('refuses a value that is not a whole number of milliseconds', async () => {
+    for (const bad of ['-1', 'fast', '1.5']) {
+      expect(() =>
+        buildBrain({role: 'worker', cacheDir: dir, env: {AGENT_MODE: 'cached', AGENT_REPLAY_MAX_MS: bad}}),
+      ).toThrow(/AGENT_REPLAY_MAX_MS/);
+    }
+  });
+});

@@ -48,7 +48,11 @@ export class CachedBrain implements Brain {
 
   constructor(
     private readonly path: string,
-    private readonly opts: {replayTiming?: boolean} = {},
+    private readonly opts: {
+      replayTiming?: boolean;
+      /** The longest one replayed call may wait. Default 8 s; 0 replays instantly. */
+      maxReplayMs?: number | undefined;
+    } = {},
   ) {
     this.cache = existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as typeof this.cache) : {};
   }
@@ -67,8 +71,9 @@ export class CachedBrain implements Brain {
 
     // Replay the original latency so a cached demo has the same rhythm as a
     // live one. A demo that answers instantly reads as a lookup table.
-    if (this.opts.replayTiming !== false && entry.latencyMs > 0) {
-      await new Promise((r) => setTimeout(r, Math.min(entry.latencyMs, 8_000)));
+    const wait = Math.min(entry.latencyMs, this.opts.maxReplayMs ?? 8_000);
+    if (this.opts.replayTiming !== false && wait > 0) {
+      await new Promise((r) => setTimeout(r, wait));
     }
 
     // Validate on the way out, not just on the way in: a schema can change

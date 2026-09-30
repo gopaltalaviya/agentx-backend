@@ -54,16 +54,35 @@ export function buildBrain(opts: BuildBrainOptions): Brain {
   const cacheDir = opts.cacheDir ?? env['AGENT_CACHE_DIR'] ?? join(process.cwd(), '.agent-cache');
   const cachePath = join(cacheDir, `${opts.role}.json`);
 
-  if (mode === 'cached') return new CachedBrain(cachePath);
+  if (mode === 'cached') return new CachedBrain(cachePath, {maxReplayMs: replayCap(env)});
 
   const chain = resolveChain(opts.role, env).map((name) => makeBrain(name, opts.role, env));
   const live: Brain = chain.length === 1 ? chain[0]! : new FallbackBrain(chain, opts);
 
   // Cached is always the last resort, even in live mode: if every provider is
   // unreachable, a recorded answer beats a dead demo.
-  const withBackstop = new FallbackBrain([live, new CachedBrain(cachePath)], opts);
+  const withBackstop = new FallbackBrain(
+    [live, new CachedBrain(cachePath, {maxReplayMs: replayCap(env)})],
+    opts,
+  );
 
   return mode === 'record' ? new RecordingBrain(withBackstop, cachePath) : withBackstop;
+}
+
+/**
+ * How long one replayed call may wait, from `AGENT_REPLAY_MAX_MS`.
+ *
+ * A replay re-enacts each call's recorded latency (up to 8 s) so a cached
+ * demo has the rhythm of a live one. That is right for the video and wrong
+ * for a rehearsal that only needs to prove the chain side still works; this
+ * shortens it without touching the recording. Unset keeps the 8 s default.
+ */
+function replayCap(env: NodeJS.ProcessEnv): number | undefined {
+  const raw = env['AGENT_REPLAY_MAX_MS'];
+  if (raw === undefined || raw === '') return undefined;
+  if (!/^\d+$/.test(raw))
+    throw new Error(`AGENT_REPLAY_MAX_MS must be a whole number of milliseconds, not "${raw}"`);
+  return Number(raw);
 }
 
 function resolveChain(role: Role, env: NodeJS.ProcessEnv): string[] {
