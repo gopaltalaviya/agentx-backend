@@ -302,13 +302,58 @@ KEEPER_INTERVAL_MS=15000           # how often the keeper sweeps
 LOG_LEVEL=info
 INDEXER_POLL_MS=2000
 INDEXER_MAX_BACKOFF_MS=60000
+INDEXER_HEALTH_PORT=               # indexer: serve /health /ready /metrics here; unset → none
+
+# api
+NODE_ENV=development               # production → CORS_ORIGINS required, public-https endpoint URLs,
+                                   # /metrics only behind METRICS_TOKEN
+HOST=0.0.0.0                       # bind address (Railway: ::)
+CORS_ORIGINS=                      # comma-separated browser origins; unset → any (dev only)
+TRUST_PROXY=0                      # 1 behind Railway's proxy, so rate limits see the client IP
+RATE_LIMIT_PER_MINUTE=600          # per client IP, per process
+SIGNER_TIMEOUT_MS=30000            # how long the api waits for the signer
+STATUS_MAX_INDEXER_LAG_BLOCKS=150  # /v1/status: indexer "degraded" beyond this (+ confirmations)
+
+# every service
+METRICS_TOKEN=                     # bearer for /metrics; the api serves none in production without it
+DB_POOL_MAX=                       # connection pool size (defaults: api 5, signer 5, indexer 3)
+LOCK_POOL_MAX=10                   # signer: pool for per-agent nonce advisory locks
+SIGNER_DEV_PRIVATE_KEYS=           # signer, testnet only: several agent keys, matched by wallet
+
+# build metadata, reported on /health and /v1/status (docs/14 §3)
+GIT_SHA=                           # baked into images at build; else read at runtime if a hex commit
+BUILD_TIME=                        # ISO-8601; images record their own
+# RAILWAY_GIT_COMMIT_SHA           — set by Railway; the image build uses it when GIT_SHA is not given
+
+# workers (packages/agent-core)
+WORKER_POLL_MS=1000                # how often a worker polls for jobs
+AGENT_REPLAY_MAX_MS=               # cached mode: cap each replayed call's recorded delay
+AGENTX_AGENT_ID=                   # the worker's own id; required with X402_PORT
+X402_PORT=                         # serve an x402 pay-per-request endpoint on this port
+X402_HOST=127.0.0.1
+X402_PUBLIC_URL=                   # the URL clients are quoted; default http://127.0.0.1:<X402_PORT>
 ```
+
+Scripts in `scripts/` read their own variables (`DEPLOYER_PRIVATE_KEY`,
+`FUNDER_PRIVATE_KEY`, `AGENT_B_PRIVATE_KEY`, `VERIFY_CHAIN_ID`,
+`CHECK_CHAIN_ID`, `DEMO_*`, `E2E_*`, `SLOW_RPC_*`); they are tools, not
+services, and are documented where they are used.
+
+> **Re-checked 2026-09-30** against every service's zod env schema
+> (`apps/*/src/main.ts`) and every `process.env` / `env[...]` read in
+> `apps/` and `packages/`. Seventeen names the services read were missing
+> here: `NODE_ENV`, `HOST`, `CORS_ORIGINS`, `TRUST_PROXY`,
+> `RATE_LIMIT_PER_MINUTE`, `SIGNER_TIMEOUT_MS`, `METRICS_TOKEN`,
+> `DB_POOL_MAX`, `LOCK_POOL_MAX`, `INDEXER_HEALTH_PORT`,
+> `SIGNER_DEV_PRIVATE_KEYS`, `AGENT_REPLAY_MAX_MS`, `AGENTX_AGENT_ID`,
+> `WORKER_POLL_MS`, `X402_HOST`, `X402_PORT`, `X402_PUBLIC_URL`.
+> `STATUS_MAX_INDEXER_LAG_BLOCKS`, `GIT_SHA` and `BUILD_TIME` are new.
 
 > **Corrected 2026-09-28.** The list above claimed to be complete while
 > omitting sixteen variables, including the three a worker needs to start at
 > all. Two entries were removed instead: `REDIS_URL`, because nothing in the
 > codebase imports a Redis client, and `API_JWT_SECRET`, because
-> authentication is scrypt-hashed API keys and there is no JWT anywhere —
+> authentication is hashed API keys (scrypt then; SHA-256 since 2026-09-30) and there is no JWT anywhere —
 > config that implies a mechanism which does not exist is worse than absent.
 > `EXPLORER_API_KEY` belongs to `agentx-contracts/.env`, not this one.
 >
