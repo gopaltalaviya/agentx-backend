@@ -73,8 +73,22 @@ describe('the HTTP surface', () => {
   it('answers a non-numeric agent id as an unknown agent, not a 500', async () => {
     const app = await build();
     const res = await app.inject({url: '/v1/agents/abc'});
-    expect(res.statusCode).toBe(409);
-    expect(res.json().code).toBe('AGENT_NOT_HIREABLE');
+    expect(res.statusCode).toBe(404);
+    expect(res.json().code).toBe('NOT_FOUND');
+    await app.close();
+  });
+
+  /**
+   * A lookup of an agent that does not exist is a 404. It was 409
+   * AGENT_NOT_HIREABLE — a hiring refusal — so the site's agent page, which
+   * says "there is no agent #N" on NOT_FOUND, showed "could not load" and a
+   * pointless retry instead. Its mock API had always said 404.
+   */
+  it('answers an unknown numeric agent id with 404 NOT_FOUND', async () => {
+    const app = await build();
+    const res = await app.inject({url: '/v1/agents/999999'});
+    expect(res.statusCode).toBe(404);
+    expect(res.json().code).toBe('NOT_FOUND');
     await app.close();
   });
 

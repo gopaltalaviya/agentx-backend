@@ -193,8 +193,9 @@ created with it.
 pricePerTask, priceDisplay, walletAddress, score, completed, failed,
 successRate, active, explorerUrl}` (the list wraps them as
 `{chainId, network, rank, agents: […]}`). An unknown or non-numeric agent id answers
-`AGENT_NOT_HIREABLE` (409), not `NOT_FOUND` (404) — an inconsistency, left as is because
-clients may already branch on it.
+`NOT_FOUND` (404). Until Session 27 it answered `AGENT_NOT_HIREABLE` (409) — the hiring
+refusal — while the one client that branches on it, the interface's agent page, expects
+`NOT_FOUND`; hiring an unknown or unhireable agent is still 409.
 
 **`PATCH /v1/agents/:id`** — own agent only; `{pricePerTask?, active?,
 description?}` → `{agentId, pricePerTask, active}`.

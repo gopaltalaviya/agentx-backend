@@ -124,7 +124,9 @@ export async function registerAgentRoutes(app: FastifyInstance, deps: RouteDeps)
     const {id} = request.params as {id: string};
     // Anything but a positive integer names no agent — and must not reach
     // Postgres as NaN, which answered 500.
-    if (!/^[1-9]\d{0,15}$/.test(id)) throw new AgentxError(ErrorCode.AGENT_NOT_HIREABLE, `no agent ${id}`);
+    // A lookup that finds nothing is NOT_FOUND. AGENT_NOT_HIREABLE is the
+    // hiring refusal (exists, but cannot be hired) and means something else.
+    if (!/^[1-9]\d{0,15}$/.test(id)) throw new AgentxError(ErrorCode.NOT_FOUND, `no agent ${id}`);
     const row = await db
       .select({
         id: agents.id,
@@ -149,7 +151,7 @@ export async function registerAgentRoutes(app: FastifyInstance, deps: RouteDeps)
       .limit(1);
 
     const agent = row[0];
-    if (!agent) throw new AgentxError(ErrorCode.AGENT_NOT_HIREABLE, `no agent ${id}`);
+    if (!agent) throw new AgentxError(ErrorCode.NOT_FOUND, `no agent ${id}`);
 
     const caps = await db
       .select({capability: agentCapabilities.capability})
