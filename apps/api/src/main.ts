@@ -1,8 +1,9 @@
 import {sql} from 'drizzle-orm';
+import {createPublicClient, http} from 'viem';
 import {z} from 'zod';
 import {loadConfig} from '@agentx/config';
 import {closeDb, createDb} from '@agentx/db';
-import {createMetrics, env, installShutdown, loadEnv, serviceLogger} from '@agentx/service';
+import {buildInfo, createMetrics, env, installShutdown, loadEnv, serviceLogger} from '@agentx/service';
 import {buildApp} from './app.js';
 import {makeSignerSubmit} from './submit.js';
 import {makeBudgetReader, makeIdentityReader, makePaymentReader} from './chain-reads.js';
@@ -24,6 +25,8 @@ const Env = z
     METRICS_TOKEN: z.string().optional(),
     LOG_LEVEL: env.logLevel(),
     DB_POOL_MAX: env.positiveInt(5),
+    /** Blocks the indexer may trail the chain head before /v1/status says 'degraded'. */
+    STATUS_MAX_INDEXER_LAG_BLOCKS: env.positiveInt(150),
   })
   // In production the browser origins must be named: `*` is fine for a local
   // demo and wrong for a deployment with a real front end.
@@ -38,6 +41,20 @@ const logger = serviceLogger('api', cfg.LOG_LEVEL);
 const config = loadConfig();
 const db = createDb(cfg.DATABASE_URL, {max: cfg.DB_POOL_MAX});
 const metrics = createMetrics('api');
+const build = buildInfo({service: 'api', packageJsonUrl: new URL('../package.json', import.meta.url)});
+
+// One head reader per chain for /v1/status: a short timeout and no retries —
+// a status page must answer "rpc: down" promptly, not wait out viem's retries.
+const heads = new Map(
+  Object.values(config.chains).map((c) => [
+    c.chainId,
+    createPublicClient({transport: http(c.rpcUrl, {timeout: 2_000, retryCount: 0})}),
+  ]),
+);
+const signerHealth = async () => {
+  const res = await fetch(`${cfg.SIGNER_URL}/health`, {signal: AbortSignal.timeout(2_000)});
+  if (!res.ok) throw new Error(`signer /health answered ${res.status}`);
+};
 
 // Resolved before the server starts: a deployment with no model key still
 // serves the marketplace, and `/health` says plainly whether it can run.
@@ -71,13 +88,19 @@ const app = await buildApp({
   }),
   readiness: {
     database: () => db.execute(sql`SELECT 1`),
-    signer: async () => {
-      const res = await fetch(`${cfg.SIGNER_URL}/health`, {signal: AbortSignal.timeout(2_000)});
-      if (!res.ok) throw new Error(`signer /health answered ${res.status}`);
-    },
+    signer: signerHealth,
   },
+  status: {
+    signer: signerHealth,
+    headBlock: (chainId) => heads.get(chainId)!.getBlockNumber({cacheTime: 0}),
+    maxIndexerLagBlocks: cfg.STATUS_MAX_INDEXER_LAG_BLOCKS,
+  },
+  build,
   metrics,
   ...(cfg.METRICS_TOKEN ? {metricsToken: cfg.METRICS_TOKEN} : {}),
+  // The API is the one service with a public domain: its metrics are not
+  // published to the internet by default.
+  requireMetricsToken: cfg.NODE_ENV === 'production',
   loggerInstance: logger,
 });
 
@@ -97,6 +120,9 @@ logger.info(
     chains: Object.keys(config.chains),
     orchestrator: Boolean(runExecutor),
     cors: cfg.CORS_ORIGINS,
+    build,
+    metrics:
+      cfg.NODE_ENV !== 'production' || Boolean(cfg.METRICS_TOKEN) ? 'served' : 'off (set METRICS_TOKEN)',
   },
   'api listening',
 );

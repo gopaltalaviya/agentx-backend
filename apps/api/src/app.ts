@@ -1,6 +1,6 @@
 import Fastify, {type FastifyBaseLogger, type FastifyInstance} from 'fastify';
 import helmet from '@fastify/helmet';
-import {registerMetrics, serviceOptions, withTimeout, type Metrics} from '@agentx/service';
+import {registerMetrics, serviceOptions, withTimeout, type BuildInfo, type Metrics} from '@agentx/service';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import type {ChainConfig} from '@agentx/config';
@@ -11,6 +11,7 @@ import {registerAgentRoutes} from './routes/agents.js';
 import {registerJobRoutes, type JobRouteDeps} from './routes/jobs.js';
 import {registerMetaRoutes} from './routes/meta.js';
 import {registerRunRoutes} from './routes/runs.js';
+import {registerStatusRoutes, type StatusDeps} from './routes/status.js';
 import {registerX402Routes} from './routes/x402.js';
 import {RunService, type RunExecutor} from './runs.js';
 import type {BudgetReader, IdentityReader, PaymentReader} from './chain-reads.js';
@@ -45,6 +46,14 @@ export interface AppDeps {
   /** Prometheus registry; `/metrics` is served when given. */
   metrics?: Metrics;
   metricsToken?: string;
+  /** Serve `/metrics` only behind `metricsToken` (production: the API has a public domain). */
+  requireMetricsToken?: boolean;
+  /** What is running — reported on `/health` and `/v1/status`. */
+  build?: BuildInfo;
+  /** Dependencies `/v1/status` reports on. */
+  status?: StatusDeps;
+  /** Called for every route as it is registered — the docs test lists them. */
+  onRoute?: (route: {method: string | string[]; url: string}) => void;
 }
 
 /**
@@ -61,6 +70,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     ...serviceOptions({trustProxy: deps.trustProxy ?? false}),
     ...(deps.loggerInstance ? {loggerInstance: deps.loggerInstance} : {logger: deps.logger ?? false}),
   });
+
+  if (deps.onRoute) {
+    const onRoute = deps.onRoute;
+    app.addHook('onRoute', (route) => onRoute({method: route.method, url: route.url}));
+  }
 
   const bus = deps.bus ?? new EventBus();
   // A second bus, not a shared namespace: job 7 and run 7 are unrelated, and
@@ -101,7 +115,12 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     crossOriginResourcePolicy: {policy: 'cross-origin'}, // the interface is on another origin
   });
 
-  if (deps.metrics) registerMetrics(app, deps.metrics, deps.metricsToken ? {token: deps.metricsToken} : {});
+  if (deps.metrics) {
+    registerMetrics(app, deps.metrics, {
+      ...(deps.metricsToken ? {token: deps.metricsToken} : {}),
+      requireToken: deps.requireMetricsToken ?? false,
+    });
+  }
 
   app.get('/ready', async (_request, reply) => {
     const checks = Object.entries(deps.readiness ?? {});
@@ -111,12 +130,16 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
           await withTimeout(check(), 2_000, `${name} did not answer within 2000 ms`);
           return [name, {ok: true}] as const;
         } catch (err) {
-          return [name, {ok: false, error: err instanceof Error ? err.message : String(err)}] as const;
+          // Named, never described: this endpoint is public, and a driver
+          // error names the internal host it could not reach. The reason is
+          // in the log.
+          app.log.warn({err, check: name}, 'readiness check failed');
+          return [name, {ok: false}] as const;
         }
       }),
     );
     const ok = results.every(([, r]) => r.ok);
-    const detail: Record<string, {ok: boolean; error?: string}> = {};
+    const detail: Record<string, {ok: boolean}> = {};
     for (const [name, result] of results) detail[name] = result;
     return reply.status(ok ? 200 : 503).send({ok, checks: detail});
   });
@@ -146,7 +169,16 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     subscribers: bus.subscriberCount + runBus.subscriberCount,
     /** Whether this deployment can start an orchestrator run at all. */
     orchestrator: Boolean(deps.runExecutor),
+    /** Which code this is: version, commit, build time. */
+    build: deps.build ?? null,
   }));
+
+  registerStatusRoutes(app, {
+    db: deps.db,
+    chains: deps.chains,
+    ...(deps.build ? {build: deps.build} : {}),
+    ...(deps.status ? {status: deps.status} : {}),
+  });
 
   await registerAgentRoutes(app, {
     db: deps.db,

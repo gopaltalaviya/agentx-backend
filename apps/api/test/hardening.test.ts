@@ -57,7 +57,7 @@ describe('the HTTP surface', () => {
     expect((await app.inject({url: '/health'})).statusCode).toBe(200);
     const ready = await app.inject({url: '/ready'});
     expect(ready.statusCode).toBe(503);
-    expect(ready.json().checks.signer).toEqual({ok: false, error: 'connection refused'});
+    expect(ready.json().checks.signer).toEqual({ok: false});
     await app.close();
   });
 
