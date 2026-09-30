@@ -55,6 +55,16 @@ export async function runWorker<T>(config: RunWorkerConfig<T>): Promise<void> {
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     process.on(signal, () => controller.abort());
   }
+  // A rejection nobody awaited used to be logged by Node and ignored, leaving
+  // a worker polling in a state nobody had reasoned about. Stop cleanly
+  // instead; the platform restarts it.
+  process.on('unhandledRejection', (err) => {
+    log(
+      `${config.capability}: unhandled rejection — stopping: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    process.exitCode = 1;
+    controller.abort();
+  });
 
   const network = await client.network().catch(() => null);
   log(

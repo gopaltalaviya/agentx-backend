@@ -21,6 +21,15 @@ if (!apiKey) {
   process.exit(1);
 }
 
+// A failure nobody awaited must not leave the host talking to a server in an
+// unknown state — and must never reach stdout, which is the protocol.
+process.on('unhandledRejection', (err) => {
+  process.stderr.write(
+    `agentx mcp: unhandled rejection: ${err instanceof Error ? err.stack : String(err)}\n`,
+  );
+  process.exit(1);
+});
+
 try {
   const server = await buildServer({
     baseUrl,
