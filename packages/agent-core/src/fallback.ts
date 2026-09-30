@@ -63,7 +63,10 @@ export class FallbackBrain implements Brain {
           throw err;
         }
         if (err instanceof BrainUnavailable) {
-          failures.push(`${brain.name}(${err.reason})`);
+          // The reason AND the provider's own words. `gemini(outage)` alone
+          // cannot tell a retired model from a bad key from a 500, and the
+          // fix for each is different.
+          failures.push(`${brain.name}(${err.reason}: ${err.message})`);
           const next = this.chain[i + 1];
           this.opts.logger?.warn(
             {provider: brain.name, reason: err.reason, next: next?.name ?? 'none'},

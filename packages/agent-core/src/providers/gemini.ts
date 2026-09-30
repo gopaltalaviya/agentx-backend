@@ -13,7 +13,9 @@ export class GeminiBrain extends JsonHttpBrain {
   protected readonly model: string;
 
   constructor(
-    model = process.env['GEMINI_MODEL'] ?? 'gemini-2.5-flash',
+    // gemini-2.5-flash answered 404 "no longer available to new users" on
+    // 2026-09-30, naming this as its replacement. GEMINI_MODEL overrides it.
+    model = process.env['GEMINI_MODEL'] ?? 'gemini-3.8-flash',
     private readonly apiKey = process.env['GEMINI_API_KEY'],
   ) {
     super();
@@ -28,8 +30,10 @@ export class GeminiBrain extends JsonHttpBrain {
 
   protected buildRequest(req: CompletionRequest<unknown>, jsonSchema: object) {
     return {
-      url: `${this.endpoint()}?key=${this.apiKey}`,
-      headers: {},
+      // In a header, never the query string. A URL is what ends up in error
+      // messages, proxy logs and traces; a key in one is a key in all of them.
+      url: this.endpoint()!,
+      headers: {'x-goog-api-key': this.apiKey!},
       body: {
         systemInstruction: {parts: [{text: req.system}]},
         contents: [{role: 'user', parts: [{text: req.prompt}]}],

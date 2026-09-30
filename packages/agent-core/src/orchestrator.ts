@@ -97,10 +97,13 @@ export interface RunReport {
   spent: string;
   /** True when at least one subtask settled: partial success is still success. */
   delivered: boolean;
+  /** Why no plan was produced, when none was. */
+  planError?: string;
 }
 
 export type OrchestratorEvent =
   | {kind: 'planned'; subtasks: number; reasoning: string}
+  | {kind: 'plan-failed'; reason: string}
   | {kind: 'discovered'; capability: string; candidates: number}
   | {kind: 'selected'; capability: string; agentId: number; price: string; reason: string}
   | {kind: 'hired'; capability: string; jobId: string; amount: string; explorerUrl: string}
@@ -120,6 +123,8 @@ export interface OrchestratorOptions {
 
 export class Orchestrator {
   private readonly judge: Judge;
+  /** This orchestrator's own agent id, learned at the start of each run. Never a candidate. */
+  private self: number | null = null;
 
   constructor(private readonly opts: OrchestratorOptions) {
     this.judge = new Judge(opts.judgeBrain ?? opts.brain);
@@ -137,9 +142,26 @@ export class Orchestrator {
     // discovery. Capability strings are protocol data — constrained to
     // kebab-case by a database CHECK — not agent prose, so this adds no
     // injection surface.
-    const offered = await this.availableCapabilities();
-    const plan = await this.plan(goal, offered).catch(() => null);
+    //
+    // Read the budget first: it also says who WE are. The orchestrator is a
+    // registered agent too, and without knowing its own id it offered its own
+    // capability to the planner — a live chaos run planned an `orchestration`
+    // step, chose the orchestrator, and the API refused it as a self-hire.
+    const budget = await this.opts.client.budget();
+    this.self = Number(budget.agentId) || null;
+    const offered = await this.availableCapabilities(this.self);
+    // The reason is KEPT. This was `.catch(() => null)`, so a key the provider
+    // rejected, an exhausted quota and a model that answered off-schema all
+    // reported the same thing — "could not reach a model" — and the one run
+    // that could have said which cost a second run to find out.
+    let planError: string | undefined;
+    const plan = await this.plan(goal, offered).catch((err: unknown) => {
+      planError = err instanceof Error ? err.message : String(err);
+      return null;
+    });
     if (!plan || plan.subtasks.length === 0) {
+      planError ??= 'the plan had no subtasks';
+      this.emit({kind: 'plan-failed', reason: planError});
       return {
         goal,
         plan,
@@ -147,6 +169,7 @@ export class Orchestrator {
         answer: null,
         spent: '0',
         delivered: false,
+        planError,
       };
     }
     this.emit({kind: 'planned', subtasks: plan.subtasks.length, reasoning: plan.reasoning});
@@ -154,7 +177,6 @@ export class Orchestrator {
     // Split what may be spent across the plan up front. Spending it all on
     // subtask one and discovering subtask three is unaffordable is worse than
     // being modest throughout.
-    const budget = await this.opts.client.budget();
     const perStep = divide(BigInt(budget.dailyRemaining), plan.subtasks.length);
     const ceiling = minOf(perStep, BigInt(budget.maxSingleSpend));
 
@@ -264,12 +286,14 @@ export class Orchestrator {
       return this.skip({...base, status: 'budget-exceeded', detail: 'no budget remaining'});
     }
 
-    const candidates = await this.opts.client.discover({
-      capability: spec.capability as never,
-      maxPrice: ceiling.toString(),
-      rank: 'balanced',
-      limit: 10,
-    });
+    const candidates = (
+      await this.opts.client.discover({
+        capability: spec.capability as never,
+        maxPrice: ceiling.toString(),
+        rank: 'balanced',
+        limit: 10,
+      })
+    ).filter((c) => c.agentId !== this.self);
     this.emit({kind: 'discovered', capability: spec.capability, candidates: candidates.length});
 
     if (candidates.length === 0) {
@@ -294,7 +318,20 @@ export class Orchestrator {
       );
       if (pool.length === 0) break;
 
-      const chosen = await this.select(spec, pool);
+      // A model outage while CHOOSING is a failed step, not a failed run.
+      // This used to escape `run()` entirely: one 503 from the provider after
+      // a good plan ended the demo with nothing hired and no report, where
+      // every other model call in the loop already degraded to a decision.
+      let chosen: AgentSummary | null;
+      try {
+        chosen = await this.select(spec, pool);
+      } catch (err) {
+        return this.skip({
+          ...base,
+          status: 'failed',
+          detail: `could not choose an agent: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
       if (!chosen) break;
       tried.add(chosen.agentId);
 
@@ -499,9 +536,9 @@ export class Orchestrator {
   // ── model calls ────────────────────────────────────────────────────────
 
   /** The distinct capabilities on offer right now, from discovery. */
-  private async availableCapabilities(): Promise<string[]> {
+  private async availableCapabilities(self: number | null): Promise<string[]> {
     const agents = await this.opts.client.discover({limit: 50}).catch(() => []);
-    return [...new Set(agents.flatMap((a) => a.capabilities))].sort();
+    return [...new Set(agents.filter((a) => a.agentId !== self).flatMap((a) => a.capabilities))].sort();
   }
 
   private async plan(goal: string, offered: string[]): Promise<Plan> {

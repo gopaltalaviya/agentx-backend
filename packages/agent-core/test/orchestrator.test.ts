@@ -273,6 +273,45 @@ describe('the branches a live demo actually hits', () => {
     expect(report.delivered).toBe(false);
     expect(calls.hired).toBe(0);
   });
+
+  /**
+   * Live chaos run, 2026-09-30: llama3 planned an `orchestration` step, and
+   * the only agent offering it was the orchestrator. It chose itself; the API
+   * refused the self-hire; the step broke.
+   */
+  it('never offers itself to the planner, nor hires itself', async () => {
+    const {orchestrator, calls, brain} = build({
+      budget: async () => ({agentId: '7', dailyRemaining: '500000', maxSingleSpend: '50000'}),
+    });
+
+    const report = await orchestrator.run('goal');
+    expect(calls.hired).toBe(0);
+    expect(report.steps.every((s) => s.status === 'no-candidate')).toBe(true);
+    // Agent 7 is the only agent offering market-research, and agent 7 is us.
+    const planPrompt = brain.seen.find((r) => r.schemaName === 'Plan')?.prompt;
+    expect(planPrompt).toBeDefined();
+    expect(planPrompt).not.toContain('market-research');
+  });
+
+  /** Live, 2026-09-30: Gemini planned, then answered 503 while choosing an agent. */
+  it('ends a step, not the run, when the model fails while choosing an agent', async () => {
+    const {orchestrator, calls} = build({}, {Selection: 'throw'});
+
+    const report = await orchestrator.run('goal');
+    expect(report.steps.length).toBeGreaterThan(0);
+    expect(report.steps.every((s) => s.status === 'failed')).toBe(true);
+    expect(report.steps[0]!.detail).toMatch(/could not choose an agent: Selection unavailable/);
+    expect(calls.hired).toBe(0);
+  });
+
+  /** A rejected key, a spent quota and an off-schema answer are different fixes. */
+  it('says why planning failed, in the report and as an event', async () => {
+    const {orchestrator, events} = build({}, {Plan: 'throw'});
+
+    const report = await orchestrator.run('goal');
+    expect(report.planError).toMatch(/Plan unavailable/);
+    expect(events).toContainEqual({kind: 'plan-failed', reason: report.planError});
+  });
 });
 
 describe('spending discipline', () => {

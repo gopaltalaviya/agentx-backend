@@ -103,7 +103,7 @@ describe('the fallback chain', () => {
 
   it('reports every provider that failed when none succeed', async () => {
     const chain = [new StubBrain('a', 'rate_limit'), new StubBrain('b', 'auth')];
-    await expect(new FallbackBrain(chain).complete(req)).rejects.toThrow(/a\(rate_limit\).*b\(auth\)/);
+    await expect(new FallbackBrain(chain).complete(req)).rejects.toThrow(/a\(rate_limit: .*b\(auth: /);
   });
 
   it('announces a fallback rather than degrading silently', async () => {
@@ -239,6 +239,38 @@ describe('provider adapters report themselves unconfigured without a key', () =>
     await expect(new GeminiBrain(undefined, undefined).complete(req)).rejects.toThrow(
       /no API key or endpoint configured/,
     );
+  });
+});
+
+describe('when every provider fails', () => {
+  it('keeps what each provider said, not only the category', async () => {
+    const {FallbackBrain, BrainUnavailable} = await import('../src/index.js');
+    const down = {
+      name: 'gemini',
+      complete: async () => {
+        throw new BrainUnavailable('gemini', 'outage', '404 models/gemini-9 is not found');
+      },
+      available: async () => true,
+    };
+    await expect(new FallbackBrain([down as never]).complete(req)).rejects.toThrow(
+      /gemini\(outage: gemini: 404 models\/gemini-9 is not found\)/,
+    );
+  });
+});
+
+describe('a key never travels in a URL', () => {
+  /**
+   * A URL is what ends up in error messages, proxy logs and traces. Gemini's
+   * key was sent as `?key=` until 2026-09-30.
+   */
+  it('sends the Gemini key as a header', async () => {
+    const {GeminiBrain} = await import('../src/index.js');
+    const brain = new GeminiBrain('gemini-3.8-flash', 'test-key-not-real') as unknown as {
+      buildRequest: (r: unknown, s: object) => {url: string; headers: Record<string, string>};
+    };
+    const {url, headers} = brain.buildRequest(req, {});
+    expect(url).not.toContain('test-key-not-real');
+    expect(headers['x-goog-api-key']).toBe('test-key-not-real');
   });
 });
 

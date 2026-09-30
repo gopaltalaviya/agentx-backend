@@ -58,6 +58,8 @@ function print(event: OrchestratorEvent): void {
   switch (event.kind) {
     case 'planned':
       return console.log(`  plan      ${event.subtasks} subtask(s) — ${event.reasoning}`);
+    case 'plan-failed':
+      return console.log(`  plan      FAILED — ${event.reason}`);
     case 'discovered':
       return console.log(`  discover  ${event.capability}: ${event.candidates} candidate(s)`);
     case 'selected':
