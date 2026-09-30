@@ -2,14 +2,19 @@
 #
 # One image recipe for every AGENTX service:
 #
-#   docker build --build-arg SERVICE=@agentx/api \
-#                --build-context contracts=../agentx-contracts -t agentx-api .
+#   docker build --build-arg SERVICE=@agentx/api -t agentx-api .
 #
 # SERVICE is the workspace package: @agentx/api, @agentx/signer,
-# @agentx/indexer, or an agent (@agentx/research-bot, …). The `contracts`
-# build context supplies the chain facts the config loader reads — networks,
-# parameters, deployed addresses, ABIs — from the agentx-contracts checkout,
-# so an image always carries the exact deployment it was built against.
+# @agentx/indexer, or an agent (@agentx/research-bot, …). The chain facts the
+# config loader reads — networks, parameters, deployed addresses, ABIs — come
+# from `chain/`, a committed copy of agentx-contracts kept exact by
+# `scripts/sync-chain-facts.mjs` (CI fails on drift). That is what lets a
+# hosted build that clones one repo (Railway) build at all, and an image
+# always carries the exact deployment it was built against.
+#
+# To build against a live agentx-contracts checkout instead, replace the
+# `contracts` stage with a named context:
+#   --build-context contracts=../agentx-contracts
 #
 # The runtime stage holds only the service and its production dependencies,
 # runs as the unprivileged `node` user, and has no build tools, no source
@@ -24,6 +29,11 @@ ENV PNPM_HOME=/pnpm PATH=/pnpm:$PATH
 # since been rotated, so `corepack enable` fails to verify pnpm.
 RUN npm install -g pnpm@9.12.0 --no-fund --no-audit
 WORKDIR /repo
+
+# The default chain facts: chain/ in this repo. A named build context called
+# `contracts` replaces this stage entirely.
+FROM scratch AS contracts
+COPY chain/ /
 
 FROM base AS build
 ARG SERVICE

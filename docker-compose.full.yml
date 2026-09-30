@@ -13,10 +13,8 @@ name: agentx-full
 x-build: &build
   context: .
   dockerfile: Dockerfile
-  # The chain facts every image carries — networks, parameters, deployed
-  # addresses, ABIs — from the sibling agentx-contracts checkout.
-  additional_contexts:
-    contracts: ../agentx-contracts
+  # The chain facts every image carries come from chain/ (see the
+  # Dockerfile): the same single-repo build a hosted deployment runs.
 
 x-chain: &chain
   ENABLED_CHAIN_IDS: ${ENABLED_CHAIN_IDS:-10143}

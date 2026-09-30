@@ -148,16 +148,22 @@ agentx-backend/
 > on GitHub, the thinking behind it was on one machine in a folder named
 > `temp`. No fourth repo was created; they went into the largest existing one.
 
-Each app is a separate Railway service off the same repo, with its own start
-command:
+Each app is a separate Railway service off the same repo, built from the one
+`Dockerfile` with a `SERVICE` build variable and a config file in
+`deploy/railway/`. The full runbook, variables included, is
+[docs/13](13-deploy.md).
 
-| Railway service | Start command | Notes |
-|---|---|---|
-| `api` | `pnpm --filter @agentx/api start` | public, has a domain |
-| `indexer` | `pnpm --filter @agentx/indexer start` | no public port |
-| `signer` | `pnpm --filter @agentx/signer start` | **private networking only**; needs `SIGNER_TOKEN` (shared with `api`) to listen beyond loopback; runs the keeper when `KEEPER_PRIVATE_KEY` is set |
-| `agents` | one service per bot, e.g. `pnpm --filter @agentx/research-bot start` | no public port |
-| Postgres | Railway plugin | |
+| Railway service | `SERVICE` | Config | Notes |
+|---|---|---|---|
+| `api` | `@agentx/api` | `api.json` | public, has a domain; runs migrations before each deploy |
+| `signer` | `@agentx/signer` | `signer.json` | **private networking only**; needs `SIGNER_TOKEN` (shared with `api`) to listen beyond loopback, and `SIGNER_HOST=::` on Railway; runs the keeper when `KEEPER_PRIVATE_KEY` is set |
+| `indexer` | `@agentx/indexer` | `indexer.json` | no public port |
+| workers | e.g. `@agentx/research-bot` | `worker.json` | optional; no public port |
+| Postgres | Railway plugin | | |
+
+The images build from this repo alone: the chain facts come from `chain/`, a
+committed copy of `agentx-contracts` that CI checks for drift
+(`scripts/sync-chain-facts.mjs`).
 
 There is no Redis service: one was provisioned early and nothing ever used it
 (see the comment in `docker-compose.yml`).
@@ -168,9 +174,6 @@ nothing.
 `mcp` is **not** a Railway service: it speaks MCP over stdio, so a client
 spawns it rather than calling it over HTTP. Hosting it would mean building a
 transport it does not have.
-
-`railway.json` does not exist yet; Railway deployment is M5 work and is not
-started.
 
 `signer` must not be exposed publicly. Railway private networking only; the
 API reaches it at its internal hostname and presents `SIGNER_TOKEN`. Without
