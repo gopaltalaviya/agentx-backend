@@ -1,7 +1,14 @@
 import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, it} from 'vitest';
 import {createServer, type Server} from 'node:http';
 import {fileURLToPath} from 'node:url';
-import {decodeFunctionData, encodeAbiParameters, parseTransaction, toFunctionSelector, type Hex} from 'viem';
+import {
+  decodeFunctionData,
+  encodeAbiParameters,
+  parseTransaction,
+  recoverTransactionAddress,
+  toFunctionSelector,
+  type Hex,
+} from 'viem';
 import {privateKeyToAccount} from 'viem/accounts';
 import {sql} from 'drizzle-orm';
 import {loadConfig, loadAbis} from '@agentx/config';
@@ -47,7 +54,7 @@ interface ChainState {
   /** AgentAccount.sessionKeys(key).expiry, by lowercased key address. */
   sessionExpiry: Record<string, bigint>;
   /** The last broadcast, decoded — where it went and what it carried. */
-  lastTx?: {to: string | undefined; data: Hex | undefined};
+  lastTx?: {to: string | undefined; data: Hex | undefined; raw: Hex};
   /** When set, eth_sendRawTransaction fails with this message. */
   broadcastError?: string;
   broadcasts: number;
@@ -132,7 +139,7 @@ function rpc(method: string, params: unknown[]): unknown {
       state.broadcasts++;
       {
         const tx = parseTransaction(params[0] as Hex);
-        state.lastTx = {to: tx.to ?? undefined, data: tx.data};
+        state.lastTx = {to: tx.to ?? undefined, data: tx.data, raw: params[0] as Hex};
       }
       // The pending nonce advances, as a real node's does.
       state.nonce++;
@@ -635,6 +642,31 @@ describe('an agent whose wallet is an AgentAccount', () => {
     const agentId = await accountAgent();
     await expectRefusal(makeSigner().sign(request(agentId, {spend: 150_000n})), ErrorCode.BUDGET_EXCEEDED);
     expect(state.broadcasts).toBe(0);
+  });
+
+  /**
+   * A worker's account: caps of zero, because a worker never spends, and a
+   * signer holding every demo agent's key. Accept and submit spend nothing,
+   * so zero caps must not refuse them — and the key used must be the one
+   * THIS account granted. The first key held is some other agent's; signing
+   * with it reverts `NotAuthorized` and burns the gas limit.
+   */
+  it('signs a worker account’s zero-spend call with the key that account granted, not the first key held', async () => {
+    const agentId = await accountAgent();
+    const WORKER_KEY = privateKeyToAccount(`0x${'02'.repeat(32)}`);
+    state.perTaskCap = 0n;
+    state.dailyCap = 0n;
+    state.dailyRemaining = 0n;
+    state.sessionExpiry = {[WORKER_KEY.address.toLowerCase()]: BigInt(Math.floor(Date.now() / 1000) + 3600)};
+
+    await makeSigner({keys: {accountFor: async () => null, all: () => [ACCOUNT, WORKER_KEY]}}).sign(
+      request(agentId, {spend: 0n}),
+    );
+
+    expect(state.lastTx!.to!.toLowerCase()).toBe(CONTRACT);
+    expect(asExecute().functionName).toBe('execute');
+    const signedBy = await recoverTransactionAddress({serializedTransaction: state.lastTx!.raw as never});
+    expect(signedBy.toLowerCase()).toBe(WORKER_KEY.address.toLowerCase());
   });
 });
 

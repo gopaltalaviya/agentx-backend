@@ -25,7 +25,7 @@
 import {spawn} from 'node:child_process';
 import {randomBytes} from 'node:crypto';
 import {createWriteStream, mkdirSync} from 'node:fs';
-import {createPublicClient, createWalletClient, http, parseAbi, toFunctionSelector} from 'viem';
+import {createPublicClient, createWalletClient, encodeFunctionData, http, keccak256, parseAbi, parseEventLogs, toFunctionSelector} from 'viem';
 import {privateKeyToAccount} from 'viem/accounts';
 import {foundry} from 'viem/chains';
 import postgres from 'postgres';
@@ -33,7 +33,7 @@ import {z} from 'zod';
 import {loadConfig, loadAbis} from '@agentx/config';
 import {createDb, closeDb} from '@agentx/db';
 import {AgentxClient} from '@agentx/sdk';
-import {Orchestrator, Worker, buildBrain, describeBrain, confidence} from '@agentx/agent-core';
+import {Orchestrator, Worker, buildBrain, describeBrain, confidence, serveX402} from '@agentx/agent-core';
 import {Indexer} from '../apps/indexer/dist/indexer.js';
 
 const CHAIN_ID = Number(process.env.VERIFY_CHAIN_ID ?? 31337);
@@ -169,10 +169,36 @@ try {
     'function approve(address,uint256) returns (bool)',
     'function balanceOf(address) view returns (uint256)',
   ]);
-  const write = async (address, abi, fn, args) =>
-    pub.waitForTransactionReceipt({
-      hash: await wallet.writeContract({address, abi, functionName: fn, args}),
-    });
+  // Sign ONCE, then broadcast the same bytes until the node has them.
+  //
+  // viem does not retry `eth_sendRawTransaction`, rightly: re-running
+  // `writeContract` after a dropped response signs a NEW transaction on a new
+  // nonce, and if the first one had landed, the action happens twice. But the
+  // same signed bytes are idempotent — same hash, same nonce — so resending
+  // them is safe whatever happened to the first attempt. The slow-RPC chaos
+  // run found this: one injected 503 on the harness's own setup transaction
+  // aborted the demo, while every service behind it rode the same failures out.
+  const send = async (client, request) => {
+    const prepared = await client.prepareTransactionRequest(request);
+    const raw = await client.signTransaction(prepared);
+    const hash = keccak256(raw);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await pub.sendRawTransaction({serializedTransaction: raw});
+        break;
+      } catch (err) {
+        const msg = `${err.shortMessage ?? ''} ${err.details ?? ''} ${err.message ?? ''}`;
+        // Already there: an earlier attempt reached the node after all.
+        if (/already known|nonce too low|replacement transaction underpriced/i.test(msg)) break;
+        const transient = err.name === 'HttpRequestError' || err.name === 'TimeoutError' || /50[234]|fetch failed|ECONNRESET/i.test(msg);
+        if (!transient || attempt >= 5) throw err;
+        await sleep(500 * 2 ** attempt);
+      }
+    }
+    return pub.waitForTransactionReceipt({hash});
+  };
+  const write = (address, abi, fn, args) =>
+    send(wallet, {to: address, data: encodeFunctionData({abi, functionName: fn, args})});
 
   const identity = chain.erc8004['identityRegistry'];
   const token = chain.contracts['PaymentToken'];
@@ -212,7 +238,13 @@ try {
   // account, only to the escrow, only within the caps.
   const factory = chain.contracts['AgentAccountFactory'];
   const accountAbi = abis['AgentAccount'];
-  const salt = `0x${firstId.toString(16).padStart(64, '0')}`;
+  // CREATE2 salts, unique per RUN, not per agent id. They were the next
+  // ERC-8004 id alone — but a run that aborts after creating an account and
+  // before registering an identity leaves that id unused, so the next run
+  // derives the same salt and `createAccount` reverts on the address it
+  // already occupies. The run's start time goes in the high bits.
+  const runSalt = (n) => `0x${((BigInt(Date.now()) << 64n) | n).toString(16).padStart(64, '0')}`;
+  const salt = runSalt(firstId);
   const orchestratorWallet = await pub.readContract({
     address: factory, abi: abis['AgentAccountFactory'], functionName: 'predictAddress', args: [DEPLOYER.address, salt],
   });
@@ -237,7 +269,39 @@ try {
     (_, i) => `0x${(i + 1).toString(16).padStart(2, '0').repeat(32)}`,
   );
   const workerAccounts = workerKeys.map((k) => privateKeyToAccount(k));
-  const workerWallets = workerAccounts.map((a) => a.address);
+
+  // ── the workers act through AgentAccounts too ───────────────────────
+  // A worker never spends, so its account is the narrowest one possible:
+  // caps of zero, a session key with a budget of zero, and the escrow as the
+  // only target with `acceptJob` and `submitResult` as the only selectors. A
+  // stolen worker key can then accept and deliver work — which is all it
+  // could ever legitimately do — and nothing else: it cannot move the
+  // account's earnings, hire anyone, or grant itself an allowance.
+  //
+  // Each worker's OWN key is its session key. One shared hot key would race
+  // for nonces: the signer locks per agent, but a nonce belongs to a key.
+  //
+  // Payouts land in the account, so the earnings are the owner's to sweep —
+  // the account's kill switch, and the only way money leaves it.
+  const workerCaps = {perTaskCap: 0n, dailyCap: 0n, allowlistOnly: true};
+  const workerSelectors = ['acceptJob', 'submitResult'].map((fn) =>
+    toFunctionSelector(abis['TaskEscrow'].find((x) => x.type === 'function' && x.name === fn)),
+  );
+  const workerWallets = [];
+  for (const [i, key] of workerAccounts.entries()) {
+    const workerSalt = runSalt(firstId + BigInt(i + 1));
+    const account = await pub.readContract({
+      address: factory, abi: abis['AgentAccountFactory'], functionName: 'predictAddress', args: [DEPLOYER.address, workerSalt],
+    });
+    await write(factory, abis['AgentAccountFactory'], 'createAccount', [DEPLOYER.address, workerSalt, workerCaps]);
+    await write(account, accountAbi, 'setAllowedTarget', [escrow, true]);
+    for (const selector of workerSelectors) {
+      await write(account, accountAbi, 'setAllowedSelector', [selector, true]);
+    }
+    await write(account, accountAbi, 'grantSessionKey', [key.address, block.timestamp + 23n * 3600n, 0n]);
+    workerWallets.push(account);
+  }
+  ok(`${WORKERS.length} workers act through AgentAccounts — zero caps, escrow-only, acceptJob + submitResult only, each on its own session key`);
 
   for (const [i, w] of WORKERS.entries()) {
     await write(identity, abis['MockIdentityRegistry'], 'register', [`ipfs://${w.capability}`, workerWallets[i]]);
@@ -248,12 +312,14 @@ try {
   // worker that silently never accepts, and the signer's gas floor would
   // refuse before broadcasting — correctly, but the demo would just look
   // slow.
-  // 0.1 MON. It was 0.02, which covered the fast path; now an unproven
-  // worker is always hired through escrow — accept AND submit, two
-  // transactions a job — and a live chaos run ran a worker below the
-  // signer's gas floor mid-demo. These wallets are the same every run, so
-  // this is paid once, not per run.
-  const GAS_TOPUP = 100_000_000_000_000_000n;
+  // 0.5 MON. It was 0.02, which covered the fast path; then 0.1, when an
+  // unproven worker was always hired through escrow — accept AND submit, two
+  // transactions a job. Now every one of those is wrapped in
+  // AgentAccount.execute, and Monad reserves the full gas LIMIT — about
+  // 0.054 MON per wrapped call — so the workers need what the orchestrator's
+  // session key needs. These wallets are the same every run, so this is paid
+  // once, not per run.
+  const GAS_TOPUP = 500_000_000_000_000_000n;
   // Gas comes from FUNDER, whose documented job this is, rather than
   // draining DEPLOYER, which pays for every registration and bond. This runs
   // before the signer starts, so it cannot race the keeper for FUNDER's
@@ -264,13 +330,11 @@ try {
   // The orchestrator's session key needs more: every call it makes goes
   // through AgentAccount.execute, and Monad reserves the full gas LIMIT —
   // about 0.054 MON per wrapped call — so 0.1 MON ran dry after two.
-  const topups = [...workerAccounts.map((a) => [a, GAS_TOPUP]), [hot, 500_000_000_000_000_000n]];
+  const topups = [...workerAccounts.map((a) => [a, GAS_TOPUP]), [hot, GAS_TOPUP]];
   for (const [account, target] of topups) {
     const balance = await pub.getBalance({address: account.address});
     if (balance >= target) continue;
-    await pub.waitForTransactionReceipt({
-      hash: await gasPayer.sendTransaction({to: account.address, value: target - balance}),
-    });
+    await send(gasPayer, {to: account.address, value: target - balance});
   }
   ok(`${WORKERS.length + 1} agents on-chain (ids ${firstId}…${firstId + BigInt(WORKERS.length)}), ${WORKERS.length} workers bonded and funded for gas`);
 
@@ -466,7 +530,7 @@ try {
   console.log('');
   if (!report.plan) {
     console.error(
-      '\n  No plan was produced — the orchestrator could not reach a model.\n' +
+      `\n  No plan was produced — ${report.planError ?? 'the orchestrator could not reach a model'}.\n` +
         '  Set GEMINI_API_KEY (free tier) or GROQ_API_KEY and re-run, or record\n' +
         '  one run with AGENT_MODE=record to replay it free afterwards.\n',
     );
@@ -517,6 +581,112 @@ try {
   spentOnChain > 0n && spentOnChain <= caps.dailyCap
     ? ok(`the orchestrator's AgentAccount recorded ${chain.formatToken(spentOnChain)} spent, on chain, within its ${chain.formatToken(caps.dailyCap)} daily cap`)
     : fail(`AgentAccount spentToday is ${spentOnChain} against a daily cap of ${caps.dailyCap}`);
+
+  // ── x402: the same worker, paid per request over HTTP ─────────────────
+  // Opt-in, so the video's timing is unchanged. The research worker opens a
+  // paid endpoint; the orchestrator fetches it, gets a 402 quote, pays it
+  // through the facilitator — a directPay from its AgentAccount, under the
+  // same caps — and retries with the receipt. Then the receipt is replayed,
+  // which must be refused: the chain records that money moved, not how many
+  // times it was shown.
+  if (process.env.DEMO_X402 === '1') {
+    const r = WORKERS.findIndex((w) => w.capability === 'market-research' && !w.silent);
+    const researchClient = new AgentxClient({baseUrl: base, apiKey: workerAgents[r].apiKey, chainId: CHAIN_ID});
+    const researchInfo = await researchClient.getAgent(workerAgents[r].agentId);
+    const x402Server = await serveX402({
+      worker: new Worker({
+        client: researchClient,
+        brain: buildBrain({role: 'worker'}),
+        capability: WORKERS[r].capability,
+        role: WORKERS[r].role,
+        output: WORKERS[r].output,
+      }),
+      client: researchClient,
+      port: 0,
+      agentId: workerAgents[r].agentId,
+      price: researchInfo.pricePerTask,
+      payTo: researchInfo.walletAddress,
+      asset: token,
+      network: `eip155:${CHAIN_ID}`,
+      log: (e) => console.log(`    [x402] ${e.kind}${e.reason ? ` — ${e.reason}` : ''}${e.jobId ? ` job ${e.jobId}` : ''}`),
+    });
+    const x402Url = x402Server.url;
+    const question = {input: {question: 'What is the typical 2% order-book depth for ETH/USDC on major venues?'}};
+
+    const unpaid = await fetch(x402Url, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(question)});
+    unpaid.status === 402
+      ? ok(`x402: unpaid request answered 402, quoting ${chain.formatToken(BigInt((await unpaid.json()).accepts[0].maxAmountRequired))}`)
+      : fail(`x402: an unpaid request got ${unpaid.status}, not 402`);
+
+    const x402Started = Date.now();
+    const {response, settlement} = await client.payX402(x402Url, {maxAmount: '30000', body: question});
+    const answered = await response.json();
+    response.status === 200 && answered.output
+      ? ok(`x402: paid ${settlement.transaction.slice(0, 12)}… and served in ${((Date.now() - x402Started) / 1000).toFixed(1)} s — ${chain.explorerTx(settlement.transaction)}`)
+      : fail(`x402: paid, then got ${response.status}: ${JSON.stringify(answered)}`);
+
+    // The chain, not our word for it.
+    const x402Receipt = await pub.getTransactionReceipt({hash: settlement.transaction});
+    const directPaid = parseEventLogs({abi: abis['TaskEscrow'], logs: x402Receipt.logs, eventName: 'DirectPaid'});
+    directPaid.some((e) => e.args.workerAgentId === firstId + BigInt(r + 1))
+      ? ok(`x402: DirectPaid on chain to worker ${firstId + BigInt(r + 1)}, ${chain.formatToken(directPaid[0].args.amount)}`)
+      : fail('x402: no DirectPaid to the research worker in the settlement receipt');
+
+    const replayed = await fetch(x402Url, {
+      method: 'POST',
+      headers: {'content-type': 'application/json', 'x-payment': settlement.paymentHeader},
+      body: JSON.stringify(question),
+    });
+    const replayBody = await replayed.json();
+    replayed.status === 402 && replayBody.error === 'already_redeemed'
+      ? ok('x402: the same receipt replayed was refused — already_redeemed')
+      : fail(`x402: a replayed receipt got ${replayed.status} ${JSON.stringify(replayBody)}`);
+
+    await x402Server.close();
+  }
+
+  // ── a stolen worker key, tried against its own account ────────────────
+  // Simulated with eth_call AS the worker's session key: no gas, no state,
+  // and the same checks a broadcast would meet. Each must be refused by the
+  // account itself — a refusal from our signer would prove nothing about a
+  // key that has left it.
+  const refusedBy = async (label, args, expected) => {
+    try {
+      await pub.simulateContract({account: workerAccounts[0], address: workerWallets[0], abi: accountAbi, ...args});
+      fail(`a stolen worker key could ${label}`);
+    } catch (err) {
+      const name = err.cause?.data?.errorName ?? err.cause?.reason ?? err.shortMessage;
+      name === expected
+        ? ok(`a stolen worker key cannot ${label} — ${expected}`)
+        : fail(`${label}: expected ${expected}, got ${name}`);
+    }
+  };
+  await refusedBy(
+    'move the earnings (USDC transfer)',
+    {functionName: 'execute', args: [token, encodeFunctionData({abi: parseAbi(['function transfer(address,uint256)']), functionName: 'transfer', args: ['0x000000000000000000000000000000000000dEaD', 1n]})]},
+    'TargetNotAllowed',
+  );
+  await refusedBy(
+    'hire another agent (createJob)',
+    {functionName: 'execute', args: [escrow, encodeFunctionData({abi: abis['TaskEscrow'], functionName: 'createJob', args: [firstId + 1n, firstId + 2n, 1n, `0x${'00'.repeat(32)}`, 3600n, 3600n]})]},
+    'SelectorNotAllowed',
+  );
+  await refusedBy('sweep the account to itself', {functionName: 'sweep', args: [workerAccounts[0].address, 1n]}, 'NotOwner');
+
+  // The earnings are the owner's. `sweep` is the one way money leaves a
+  // worker's account, and only the owner can call it.
+  const ownerBefore = await pub.readContract({address: token, abi: erc20, functionName: 'balanceOf', args: [DEPLOYER.address]});
+  let swept = 0n;
+  for (const account of workerWallets) {
+    const held = await pub.readContract({address: token, abi: erc20, functionName: 'balanceOf', args: [account]});
+    if (held === 0n) continue;
+    await write(account, accountAbi, 'sweep', [DEPLOYER.address, held]);
+    swept += held;
+  }
+  const ownerAfter = await pub.readContract({address: token, abi: erc20, functionName: 'balanceOf', args: [DEPLOYER.address]});
+  swept > 0n && ownerAfter - ownerBefore === swept
+    ? ok(`the owner swept ${chain.formatToken(swept)} of earnings out of the worker accounts`)
+    : fail(`sweep moved ${ownerAfter - ownerBefore}, expected ${swept}`);
 
   // Wait for the indexer to catch up, then check reputation came from a
   // settlement rather than from our own optimistic write.
@@ -612,6 +782,8 @@ function describeEvent(e) {
   switch (e.kind) {
     case 'planned':
       return `plan      ${e.subtasks} subtask(s) — ${e.reasoning}`;
+    case 'plan-failed':
+      return `plan      FAILED — ${e.reason}`;
     case 'discovered':
       return `discover  ${e.capability}: ${e.candidates} candidate(s)`;
     case 'selected':
