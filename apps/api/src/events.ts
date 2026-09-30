@@ -100,8 +100,14 @@ export function streamEvents(
   topicId: number,
   replay: StreamEvent[] = [],
 ): void {
+  // Writing to the raw socket skips Fastify's reply pipeline, and with it
+  // the headers hooks have already set on the reply — CORS above all. Without
+  // them a browser on another origin (the site, in production) refuses the
+  // stream, and a live run looks frozen. So carry them over explicitly.
+  const prepared = reply.getHeaders() as Record<string, string | number | string[]>;
+
   if (bus.streamCount >= bus.maxStreams) {
-    reply.raw.writeHead(503, {'content-type': 'application/problem+json', 'retry-after': '5'});
+    reply.raw.writeHead(503, {...prepared, 'content-type': 'application/problem+json', 'retry-after': '5'});
     reply.raw.end(
       JSON.stringify({
         type: 'https://agentx.dev/errors/upstream-unavailable',
@@ -116,6 +122,7 @@ export function streamEvents(
   }
 
   reply.raw.writeHead(200, {
+    ...prepared,
     'content-type': 'text/event-stream',
     'cache-control': 'no-cache, no-transform',
     connection: 'keep-alive',

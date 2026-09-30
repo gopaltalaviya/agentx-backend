@@ -15,6 +15,11 @@
  *   AGENT_MODE=record pnpm demo     # spend once, replay free forever after
  *
  *   DEMO_VIA_API=1 pnpm demo        # run it through POST /v1/runs, as the interface does
+ *   DEMO_HOLD=1 pnpm demo           # then keep API, signer and workers up for the
+ *                                   # interface; the orchestrator's key goes to
+ *                                   # artifacts/demo-hold.json (never to stdout)
+ *   DEMO_HOLD=ui pnpm demo          # hold BEFORE the run: press Run on the site
+ *                                   # yourself (the video mode; cached replay works)
  *   DEMO_CHAOS=no-accept pnpm demo  # a 4th worker that never accepts
  *   DEMO_CHAOS=mid-job pnpm demo    # a 4th worker that accepts, then dies
  *
@@ -520,6 +525,48 @@ try {
   // one on a laptop: a live chaos run had a healthy worker still generating
   // when the step gave up. A dead worker is still caught within 45s — it
   // never accepts — so this only lengthens the wait for a slow LIVE one.
+  // Hold the stack open for the interface: the API, the signer, the three
+  // workers and the indexer stay up, so pressing Run on the site starts a
+  // real run that streams live. The orchestrator's key is a secret, so it is
+  // written to a gitignored file, never printed.
+  //
+  // DEMO_HOLD=ui holds BEFORE the scripted run and skips it: the site's Run
+  // button is then the first run on fresh agents, which is the one a cached
+  // recording can replay (a later run sees changed scores, so its prompts —
+  // and cache keys — differ). That is the mode for recording the video.
+  const holdForInterface = async () => {
+    const {writeFileSync} = await import('node:fs');
+    writeFileSync(
+      'artifacts/demo-hold.json',
+      JSON.stringify(
+        {api: base, orchestratorAgentId: orchestratorAgent.agentId, apiKey: orchestratorAgent.apiKey},
+        null,
+        2,
+      ),
+      {mode: 0o600},
+    );
+    console.log(
+      [
+        '',
+        `  holding the stack open — API ${base}`,
+        '  the orchestrator key is in artifacts/demo-hold.json (gitignored); paste it into the site',
+        '  build the site with NEXT_PUBLIC_API_URL set to that API, and start the demo with',
+        '  CORS_ORIGINS set to the site origin. Ctrl+C stops everything.',
+        '',
+      ].join(String.fromCharCode(10)),
+    );
+    await new Promise((resolve) => {
+      process.once('SIGINT', resolve);
+      process.once('SIGTERM', resolve);
+    });
+  };
+
+  if (process.env.DEMO_HOLD === 'ui') {
+    await holdForInterface();
+    await cleanup();
+    process.exit(0);
+  }
+
   let report;
   if (process.env.DEMO_VIA_API) {
     // The way the interface runs it: POST /v1/runs with the orchestrator's
@@ -896,6 +943,8 @@ try {
   }
 
   if (report.answer) console.log(`\n  answer: ${report.answer}\n`);
+
+  if (process.env.DEMO_HOLD && process.env.DEMO_HOLD !== 'ui') await holdForInterface();
 
   await Promise.race([Promise.all(workers), sleep(100)]);
   await Promise.race([indexing, sleep(100)]);

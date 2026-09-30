@@ -3,6 +3,7 @@ import {fileURLToPath} from 'node:url';
 import type {FastifyInstance} from 'fastify';
 import {loadConfig} from '@agentx/config';
 import {createDb, closeDb, type Db} from '@agentx/db';
+import {sql} from 'drizzle-orm';
 import {buildApp, EventBus} from '../src/app.js';
 
 /**
@@ -87,5 +88,40 @@ describe('a browser on another origin', () => {
       headers: {origin: 'https://agentx.example'},
     });
     expect(ours.headers['access-control-allow-origin']).toBe('https://agentx.example');
+  });
+});
+
+/**
+ * Found in a real browser against the real API: the live trace never arrived.
+ * The event stream writes its headers straight to the socket, which skipped
+ * the CORS headers every other route gets — so a site on another origin (all
+ * of them, in production) had EventSource blocked, and a run looked frozen.
+ * The mock API the interface's smoke test uses sends `*` for everything, so
+ * nothing but a real browser on a real API could see it.
+ */
+describe('a live event stream from another origin', () => {
+  it('carries the CORS headers, so the browser lets EventSource read it', async () => {
+    await db.execute(sql`TRUNCATE agents, runs, run_events RESTART IDENTITY CASCADE`);
+    const [agent] = (await db.execute(
+      sql`INSERT INTO agents (chain_id, owner_address, wallet_address, name, price_per_task, chain_agent_id)
+          VALUES (31337, '0xaa', '0xaa', 'Orchestrator', '0', 1) RETURNING id`,
+    )) as unknown as {id: number}[];
+    const [run] = (await db.execute(
+      sql`INSERT INTO runs (chain_id, agent_id, goal)
+          VALUES (31337, ${agent!.id}, 'a goal') RETURNING public_id`,
+    )) as unknown as {public_id: string}[];
+
+    const address = await pinned.listen({port: 0, host: '127.0.0.1'});
+    const controller = new AbortController();
+    try {
+      const res = await fetch(`${address}/v1/runs/${run!.public_id}/events`, {
+        headers: {origin: 'https://agentx.example', accept: 'text/event-stream'},
+        signal: controller.signal,
+      });
+      expect(res.headers.get('content-type')).toContain('text/event-stream');
+      expect(res.headers.get('access-control-allow-origin')).toBe('https://agentx.example');
+    } finally {
+      controller.abort();
+    }
   });
 });
