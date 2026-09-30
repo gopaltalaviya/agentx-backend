@@ -211,7 +211,7 @@ tests = [
     ("agentx-backend", "api/submit", 6, "Signer token, timeout, an unreachable signer is a retryable outage"),
     ("agentx-backend", "mcp/server", 6, "A real MCP session: schemas, annotations, tool errors"),
     ("agentx-backend", "signer/auth", 6, "SIGNER_TOKEN, loopback-only without one"),
-    ("agentx-backend", "api/cors", 5, "Cross-origin browser calls; credentials stay off"),
+    ("agentx-backend", "api/cors", 6, "Cross-origin browser calls; credentials stay off"),
     ("agentx-backend", "api/auth", 4, "ax_<keyId>_<secret>, one indexed lookup, legacy keys"),
     ("agentx-interface", "lib/api + subscribe", 13, "formatUnits past 2^53; SSE kinds, bad frames, terminal close"),
     ("agentx-interface", "lib/links", 9, "Explorer links: https + known host only; uuid and agent id parsing"),

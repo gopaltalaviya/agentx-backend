@@ -12,8 +12,8 @@
   chain, including a real dispute expired by the keeper after its 1 h
   timeout. Backend and interface have lint, formatting, coverage floors, CI,
   containers, metrics, graceful shutdown and a browser smoke test.
-- Overall: `██████████████████░░` 92% — **106 / 115 tasks**, **725 tests green**
-  (184 contracts · 496 backend · 45 interface) + 14 browser smoke tests
+- Overall: `██████████████████░░` 92% — **106 / 115 tasks**, **726 tests green**
+  (184 contracts · 497 backend · 45 interface) + 30 browser tests (14 smoke, 16 accessibility)
 
 ---
 
@@ -30,6 +30,14 @@
    stolen key, `SameOwner`, below-minimum — in ~232 s at the recorded pace, or
    **162 s** with `AGENT_REPLAY_MAX_MS=2000`. Screenshots:
    `agentx-interface/docs/screenshots/`.
+   **To film the website itself running a live run** (verified Sep 30):
+   build the site with `NEXT_PUBLIC_API_URL=http://127.0.0.1:8098`, serve it
+   (e.g. `next start -p 13300`), then run the demo with `DEMO_HOLD=ui
+   CORS_ORIGINS=http://127.0.0.1:13300 AGENT_MODE=cached
+   AGENT_REPLAY_MAX_MS=2000`. It registers fresh agents and waits; paste the
+   key from `artifacts/demo-hold.json` into `/demo` and press **Run** — the
+   trace streams live and settles 4/4 in ~76 s. It must be the first run on
+   those agents (a second run's prompts differ, so the cached replay misses).
 3. **Testnet MON.** You topped DEPLOYER up; after M5-06 and the screenshot
    run it holds **~23 MON** — about 45 demo runs. A run costs ~0.5.
 4. **Railway + Vercel** — follow [docs/13-deploy.md](docs/13-deploy.md): every
@@ -134,11 +142,11 @@ cd ../agentx-contracts && forge build
 
 # 3. Prove it is all still green
 FOUNDRY_PROFILE=ci forge test              # expect 184 passed
-cd ../agentx-backend && npx tsc -b && npx vitest run   # expect 496 passed
+cd ../agentx-backend && npx tsc -b && npx vitest run   # expect 497 passed
 cd ../agentx-interface && npx tsc --noEmit && npx vitest run && NEXT_PUBLIC_API_URL=http://127.0.0.1:8080 npx next build   # expect 40 passed
 ```
 
-Expected totals as of 2026-09-30: **184 contracts + 496 backend + 45 interface = 725** (Session 27, UI + operations), plus 14 Playwright smoke tests.
+Expected totals as of 2026-09-30: **184 contracts + 497 backend + 45 interface = 726** (Session 27), plus 30 Playwright tests (14 smoke, 16 axe accessibility).
 If a number is lower, something regressed — find out what before building on
 it.
 
@@ -490,10 +498,10 @@ and metrics ports; every service validates its environment at boot.
 | Suite | Count | State |
 |---|---|---|
 | Contracts — unit, fuzz, invariant (3 suites), adversarial, v2 findings | **184** | ✅ 100% branch on StakeVault/AgentAccount/Factory, 96.5% TaskEscrow |
-| Backend — 31 files | **496** | ✅ lint, format, typecheck of tests, coverage floors 75/78/74/75 |
+| Backend — 31 files | **497** | ✅ lint, format, typecheck of tests, coverage floors 75/78/74/75 |
 | Interface — unit | **45** | ✅ plus lint, `next build`, audit |
-| Interface — Playwright smoke | **14** | ✅ every page, production build, mocked API; status page, 375 px layout + mobile menu, reduced motion |
-| **Total** | **725** + 14 | |
+| Interface — Playwright smoke + axe | **30** | ✅ every page, production build, mocked API; status page, 375 px layout + mobile menu, reduced motion |
+| **Total** | **726** + 30 | |
 
 Every test that guards a Session 26 fix was run against the old code first
 and seen to fail.
@@ -678,6 +686,24 @@ the audit kept that for consistency and documented it. The interface's agent
 page branches on `NOT_FOUND`, and its mock API had always answered 404, so the
 smoke test agreed with the assumption: against the real API the page showed
 "could not load" and a useless retry. Now 404 (`e2ba24c`); 496 tests.
+
+### Session 27 — deep browser testing (backend `a1ccec9`, interface `ac93de4`)
+
+- **Walkthrough against the real stack**: 51 checks — every link on 18
+  pages, every control (tabs, FAQ, copy, rank modes, search, filters,
+  validation, keyboard, phone menu, docs pager) — all pass.
+- **The Run button, live, in a real browser**: needed an orchestrator the
+  running stack can sign for, so `demo.mjs` gained `DEMO_HOLD` (`ui`: hold
+  before the run; key to a gitignored file). The first attempt found a real
+  production bug: **the live event stream sent no CORS headers** (written to
+  the raw socket), so on any cross-origin deployment a run looked frozen;
+  the mock API's `*` had hidden it. Fixed with a test that failed first. The
+  retry: streamed live, 4/4 settled in 76 s, record/history/scores/landing
+  all updated, no console errors.
+- **axe-core accessibility audit** of all 16 pages (WCAG 2.1 AA): failed 6 at
+  first — in-text links distinguishable only by colour, keyboard-unreachable
+  scrolling code — both fixed; now 0 serious/critical.
+- The demo's figures now refresh after a run settles.
 
 ### Session 27 — a product site (interface `ef54dd8`)
 
