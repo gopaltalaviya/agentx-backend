@@ -35,6 +35,8 @@ export interface AppDeps {
   trustProxy?: boolean;
   /** Requests per client IP per minute. */
   rateLimitPerMinute?: number;
+  /** Refuse non-public, non-https agent endpoint URLs (production). */
+  requirePublicHttpsEndpoints?: boolean;
   logger?: boolean;
   /** A configured pino logger (redaction, service name). Wins over `logger`. */
   loggerInstance?: FastifyBaseLogger;
@@ -151,6 +153,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     chains: deps.chains,
     defaultChainId: deps.defaultChainId,
     ...(deps.readIdentity ? {readIdentity: deps.readIdentity} : {}),
+    requirePublicHttpsEndpoints: deps.requirePublicHttpsEndpoints ?? false,
   });
   await registerJobRoutes(app, {
     db: deps.db,

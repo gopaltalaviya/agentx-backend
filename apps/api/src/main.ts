@@ -61,6 +61,7 @@ const app = await buildApp({
   corsOrigins: cfg.CORS_ORIGINS,
   trustProxy: cfg.TRUST_PROXY,
   rateLimitPerMinute: cfg.RATE_LIMIT_PER_MINUTE,
+  requirePublicHttpsEndpoints: cfg.NODE_ENV === 'production',
   ...(runExecutor ? {runExecutor} : {}),
   submit: makeSignerSubmit({
     signerUrl: cfg.SIGNER_URL,

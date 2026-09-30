@@ -169,9 +169,19 @@ export class Indexer {
 
     const orphaned: string[] = [];
     for (const {txHash} of recorded) {
+      // ONLY "not found" means the chain no longer has it. Any other error is
+      // the RPC failing to answer — it used to count as an orphan too, so one
+      // blip during this check halted the indexer as if for a reorg. Thrown
+      // instead: the tick fails and the loop retries it with backoff.
       const receipt = await this.client
         .getTransactionReceipt({hash: txHash as `0x${string}`})
-        .catch(() => null);
+        .catch((err: unknown) => {
+          const e = err as {name?: string; message?: string};
+          if (e.name === 'TransactionReceiptNotFoundError' || /receipt not found/i.test(e.message ?? '')) {
+            return null;
+          }
+          throw err;
+        });
       if (!receipt) orphaned.push(txHash!);
     }
 

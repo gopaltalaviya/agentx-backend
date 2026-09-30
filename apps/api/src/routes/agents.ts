@@ -36,6 +36,26 @@ export interface RouteDeps {
   chains: Record<number, ChainConfig>;
   defaultChainId: number;
   readIdentity?: IdentityReader;
+  /**
+   * Refuse endpoint URLs that are not public https. Nothing fetches them
+   * today; the first thing that does must not be pointable at plain http, a
+   * loopback or a private address (SSRF). On in production.
+   */
+  requirePublicHttpsEndpoints?: boolean;
+}
+
+/** Hostnames and literal addresses that name this machine or a private network. */
+const PRIVATE_HOST =
+  /^(localhost|.*\.local|.*\.internal|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|0\.|\[?::1\]?$|\[?f[cd][0-9a-f]{2}:)/i;
+
+export function isPublicHttpsUrl(raw: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  return url.protocol === 'https:' && !PRIVATE_HOST.test(url.hostname);
 }
 
 export async function registerAgentRoutes(app: FastifyInstance, deps: RouteDeps): Promise<void> {
@@ -159,6 +179,12 @@ export async function registerAgentRoutes(app: FastifyInstance, deps: RouteDeps)
    */
   app.post('/v1/agents', async (request, reply) => {
     const body = RegisterBody.parse(request.body);
+    if (deps.requirePublicHttpsEndpoints && body.endpointUrl && !isPublicHttpsUrl(body.endpointUrl)) {
+      throw new AgentxError(
+        ErrorCode.SCHEMA_MISMATCH,
+        'endpointUrl must be a public https URL — not http, a loopback or a private address',
+      );
+    }
     const chainId = body.chainId ?? defaultChainId;
     if (!enabled.includes(chainId)) {
       throw new AgentxError(ErrorCode.CHAIN_NOT_ENABLED, `chain ${chainId} is not enabled`);

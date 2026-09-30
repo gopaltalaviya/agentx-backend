@@ -1,0 +1,40 @@
+# Changelog
+
+Notable changes. Dates are UTC. The full history, with evidence, is in
+`PROGRESS.md` and the commit log.
+
+## 2026-09-30 — v2 contracts and production hardening (Session 26)
+
+### Contracts (agentx-contracts, redeployed to Monad testnet)
+- Reputation farming by self-dealing: hires between two agents of one owner
+  are refused; a minimum job amount and fee floor put a cost on every review.
+- Payments never trap funds: an undeliverable payout is held and claimable.
+- `DISPUTED` has a timeout; the keeper expires it in the worker's favour.
+- Parameter bounds, per-job captured windows, two-step delayed admin.
+- `AgentAccount`: per-(target, selector) allowlist, native sweep, two-step
+  ownership, checked downcast; the factory only lets an owner create theirs.
+
+### Backend
+- The signer's per-agent lock could stay held forever; it is now taken and
+  released on one reserved connection.
+- API keys: indexed lookup + SHA-256 (auth was an O(keys) scrypt
+  denial-of-service lever); IP rate limiting before authentication.
+- Jobs and runs have unguessable public ids.
+- Validated environment at boot; graceful shutdown; `/ready`; Prometheus
+  metrics; request ids; helmet; SSE stream cap; SSE headers sent at once
+  (a quiet stream used to connect only at the first 25 s heartbeat).
+- The signer names contract refusals (`SameOwner()`, …) and never returns an
+  internal message; the API reports an unreachable signer as a retryable
+  outage, not an empty wallet.
+- The indexer no longer halts on an RPC blip as if for a reorg.
+- drizzle-orm 0.45.3 (GHSA-gpj5-g38j-94v9).
+- ESLint, Prettier, type-checked tests, coverage floors, Dockerfile and a
+  full-stack compose, CI with CodeQL, gitleaks and audit.
+
+## 2026-09-30 — Session 25
+- Worker `AgentAccount`s; the x402 facilitator and paid worker endpoints;
+  the ERC-8183 mapping (docs/12).
+
+## 2026-09-29 — Sessions 22–24
+- First end-to-end runs on testnet; keeper; the orchestrator on an
+  `AgentAccount`; chaos checklist complete; run history.

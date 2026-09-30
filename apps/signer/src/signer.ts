@@ -59,7 +59,11 @@ export interface SignerDeps {
   abis: Record<string, Abi>;
   /** Refuse to sign below this much native currency, rather than emitting a failing tx. */
   gasFloorWei?: bigint;
-  logger?: {info: (o: unknown, m?: string) => void; warn: (o: unknown, m?: string) => void};
+  logger?: {
+    info: (o: unknown, m?: string) => void;
+    warn: (o: unknown, m?: string) => void;
+    error: (o: unknown, m?: string) => void;
+  };
 }
 
 export class SignerService {
@@ -69,7 +73,7 @@ export class SignerService {
 
   constructor(private readonly deps: SignerDeps) {
     this.pub = createPublicClient({transport: http(deps.chain.rpcUrl)});
-    this.log = deps.logger ?? {info: () => {}, warn: () => {}};
+    this.log = deps.logger ?? {info: () => {}, warn: () => {}, error: () => {}};
     this.gasFloor = deps.gasFloorWei ?? 10n ** 16n; // 0.01 native
   }
 
@@ -265,15 +269,30 @@ export class SignerService {
         });
       } catch (err) {
         // Nothing left the building, so nothing was spent.
-        if (reserved) await this.releaseOffChain(req.agentId, req.spend).catch(() => undefined);
+        // Neither of these may hide the broadcast error below, so neither
+        // rethrows — but neither is silent any more. A lost release leaves the
+        // agent's budget wrongly reduced; a lost status update leaves the row
+        // 'pending', and every retry of the key is refused as "in flight".
+        // Both are an operator's to fix, so both are logged at error level.
+        if (reserved) {
+          await this.releaseOffChain(req.agentId, req.spend).catch((releaseErr: unknown) =>
+            this.log.error(
+              {err: releaseErr, agentId: req.agentId, spend: req.spend.toString()},
+              'could not release a reserved spend after a failed broadcast — the budget is under-reported',
+            ),
+          );
+        }
 
-        // Record the failure rather than leaving the row 'pending' forever,
-        // so the key can be retried once whatever broke is fixed.
         await db
           .update(signerTxs)
           .set({status: 'failed'})
           .where(eq(signerTxs.id, slot.id))
-          .catch(() => undefined);
+          .catch((statusErr: unknown) =>
+            this.log.error(
+              {err: statusErr, signerTxId: slot.id, idempotencyKey: req.idempotencyKey},
+              'could not mark a failed broadcast as failed — the key stays "in flight" until fixed',
+            ),
+          );
 
         // The caller gets a sentence; the log keeps the whole error. A live
         // run once failed as "Missing or invalid parameters" and nothing

@@ -118,13 +118,17 @@ export class RunService {
 
       // Same ordering as the success path, for the same reason: the terminal
       // event must be durable before the state says the run has ended.
-      await emit({kind: 'failed', detail}).catch(() => undefined);
+      await emit({kind: 'failed', detail}).catch((e: unknown) =>
+        this.deps.log?.(e, `run ${args.runId}: could not record its failure event`),
+      );
 
       await this.deps.db
         .update(runs)
         .set({state: 'failed', error: detail, finishedAt: new Date()})
         .where(eq(runs.id, args.runId))
-        .catch(() => undefined);
+        .catch((e: unknown) =>
+          this.deps.log?.(e, `run ${args.runId}: could not mark it failed — it will read as running`),
+        );
     }
   }
 

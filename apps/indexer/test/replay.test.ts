@@ -514,6 +514,36 @@ describe('after a reorg', () => {
     }
   });
 
+  /**
+   * An RPC that cannot answer is not a chain that dropped the transaction.
+   * Treating any receipt error as "orphaned" meant one RPC blip during the
+   * rewind check HALTED the indexer, which is only meant to stop for a real
+   * reorg. An outage now fails the tick, which the loop retries with backoff.
+   */
+  it('treats an RPC failure as a failed tick, not as a dropped transaction', async () => {
+    await seedJob();
+    await feed(settledLog({logIndex: 3, blockNumber: 1000n}), 'settled', {fee: '200'});
+
+    const inner = indexer as unknown as {
+      client: unknown;
+      checkRewindWindow: (from: bigint, to: bigint) => Promise<void>;
+    };
+    const real = inner.client;
+    inner.client = {
+      getTransactionReceipt: async () => Promise.reject(new Error('HTTP request failed. Status: 503')),
+    };
+    try {
+      const err = await inner.checkRewindWindow.call(indexer, 990n, 1010n).then(
+        () => null,
+        (e: unknown) => e as Error,
+      );
+      expect(err?.message).toMatch(/503/);
+      expect(err?.message).not.toMatch(/0xabab/);
+    } finally {
+      inner.client = real;
+    }
+  });
+
   it('carries on when every recorded event in the window is still on chain', async () => {
     await seedJob();
     await feed(settledLog({logIndex: 3, blockNumber: 1000n}), 'settled', {fee: '200'});
