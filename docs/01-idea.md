@@ -101,8 +101,18 @@ allowlist) that the contract enforces, not only the application.
 > `PerTaskCapExceeded`, sending the USDC anywhere else reverts
 > `TargetNotAllowed`, and granting itself an allowance reverts `NotOwner`.
 >
-> The three workers never spend and still use plain EOAs. For an EOA the caps
-> are the agent's row in `spend_policies` (seeded from per-chain
+> Since 2026-09-30 the three workers act through `AgentAccount`s too, one
+> each, created by the owner (the deployer stands in for the human): caps of
+> zero, `allowlistOnly`, the escrow as the only target, and only the
+> `acceptJob` and `submitResult` selectors; the session key is the worker's
+> own key, with budget 0. Payouts land in the account and leave only by the
+> owner's `sweep`. Run live, 2/2 steps settled through worker accounts and the
+> owner swept 0.0891 MockUSDC. Holding a worker's session key (simulated with
+> `eth_call` against the account), a USDC transfer reverts `TargetNotAllowed`,
+> `createJob` reverts `SelectorNotAllowed` and `sweep` reverts `NotOwner`.
+>
+> Agents registered by others with a plain EOA (through `/register`, or the
+> e2e script) have their caps in `spend_policies` (seeded from per-chain
 > `defaultPerTaskCap` / `defaultDailyCap`), and the **signer** enforces them:
 > it checks and reserves the amount in one `UPDATE` under the per-agent lock,
 > over a rolling 24-hour window, and an agent with no policy row can spend

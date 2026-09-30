@@ -50,7 +50,7 @@ that succeeds completely still cannot take more than a known amount.
 | 2 | **Results enter as delimited data, never as instructions** | The model is told, in a frozen system prompt, that the block is untrusted third-party content |
 | 3 | **The judge runs with NO tools** | Even a fully successful injection into the judging call has nothing to call. It can only return a verdict |
 | 4 | **Spending caps are enforced outside the model** | The decisive layer. The per-task and daily caps are checked by the **signer**, the only process that holds signing keys, before it signs. A *completely* compromised orchestrator can only ask; it cannot sign, and the signer refuses a spend over `per_task_cap` or past `daily_cap` |
-| 5 | **On-chain `AgentAccount` policy, owner revoke and sweep** | In effect for the demo's orchestrator, the only agent that spends (since 2026-09-29). Its wallet is an `AgentAccount`: the contract enforces 0.1 MockUSDC per task and 1 per day, allows calls only to `TaskEscrow`'s five client functions, and the owner can revoke the signer's session key and sweep. This layer holds even if the signer is compromised. The three workers, which never spend, are plain EOAs, so it does not cover them |
+| 5 | **On-chain `AgentAccount` policy, owner revoke and sweep** | In effect for the demo's orchestrator, the only agent that spends (since 2026-09-29). Its wallet is an `AgentAccount`: the contract enforces 0.1 MockUSDC per task and 1 per day, allows calls only to `TaskEscrow`'s five client functions, and the owner can revoke the signer's session key and sweep. This layer holds even if the signer is compromised. Since 2026-09-30 it covers the three workers too: each acts through an `AgentAccount` with zero caps that allows only the escrow's `acceptJob` and `submitResult`, and only the owner can `sweep` its earnings out. It does not cover plain-EOA agents registered by others |
 
 How layers 4 and 5 work as built (2026-09-29): for the orchestrator's
 `AgentAccount`, the signer reads the caps from the contract to refuse early
@@ -80,8 +80,12 @@ the escrow reverted `TargetNotAllowed`, and granting itself an allowance
 reverted `NotOwner`. What it does not cover: within its caps, a hijacked
 orchestrator can still hire, and pay, any registered agent through the escrow
 (the allowlist is of contracts and functions, not of counterparties); a
-compromised signer can still move whatever the workers' EOAs hold; and in the
-demo the account's owner is the deployer key, standing in for a human's.
+compromised signer holding a worker's session key can still accept and submit
+on that worker's jobs (a USDC transfer, `createJob` and `sweep` with it were
+refused on chain: `TargetNotAllowed`, `SelectorNotAllowed`, `NotOwner`); it
+can still move whatever a plain-EOA agent registered by someone else holds;
+and in the demo the accounts' owner is the deployer key, standing in for a
+human's.
 
 ### What we deliberately do NOT do
 
@@ -168,6 +172,14 @@ and fast enough to watch.
 > `BRAIN_CHAIN_ORCHESTRATOR=ollama` — the orchestrator reads the second), not
 > Claude/Gemini/Groq; a cached replay reproduces that run with no model.
 > Three cached rehearsals took 155 s, 109 s and 111 s.
+>
+> **Gemini (2026-09-30).** The old default, `gemini-2.5-flash`, now answers 404
+> "no longer available to new users"; the default is `gemini-3.8-flash`
+> (override with `GEMINI_MODEL`), and the key is sent in the `x-goog-api-key`
+> header, never in the URL. With the new model Gemini produced good plans but
+> returned 503 "high demand" on two consecutive live runs, so the run recorded
+> for the video is again local Ollama `llama3` (live 268 s; cached replay
+> 150 s, every check passing, including x402 and the worker accounts).
 
 ---
 

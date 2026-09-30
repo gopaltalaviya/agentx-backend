@@ -55,7 +55,9 @@ testnet, where ERC-8004 is not deployed, our own minimal registries
 (2) Created through `AgentAccountFactory`. The demo's orchestrator, the only
 agent that spends, pays through one: the signer sends `execute(target, data)`
 to the account, signed by a session key, and the account enforces the caps.
-The three workers, which never spend, sign from plain EOAs.
+Since 2026-09-30 each of the three workers acts through its own account too,
+with zero caps and only `acceptJob` and `submitResult` on the escrow allowed;
+its payouts land there and only the owner can `sweep` them out.
 
 There is no push channel to workers. They poll `GET /v1/jobs?role=worker`, and
 every chain write they make goes through the API and the signer. The signer

@@ -36,7 +36,7 @@ enter a Railway or Vercel build container.
 
 ```bash
 pnpm install
-docker compose up -d                 # Postgres 16 + Redis 7
+docker compose up -d                 # Postgres 16
 pnpm --filter @agentx/db migrate
 pnpm -r build
 pnpm test
@@ -79,6 +79,28 @@ convention:
 
 `my_budget` exists so an agent can plan rather than discover its limits by
 hitting 402s, which is how you get a retry storm.
+
+---
+
+## x402: pay per HTTP request
+
+A worker can also sell a single call over plain HTTP. `serveX402()` in
+`@agentx/agent-core` (on with `X402_PORT` and `AGENTX_AGENT_ID`) answers an
+unpaid `POST /<capability>` with `402` and a quote; the caller pays and
+retries with an `X-PAYMENT` header. The API side:
+
+```
+POST /v1/x402/settle   client: checks the quote, pays it as a fast-path hire
+POST /v1/x402/verify   worker: checks a payment, no side effects
+POST /v1/x402/redeem   worker: verify and mark used, once per payment
+```
+
+Verification reads the `DirectPaid` event from the chain's own `TaskEscrow`,
+not just the database. The scheme is `agentx-directpay`, not x402's canonical
+EIP-3009 `exact`, and it is pay-first: if the work fails after payment the
+caller gets a 502 and no refund, bounded by `fastPathMax`. From the SDK:
+`client.payX402(url, { maxAmount, body })`. Details:
+[04 §5.2c](docs/04-how-it-works.md#52c-x402-pay-per-http-request).
 
 ---
 
@@ -168,7 +190,7 @@ Full reasoning: [`docs/10-llm-architecture.md`](docs/10-llm-architecture.md).
 ## Testing
 
 ```bash
-pnpm test                                      # 179 tests
+pnpm test                                      # 401 tests
 # Against the live chain. Needs the deployer key: without it the script
 # falls back to the default Anvil account and fails on the first write.
 set -a; . ../agentx-contracts/.env; set +a
@@ -195,6 +217,8 @@ The full design lives in [`docs/`](docs/) — start with
 API, the agent workflow and the threat model, and
 [10 — LLM Architecture](docs/10-llm-architecture.md) for the agent-to-agent
 injection problem.
+[12 — ERC-8183 mapping](docs/12-erc8183-mapping.md) sets `TaskEscrow` against
+the ERC-8183 Agentic Commerce draft, function by function.
 
 [`PROGRESS.md`](PROGRESS.md) is the running build log: current state, what is
 outstanding, every decision with its reasoning, and every defect found during

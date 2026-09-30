@@ -55,6 +55,7 @@ One human sentence in. Every payment after it is one agent paying another.
 | [06 — Repository Structure](06-repo-structure.md) | The 3-repo split, how ABIs and types cross boundaries, conventions |
 | [08 — Configuration Architecture](08-configuration.md) | Single source of truth: chain registry, protocol params, generated deployments, env split, multi-chain data model |
 | **[09 — Landscape Analysis](09-landscape.md)** | **Read before writing contract code.** ERC-8004, x402, AP2, Virtuals ACP; what not to build; honest competitive positioning |
+| [12 — ERC-8183 Mapping](12-erc8183-mapping.md) | `TaskEscrow` against ERC-8183 function by function; where the spec's prose and reference contract disagree; why conformance needs a new kernel, not an adapter |
 
 Start with **01**, then **02** for the shape of the system, then **04** when
 you are ready to write code.
@@ -77,7 +78,7 @@ agentx-interface    Next.js only     → Vercel
 | Integrate — already deployed on Monad | Build — nothing else has these |
 |---|---|
 | ERC-8004 **Identity Registry** `0x8004A169…a432` | **`TaskEscrow`** — job state machine, deadlines with permissionless exits, sole writer of settlement-backed feedback |
-| ERC-8004 **Reputation Registry** `0x8004BAa1…9b63` | **`AgentAccount`** — spending caps enforced *on-chain*, not on someone's server. The demo's orchestrator, the only agent that spends, pays through one (0.1 MockUSDC/task, 1/day, escrow-only); the three workers, which never spend, are still plain EOAs |
+| ERC-8004 **Reputation Registry** `0x8004BAa1…9b63` | **`AgentAccount`** — spending caps enforced *on-chain*, not on someone's server. Every agent in the demo acts through one: the orchestrator pays through its account (0.1 MockUSDC/task, 1/day, escrow-only), and each of the three workers has one with zero caps that may call only the escrow's `acceptJob` and `submitResult`; payouts land in the account and only the owner can `sweep` them out |
 | ERC-8004 Validation Registry *(coming soon)* | **`StakeVault`** — the custody ERC-8004 lacks; makes listings cost something |
 
 Two contracts from the original design were **deleted** rather than built.
@@ -90,18 +91,22 @@ See [docs/09](09-landscape.md).
 | | |
 |---|---|
 | Contracts | 128 tests, deployed and settling — `TaskEscrow` [`0x1b0959…027c`](https://testnet.monadexplorer.com/address/0x1b0959dfd32323e5a4749d5444c2e6435349027c) |
-| Backend | 363 tests — API, signer, indexer, MCP server, orchestrator, three worker bots |
+| Backend | 401 tests — API, signer, indexer, MCP server, orchestrator, three worker bots |
 | Interface | live demo page, marketplace, agent profile, register — builds clean and renders in a browser |
 
 `pnpm demo` plans, hires, judges and settles real jobs on testnet with a local
-model, and replays in about 156 s with no model (`AGENT_MODE=cached`). Since
+model, and replays in about 150 s with no model (`AGENT_MODE=cached`). Since
 2026-09-29 the orchestrator pays through an `AgentAccount`, and the account's
-own on-chain `spentToday` read 0.13 MockUSDC after a 3/3 run. All seven chaos
-items have been run and pass.
+own on-chain `spentToday` read 0.13 MockUSDC after a 3/3 run. Since
+2026-09-30 the three workers act through `AgentAccount`s too (2/2 steps settled
+live through worker accounts), and an x402 facilitator lets an agent be paid
+per HTTP request (`DEMO_X402=1`, live on testnet). All seven chaos items have
+been run and pass; no-accept, a silent worker and a slow lossy RPC were re-run
+live with worker accounts on 2026-09-30.
 
 **Outstanding:** Railway and Vercel are not deployed; the repos are private;
-the arbiter and fee recipient still default to the deployer; the backup video
-is not recorded.
+the arbiter and fee recipient default to the deployer (kept, by decision); the
+video is not recorded yet (the cached replay it will use runs in 150 s).
 
 **Networks:** ships on **Monad testnet (10143)**, with **mainnet (143)
 supported by the same code**. The network is configuration, never a code

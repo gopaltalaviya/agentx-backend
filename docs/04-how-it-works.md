@@ -32,8 +32,8 @@ The single most important design decision is what lives on-chain.
 - the outcome of each job and the hash of its result
 - the counters reputation is derived from
 - spending limits on agent wallets (where the wallet is an `AgentAccount`,
-  as the demo orchestrator's is; for a plain EOA wallet the signer holds the
-  caps off-chain — §3.2)
+  as every demo agent's is since 2026-09-30; for a plain EOA wallet the
+  signer holds the caps off-chain — §3.2)
 
 **Off-chain (everything else):**
 - job descriptions and result payloads
@@ -170,7 +170,7 @@ interface IReputationRegistry {                  // 0x8004BAa1…9b63
 |---|---|
 | Agent identity | `agentId` = the ERC-8004 ERC-721 token id. AGENTX mints nothing. |
 | Owner | `ownerOf(agentId)` |
-| Payout address | `getAgentWallet(agentId)`. The design has this be the `AgentAccount`. In the demo the orchestrator's is one; the three workers' are plain EOAs |
+| Payout address | `getAgentWallet(agentId)`. The design has this be the `AgentAccount`. In the demo every agent's is one: the orchestrator's and, since 2026-09-30, each of the three workers' |
 | Price | **Off-chain**, `agents.price_per_task` in Postgres. The API charges it and passes it to the contract as `amount`. No ERC-8004 metadata is written |
 | Capabilities | **Off-chain**, `agent_capabilities` in Postgres. Not mirrored to ERC-8004 |
 | Stake | `StakeVault.bondOf(agentId)` — ERC-8004 has no custody |
@@ -649,11 +649,24 @@ cannot exceed the daily cap or call a target the owner never allowlisted.
 > bound holds against a compromised signer: at most escrow hires within
 > 0.1 per task and 1 per day.
 >
-> The three workers never spend and are still registered with plain EOA
-> wallets, whose keys the signer holds. Their caps come from `spend_policies`
-> ([§3.2](#32-signer-service)), which holds against a hijacked model but not a
-> compromised signer — and a compromised signer can move whatever those EOAs
-> hold, including the workers' earnings.
+> **Workers (since 2026-09-30).** Each of the three workers now acts through
+> its own `AgentAccount`, created by the owner (the deployer, standing in for
+> a human): `perTaskCap` 0 and `dailyCap` 0, `allowlistOnly`, the escrow as
+> the only allowed target, and only the `acceptJob` and `submitResult`
+> selectors. The session key is that worker's own key with budget 0 — one key
+> per worker, because nonces belong to keys. Payouts land in the account, and
+> the owner's `sweep` is the only way money leaves it; workers still never
+> spend. Live on Monad testnet: 2/2 steps settled through worker accounts and
+> the owner swept 0.0891 MockUSDC. Calling as a thief holding a worker's
+> session key (`eth_call` against the account): a USDC transfer reverted
+> `TargetNotAllowed`; `createJob` on the escrow reverted `SelectorNotAllowed`;
+> `sweep` reverted `NotOwner`. So every agent in the demo holds its caps and
+> allowlists on chain. Agents registered by others with a plain EOA (through
+> `/register`, or `scripts/e2e.mjs`) still have caps only in `spend_policies`
+> ([§3.2](#32-signer-service)), which hold against a hijacked model but not a
+> compromised signer. Not covered: payees within the escrow (the account
+> allows `acceptJob` and `submitResult`, so a stolen worker key can still act
+> on that worker's jobs), and the owner in the demo is the deployer key.
 
 > ERC-4337 bundler support is explicitly **out of scope for the MVP**. The
 > account is a plain smart contract called by an EOA session key. The interface
@@ -723,7 +736,8 @@ hires at 0.02 and 0.05, and the threshold sits between them so that price
 alone would send the two down different routes. Since 2026-09-29 price is
 not enough: `auto` also needs the worker's score ≥ `fastPathMinScore`, and
 the demo's freshly registered agents score 50, so in the demo **every hire
-goes through escrow** and the fast path is not shown. Mainnet uses 0.50,
+goes through escrow** except an x402 payment (§5.2c, `DEMO_X402=1`), which
+is a `directPay`. Mainnet uses 0.50,
 which is the value a real deployment wants.
 
 ---
@@ -756,10 +770,12 @@ kill switch.
 > key is a dev key, not in a KMS, and nothing rotates it: the demo grants a
 > fresh one each run. Because the signer asks the account which keys it
 > trusts on every call, a `revokeSessionKey` takes effect on the next
-> request. The three workers do not follow the model: each is registered to
-> an EOA whose key the signer holds and which signs `TaskEscrow` calls
-> directly, so for them revoke and sweep do not exist, and the owner's
-> recourse is to stop the signer or move the EOA's funds.
+> request. Since 2026-09-30 the three demo workers follow the model too: each
+> has its own `AgentAccount`, and the signer holds that worker's key as the
+> account's session key (budget 0, only `acceptJob` and `submitResult`), so the
+> owner can revoke it and `sweep` the earnings (§2.4). An agent registered by
+> someone else to a plain EOA still has neither: the signer holds that key and
+> it signs `TaskEscrow` calls directly.
 
 ### 3.2 Signer service
 
@@ -829,8 +845,9 @@ POST /sign  { agentId, chainId, target, data, spend, idempotencyKey }
   only buy an early, readable refusal; the account enforces the per-task cap,
   daily cap, session-key budget and allowlists itself, and the signer keeps
   no off-chain reservation for it.
-- **Caps for EOA agents are enforced here.** For an EOA — in the demo, the
-  three workers — the on-chain check finds no `AgentAccount`, so the signer
+- **Caps for EOA agents are enforced here.** For an EOA — an agent
+  registered by someone else, e.g. through `/register` or `scripts/e2e.mjs`;
+  no demo agent since 2026-09-30 — the on-chain check finds no `AgentAccount`, so the signer
   holds the caps itself. Under the per-agent lock, after a replay has already returned
   and before anything is broadcast, one `UPDATE` on `spend_policies` tests
   `spend ≤ per_task_cap` and `spent_today + spend ≤ daily_cap` (rolling the
@@ -1296,6 +1313,59 @@ contract for an `AgentAccount`).
 `StakeVault.deposit` directly; putting it behind the API would mean the API
 moving an owner's funds, which is exactly the custody it does not have.
 
+### 5.2c x402 (pay per HTTP request)
+
+Built 2026-09-30 (M3-14/M3-15). A worker can sell one call of its capability
+over plain HTTP: an unpaid request gets `402` with a quote, the caller pays,
+retries with an `X-PAYMENT` header, and is served.
+
+**Scheme.** `agentx-directpay`, not x402's canonical `exact` (EIP-3009)
+scheme: MockUSDC has no `transferWithAuthorization`, and an AGENTX agent's key
+lives in the signer, not in the agent. Message shapes follow x402 v1
+(`PaymentRequirements`, `X-PAYMENT` / `X-PAYMENT-RESPONSE` headers); the
+network id is CAIP-2, `eip155:<chainId>`.
+
+```
+POST /v1/x402/settle   client: API key + Idempotency-Key. Pays a quote and
+                       returns the ready-made X-PAYMENT header
+POST /v1/x402/verify   worker: checks a payment; no side effects
+POST /v1/x402/redeem   worker: verify + mark used, atomically
+```
+
+- **Settle** checks the quote — network, `payTo` equal to the named agent's
+  registered wallet, asset equal to the chain's payment token, amount at most
+  `fastPathMax` — then pays it as a fast-path hire (`directPay`) through the
+  same code as `POST /v1/jobs`: same caps, same idempotency, same ERC-8004 ids.
+- **Verify and redeem** check that the payee is the caller, the job is on the
+  direct path, the bound resource URL matches, the amount is enough and the
+  transaction hash is the one that paid; and **on chain**, that the receipt
+  contains a `DirectPaid` event from the chain's own `TaskEscrow` to this
+  worker's ERC-8004 id, with this job's spec hash and enough amount. A pending
+  transaction is `payment_pending` (the worker waits up to 15 s); an
+  unreachable RPC is an error, never "valid". Redeem records the job in
+  `x402_redemptions` (migration 0003, primary key on the job id), so a receipt
+  is redeemed once; a replay is `already_redeemed`.
+- **Worker side:** `serveX402()` in `@agentx/agent-core`. `POST /<capability>`
+  answers 402 with a quote; with `X-PAYMENT` it redeems, does the work,
+  returns 200 with `X-PAYMENT-RESPONSE`, and records the result on the job.
+  Any worker enables it with `X402_PORT` and `AGENTX_AGENT_ID` in `runWorker`.
+- **Client side:** `client.payX402(url, { maxAmount, body })` in `@agentx/sdk`
+  (`maxAmount` is required), plus `x402Settle` / `x402Verify` / `x402Redeem`.
+
+**Pay-first, by definition.** Payment happens before the work. A paid request
+whose work fails gets an honest `502` and **no refund** — seen live when
+Gemini returned 503 mid-run. The exposure is capped by `fastPathMax` (0.03
+MockUSDC on testnet).
+
+Live on Monad testnet (`DEMO_X402=1 node scripts/demo.mjs`, 2026-09-30): the
+unpaid request got 402 quoting 0.02 MockUSDC; the orchestrator paid through its
+`AgentAccount` (tx
+`0x04ad1fe9…`) and was
+served; `DirectPaid` to worker 259 was confirmed on chain; replaying the same
+receipt was refused `already_redeemed`. It also passed under the slow-RPC
+chaos run and in the cached replay. Tests: `apps/api/test/x402.test.ts` and
+`packages/agent-core/test/x402.test.ts`, 25 between them.
+
 ### 5.3 Errors
 
 RFC 7807 problem details, with machine-readable codes agents can branch on:
@@ -1471,6 +1541,9 @@ escrow: submitted → client approves (or review window) → paid, feedback 100
 direct: delivery recorded off-chain; payment and feedback already happened
 ```
 
+A job created by an x402 payment (§5.2c) is skipped by this loop: the worker
+does that work inside the paid HTTP request, so it is never done twice.
+
 Workers take one capability each, handle jobs sequentially (one wallet, one
 nonce), and do not check price against a floor or the deadline before
 accepting.
@@ -1490,8 +1563,9 @@ agent applies the same three rules:
 2. Spending is capped outside the model. The demo orchestrator — the agent
    that reads results and spends — pays through an `AgentAccount`, so its
    per-task and daily caps and its escrow-only allowlist are enforced by the
-   contract. For an EOA agent (the three workers) the signer enforces them
-   from `spend_policies`. No text a result contains can raise them. A
+   contract, as do the three workers' accounts (zero caps, only `acceptJob`
+   and `submitResult`). For a plain-EOA agent the signer enforces them from
+   `spend_policies`. No text a result contains can raise them. A
    hijacked orchestrator can still spend up to its daily cap, on escrow
    hires; it cannot spend past it, even with the signer compromised too.
 3. Results are schema-validated **before** they reach the model. A result that
@@ -1535,7 +1609,7 @@ agent applies the same three rules:
 |---|---|
 | Contracts | everything about custody and outcome |
 | Indexer | liveness only — it can be slow, it cannot lie (events are signed by the chain) |
-| API / signer | availability and good errors, and the keys it holds. For an `AgentAccount` wallet (the demo orchestrator) policy is on-chain and the signer holds only a session key, so a compromise is bounded by the account. **For EOA agents (the three workers) it also holds the keys and enforces the caps itself** (§3.2), so a compromised signer bypasses them |
+| API / signer | availability and good errors, and the keys it holds. For an `AgentAccount` wallet (every demo agent: the orchestrator and, since 2026-09-30, the three workers) policy is on-chain and the signer holds only a session key, so a compromise is bounded by the account. **For plain-EOA agents (registered by others) it also holds the keys and enforces the caps itself** (§3.2), so a compromised signer bypasses them |
 | Keeper | liveness only — it sends exits the contract would accept from anyone, and holds only gas |
 | Agents | nothing |
 | Arbiter (MVP) | dispute outcomes only, and only for disputed jobs |
@@ -1560,10 +1634,10 @@ challengers — designed for, not built in three weeks.
 | T4 | **Client receives result, refuses to pay** | the hash of the delivered **output** is committed on-chain by `submitResult` before release; `reviewDeadline` + permissionless `autoApprove` settles without the client. Verified 2026-09-24 — until then the encoder fell back to the *spec* hash, committing to what was asked for rather than to what was delivered |
 | T5 | **Both go offline mid-job, funds stuck** | `CREATED`, `ACCEPTED` and `SUBMITTED` each have a deadline and a permissionless exit (invariant I5), and the keeper sends it once due. `DISPUTED` has neither: only the arbiter moves it |
 | T6 | **Reentrancy on settlement** | `nonReentrant`, checks-effects-interactions, `SafeERC20` |
-| T7 | **Signer key compromise** | Design: on-chain `AgentAccount` caps and allowlists bound the loss, and the owner can revoke and sweep. Session key lifetime **is** bounded on-chain: `grantSessionKey` reverts `SessionKeyTtlInvalid` for an expiry in the past or more than `MAX_SESSION_KEY_TTL` (1 day) ahead; factory redeployed 2026-09-23/24 to include it. **As built (2026-09-29), this applies to the spending agent.** The demo orchestrator pays through an `AgentAccount`, and the signer holds only its session key. Tested as a compromised signer with that key (`eth_call`): a 0.2 hire → `PerTaskCapExceeded(200000, 100000)`; USDC to `0xdEaD` → `TargetNotAllowed(token)`; granting itself an allowance → `NotOwner()`. The loss is bounded to escrow hires within 0.1/task and 1/day (and the key's budget of one day's cap), and the owner can revoke, which the signer honours on the next call. ⚠️ It does **not** apply to the three workers: they are EOAs whose keys the signer holds, so a compromised signer can move whatever they hold, including earnings. Access to the signer needs `SIGNER_TOKEN` (or loopback), which narrows who can ask, not what a compromise costs. In the demo the owner is the deployer key; on a real deployment it would be the human's, never on the server |
+| T7 | **Signer key compromise** | Design: on-chain `AgentAccount` caps and allowlists bound the loss, and the owner can revoke and sweep. Session key lifetime **is** bounded on-chain: `grantSessionKey` reverts `SessionKeyTtlInvalid` for an expiry in the past or more than `MAX_SESSION_KEY_TTL` (1 day) ahead; factory redeployed 2026-09-23/24 to include it. **As built (2026-09-29), this applies to the spending agent.** The demo orchestrator pays through an `AgentAccount`, and the signer holds only its session key. Tested as a compromised signer with that key (`eth_call`): a 0.2 hire → `PerTaskCapExceeded(200000, 100000)`; USDC to `0xdEaD` → `TargetNotAllowed(token)`; granting itself an allowance → `NotOwner()`. The loss is bounded to escrow hires within 0.1/task and 1/day (and the key's budget of one day's cap), and the owner can revoke, which the signer honours on the next call. Since 2026-09-30 it applies to the three workers too: each acts through an `AgentAccount` with zero caps and only `acceptJob`/`submitResult` on the escrow, and with a worker's session key a USDC transfer → `TargetNotAllowed`, `createJob` → `SelectorNotAllowed`, `sweep` → `NotOwner`; earnings leave only by the owner's sweep. ⚠️ It does **not** apply to plain-EOA agents registered by others: the signer holds their keys, so a compromised signer can move whatever they hold. Access to the signer needs `SIGNER_TOKEN` (or loopback), which narrows who can ask, not what a compromise costs. In the demo the owner is the deployer key; on a real deployment it would be the human's, never on the server |
 | T8 | **Replayed hire drains budget** | mandatory `Idempotency-Key`. The signer dedupes on **the key it is given**, stored `UNIQUE` in `signer_txs`; a replay returns the original `txHash` instead of signing again. `@agentx/sdk` derives that key from `keccak256(workerAgentId:canonicalJson(spec))` when the caller omits one, so an in-process retry is safe by default — but a caller supplying its own key controls dedupe, and two different keys for the same hire are two payments. Verified 2026-09-23. Since 2026-09-29 the API also stores the key on the job row (unique per client), so a retry returns the original job instead of inserting a second row, and a key reused for a different hire is `IDEMPOTENCY_CONFLICT` |
 | T9 | **Prompt injection via a result** | results are delimited untrusted data, schema-validated pre-model, and cannot alter spending caps, which the signer enforces outside the model (§7.3) |
-| T10 | **Runaway agent loop burning funds** | Design: per-task + daily caps enforced in the contract, not only the app; `my_budget` lets the agent see the wall before hitting it. **As built (2026-09-29):** the demo orchestrator, the only agent that spends, pays through an `AgentAccount` (0.1/task, 1/day, escrow-only), so the contract enforces its caps; the signer reads them first to refuse with `BUDGET_EXCEEDED` rather than a bare revert. A live run's `spentToday` read 0.13 MockUSDC. For EOA agents the signer enforces the caps from `spend_policies`, reserving each spend atomically under the per-agent lock; `dailyRemaining` falls as the agent spends (§3.2) |
+| T10 | **Runaway agent loop burning funds** | Design: per-task + daily caps enforced in the contract, not only the app; `my_budget` lets the agent see the wall before hitting it. **As built (2026-09-29):** the demo orchestrator, the only agent that spends, pays through an `AgentAccount` (0.1/task, 1/day, escrow-only), so the contract enforces its caps; the signer reads them first to refuse with `BUDGET_EXCEEDED` rather than a bare revert. A live run's `spentToday` read 0.13 MockUSDC. For plain-EOA agents the signer enforces the caps from `spend_policies`, reserving each spend atomically under the per-agent lock; `dailyRemaining` falls as the agent spends (§3.2) |
 | T11 | **Front-running `acceptJob`** to snipe good jobs | jobs are addressed to a named `workerAgentId`; there is no open mempool auction to snipe |
 | T12 | **Fee-on-transfer / rebasing token** breaking accounting | balance delta measured on every transfer-in, reverting with `TokenDeliveredLess` on mismatch — in `TaskEscrow.createJob`, `directPay` and `StakeVault.deposit`. There is no allowlist: there is exactly **one** payment token, set once as a governance parameter, which is the stronger property. Verified 2026-09-23 |
 | T13 | **Indexer reorg** writing a phantom payment | index only up to `head - confirmations` (2 on testnet, 5 on mainnet); store `last_block_hash`; on mismatch, rewind the cursor 2× `confirmations` and replay; `UNIQUE (chain_id, tx_hash, log_index)` makes replay idempotent. ⚠️ The rewind **re-reads** but does not **delete**: rows written from an orphaned block (event, payment, reputation bump) are not removed. Protection against a phantom payment rests on the confirmation lag |
@@ -1584,11 +1658,15 @@ State these in the submission rather than letting a judge find them:
   `DISPUTED` has no permissionless exit.
 - **No slashing game.** `slash()` exists and is role-gated but the MVP never
   calls it automatically.
-- **On-chain spending caps cover only the spending agent.** The demo
-  orchestrator pays through an `AgentAccount` (§2.4). The three workers are
-  EOAs: their caps are enforced by the signer, off-chain (§3.2), and a
-  compromised signer can move what they hold. The account's owner in the demo
-  is the deployer key, standing in for a human's.
+- **On-chain caps cover the demo's agents, not every agent.** The demo
+  orchestrator and, since 2026-09-30, the three workers act through
+  `AgentAccount`s (§2.4). An agent registered by someone else with a plain
+  EOA has its caps enforced by the signer, off-chain (§3.2), and a
+  compromised signer can move what it holds. Within the escrow, a stolen
+  worker session key can still accept and submit on that worker's jobs. The
+  accounts' owner in the demo is the deployer key, standing in for a human's.
+- **x402 is pay-first.** A paid request whose work then fails gets a `502`
+  and no refund (§5.2c), bounded by `fastPathMax`.
 - **The keeper is optional and single.** Without `KEEPER_PRIVATE_KEY`, no one
   sends the escrow's exits; with it, it is one process on one key.
 - **Indexer reorgs rewind but do not delete** rows written from orphaned

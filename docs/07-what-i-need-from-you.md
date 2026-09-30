@@ -109,7 +109,7 @@ Any one of these, in `agentx-backend/.env` (and Railway if deployed):
 
 | Variable | Cost | Notes |
 |---|---|---|
-| `GEMINI_API_KEY` | free tier, no card | aistudio.google.com |
+| `GEMINI_API_KEY` | free tier, no card | aistudio.google.com. Default model `gemini-3.8-flash` since 2026-09-30 (`gemini-2.5-flash` answers 404 to new users); override with `GEMINI_MODEL`. It returned 503 "high demand" on two consecutive live runs that day, so the recorded run stayed on Ollama |
 | `GROQ_API_KEY` | free tier, no card | console.groq.com |
 | `ANTHROPIC_API_KEY` | paid | set a **spend limit** on the key; the agents are autonomous |
 

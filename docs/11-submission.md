@@ -102,7 +102,12 @@ transferring the account's USDC to `0xdEaD` reverted `TargetNotAllowed(token)`,
 and granting itself an allowance reverted `NotOwner()`. What layer 4 does not
 cover, as built: payees — the allowlist is of contracts and functions, so
 within its cap a hijacked orchestrator can still hire any registered agent
-through the escrow; the three workers, which are EOAs whose keys the signer
+through the escrow; a worker's own jobs — since 2026-09-30 each worker acts
+through an `AgentAccount` with zero caps that allows only `acceptJob` and
+`submitResult` on the escrow, so a stolen worker session key was refused a
+USDC transfer (`TargetNotAllowed`), `createJob` (`SelectorNotAllowed`) and
+`sweep` (`NotOwner`), but can still accept and submit on jobs addressed to
+that worker; plain-EOA agents registered by others, whose keys the signer
 holds; and the owner, which in the demo is the deployer key standing in for a
 human's.
 There is deliberately **no keyword filtering**: it fails against paraphrase and
@@ -123,8 +128,13 @@ micro-payment fast path **unspecified**, and its own security note says a
 malicious evaluator "can complete/reject arbitrarily" and recommends a
 reputation system for high-value jobs. §2 is the evidence that a reputation
 system which is not payment-backed does not provide one. These are
-complementary; mapping `TaskEscrow` onto the ACP `Job` interface is the
-obvious next step and is explicitly post-hackathon.
+complementary. The function-by-function mapping is written:
+[12 — ERC-8183 mapping](12-erc8183-mapping.md). It records that the spec's
+prose and its reference contract disagree in about eight places, and that the
+two make opposite bets on silence after delivery: ERC-8183 refunds the client
+at expiry, `TaskEscrow`'s `autoApprove` pays the worker. Conformance would need
+a new kernel with AGENTX as the evaluator contract and an `IACPHook`, not an
+adapter, and is post-hackathon.
 
 ---
 
@@ -140,28 +150,41 @@ chain, and `TaskEscrow` has settled real jobs.
 | `AgentAccountFactory` | `0x51F75C30563d260FafF7dAB42ACf9fA57B82315D` |
 | ERC-8004 Identity (reference impl, absent upstream on testnet) | `0x784b42fe1307c70e61df82288f9084614a0ce4c0` |
 
-**498 tests** (counted 2026-09-29). 128 contracts (unit, fuzz, invariant,
-adversarial), 363 backend, 7 interface. 100% branch coverage on `TaskEscrow`
+**536 tests** (counted 2026-09-30). 128 contracts (unit, fuzz, invariant,
+adversarial), 401 backend, 7 interface. 100% branch coverage on `TaskEscrow`
 and `StakeVault`, the two that hold money. The invariants have been run at
 2,000 runs × 256 depth — 512,000 randomised state transitions each — and the
 fuzz properties at 100,000 runs.
 
-Every test added on Sep 29 was run against the code before its fix and seen
-to fail first.
+Every test added on Sep 29 and Sep 30 that guards a fix was run against the
+code before its fix and seen to fail first.
 
 **Built:** four contracts; a backend of API, signer (with a keeper that sends
 the escrow's permissionless exits when they fall due), indexer and an MCP
 server exposing eight tools; an orchestrator that retries a silent worker once
-with a different agent, and three worker bots; a Next.js interface with a live
+with a different agent, and three worker bots, each acting through its own
+`AgentAccount`; an x402 facilitator (`/v1/x402/settle`, `/verify`, `/redeem`)
+so a worker can be paid per HTTP request; a Next.js interface with a live
 demo page, marketplace, agent profile and registration.
 
 **The demo** (`pnpm demo`) runs on local Ollama `llama3` 8B, and a cached
 replay reproduces a recorded run with no model; three cached rehearsals took
-155 s, 109 s and 111 s, and one after the switch to `AgentAccount` 156 s. The
+155 s, 109 s and 111 s, one after the switch to `AgentAccount` 156 s, and one
+with worker accounts and x402 included 150 s (2026-09-30). The
 orchestrator pays through its `AgentAccount`; in the live run on testnet all
 three steps settled and the account's own `spentToday` read 0.13 MockUSDC,
-inside its 1 MockUSDC daily cap. Every step goes through escrow, because the agents are
-registered fresh with a score of 50 and the fast path requires 70. The demo
+inside its 1 MockUSDC daily cap. Since 2026-09-30 the three workers act
+through `AgentAccount`s too (zero caps; only the escrow's `acceptJob` and
+`submitResult`; payouts leave only by the owner's `sweep`): live, 2/2 steps
+settled through worker accounts and the owner swept 0.0891 MockUSDC. Every
+step goes through escrow, because the agents are
+registered fresh with a score of 50 and the fast path requires 70.
+`DEMO_X402=1` adds an x402 call: the unpaid request got 402 quoting 0.02
+MockUSDC, the orchestrator paid through its `AgentAccount` (tx
+`0x04ad1fe9…`),
+`DirectPaid` to worker 259 was confirmed on chain, and replaying the receipt
+was refused `already_redeemed`
+([04 §5.2c](04-how-it-works.md#52c-x402-pay-per-http-request)). The demo
 fails if any step ends `failed` or `timeout`. `DEMO_CHAOS=no-accept` and
 `DEMO_CHAOS=mid-job` add a broken worker; in a live `no-accept` run on
 testnet the orchestrator cancelled the unaccepted job after 45 s (chain job 85
@@ -170,6 +193,14 @@ read back as `REFUNDED`), re-hired, and all three steps settled.
 RPC, the "phone hotspot" chaos item: at 600–1800 ms per request with 5%
 failures the cached demo passed in 287 s, and at 1500–4000 ms with 15%
 failures in 464 s. That was the last of the seven chaos items; all pass.
+On 2026-09-30, with worker accounts, no-accept (cancelled and refunded at
+once, step re-hired and settled), a silent worker mid-job (abandoned,
+re-hired, escrow held to the work deadline for the keeper) and the slow lossy
+RPC (600–1800 ms, 5% injected failures; 23 of 500+ requests failed; passed in
+544 s) were run live again. The run recorded for the video is on local Ollama
+`llama3` (live 268 s; cached replay 150 s, all checks passing, x402 and worker
+accounts included): Gemini's new default model, `gemini-3.8-flash`, returned
+503 "high demand" on two consecutive live runs.
 
 ```bash
 # the whole stack, one real settlement, asserted on balances and the fee split
@@ -194,11 +225,22 @@ Stated here rather than left for a judge to find.
   permissionless exit, so the keeper cannot move it: if the arbiter never
   rules, its funds stay locked. The path beyond it is an optimistic challenge
   window with staked challengers — designed for, not built in three weeks.
-- **Only the spending agent has an `AgentAccount`.** The orchestrator pays
-  through one, so a compromised signer is bounded by its on-chain caps. The
-  three workers, which never spend, are plain EOAs: their caps are enforced by
-  the signer, off-chain, a compromised signer can move whatever they hold
-  (their earnings included), and owner revoke and sweep do not exist for them.
+- **Only the demo's agents have `AgentAccount`s.** The orchestrator pays
+  through one, and since 2026-09-30 each worker acts through one that can
+  spend nothing and call only `acceptJob` and `submitResult`, so a
+  compromised signer is bounded by on-chain caps and allowlists. The
+  allowlist is not of payees: within the escrow, a stolen worker session key
+  can still accept and submit on that worker's jobs. An agent registered by
+  someone else with a plain EOA (through `/register`, say) has its caps
+  enforced by the signer, off-chain; a compromised signer can move whatever it
+  holds, and owner revoke and sweep do not exist for it.
+- **x402 is pay-first, and not the canonical scheme.** A paid request whose
+  work fails gets a 502 and no refund (seen live when Gemini returned 503
+  mid-run), bounded by `fastPathMax`, 0.03 MockUSDC on testnet. The scheme is
+  `agentx-directpay`, not x402's EIP-3009 `exact`: MockUSDC has no
+  `transferWithAuthorization`, and an agent's key lives in the signer. A
+  stock x402 client does not implement this scheme; an AGENTX client pays
+  through `/v1/x402/settle`.
 - **The account's owner in the demo is the deployer key,** standing in for a
   human. On a real deployment it would be the human's own wallet, never held
   by the server. The session key is a dev key, not in a KMS, and nothing
@@ -319,3 +361,4 @@ live contracts.
 | Deck | [`docs/deck/agentx.pptx`](deck/agentx.pptx) |
 | Design | [`04 — How It All Works`](04-how-it-works.md), [`10 — LLM Architecture`](10-llm-architecture.md) |
 | Landscape | [`09 — Landscape`](09-landscape.md), including the ERC-8183 analysis |
+| ERC-8183 | [`12 — ERC-8183 mapping`](12-erc8183-mapping.md), `TaskEscrow` against the standard function by function |

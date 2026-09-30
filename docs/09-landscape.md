@@ -156,12 +156,25 @@ else in the landscape has:
   MockUSDC per task and 1 per day, allowlisted to the escrow alone, with the
   signer holding only a session key. Called as a compromised signer with that
   key, a 0.2 hire reverted `PerTaskCapExceeded`, a transfer out reverted
-  `TargetNotAllowed`, and self-granting an allowance reverted `NotOwner`. The
-  three workers, which never spend, are still EOAs whose caps the signer
-  enforces off-chain, and in the demo the account's owner is the deployer key
-  standing in for a human's.
+  `TargetNotAllowed`, and self-granting an allowance reverted `NotOwner`. Since
+  Sep 30 the three workers, which never spend, act through `AgentAccount`s too:
+  zero caps, the escrow as the only target, and only `acceptJob` and
+  `submitResult`; payouts land in the account and leave only by the owner's
+  `sweep`. With a worker's session key, a USDC transfer reverted
+  `TargetNotAllowed`, `createJob` reverted `SelectorNotAllowed` and `sweep`
+  reverted `NotOwner`. Plain-EOA agents registered by others still have their
+  caps enforced by the signer off-chain, and in the demo the accounts' owner
+  is the deployer key standing in for a human's.
 
 ### 4.4 Add the x402 bridge
+
+> **Built 2026-09-30 (M3-14/M3-15).** Settle, verify and redeem endpoints, a
+> worker-side `serveX402()`, and `client.payX402()` in the SDK, run live on
+> Monad testnet. The scheme is `agentx-directpay`, not the canonical EIP-3009
+> `exact` scheme, and payment is taken before the work, with no refund if the
+> work fails. Details and evidence:
+> [04 §5.2c](04-how-it-works.md#52c-x402-pay-per-http-request). The plan
+> below is kept as written.
 
 x402 is the payment standard with actual adoption, and it is not on Monad.
 ERC-8004's agent card even has an `x402Support` boolean.
@@ -176,7 +189,7 @@ Two pieces, both small:
 Under the hood, an x402 payment is just `directPay` on the fast path. The
 work is an adapter, not a second payment system.
 
-> **Cut first if time runs out.** This is P2 — the ERC-8004 integration is what
+> **Cut first if time runs out** (it was not). This is P2 — the ERC-8004 integration is what
 > the track is about; x402 is the reach.
 
 ### 4.5 Validation Registry — stretch only
@@ -245,7 +258,7 @@ an existing standard* — and let the specificity do the work.
 | `giveFeedback()` from escrow, with tags | +0.5 day |
 | `StakeVault.sol` + tests | +0.5 day |
 | Agent-card generation + hosting | +0.5 day |
-| x402 facilitator adapter (P2) | +1 day |
+| x402 facilitator adapter (P2; built 2026-09-30) | +1 day |
 | **Net** | **≈ breakeven, or −0.5 day if x402 is cut** |
 
 Better positioning, less contract code, a live standard to point at, and a
@@ -372,7 +385,7 @@ any non-owner account may submit a rating.
 |---|---|
 | "Require evidence-backed interactions (payment proofs or validated tasks)" | `TaskEscrow` is the **sole writer** of AGENTX feedback, and only after a settlement |
 | "Attach stakes/costs to feedback proportional to value controlled" | `StakeVault` — a listing costs a bond keyed to the ERC-8004 agent id |
-| "Per-funder caps, stake requirements" | Per-task and daily caps: on-chain by `AgentAccount` for the demo's spending agent (the orchestrator); enforced by the signer for EOA agents (the workers) |
+| "Per-funder caps, stake requirements" | Per-task and daily caps: on-chain by `AgentAccount` for every demo agent (the orchestrator and, since 2026-09-30, the workers); enforced by the signer for plain-EOA agents registered by others |
 | "Median or trimmed-mean aggregation instead of arithmetic mean" | ⬜ **not done** — scoring is Laplace-smoothed and volume-damped, which resists a single lucky job but not a coordinated ring. Worth stating as a limitation rather than claiming otherwise |
 
 This is independent third-party evidence that the design is the right one, and
@@ -401,7 +414,7 @@ text, not a summary:
 
 | | ERC-8183 | AGENTX |
 |---|---|---|
-| Agent spending caps | **not specified** | Per-task + daily caps, on-chain via `AgentAccount` for the demo orchestrator (the only agent that spends); signer-enforced for EOA agents |
+| Agent spending caps | **not specified** | Per-task + daily caps, on-chain via `AgentAccount` for every demo agent (the orchestrator, the only one that spends, and the three workers); signer-enforced for plain-EOA agents |
 | Staking / bonding | **not specified** | `StakeVault`, bond per agent id |
 | Dispute resolution | **not specified** — the evaluator is final | `dispute()` → arbiter, and the review window |
 | Micro-payment fast path | **not specified** — every job uses full escrow | `directPay` below `fastPathMax` |
@@ -424,9 +437,15 @@ not fill it.
 2. **Say it first.** The submission should name ERC-8183 and explain the
    relationship. A judge who knows the standard and finds no mention of it
    will assume we did not.
-3. **Post-hackathon, not now.** Mapping `TaskEscrow` onto the ACP `Job`
-   interface is the obvious next step and is explicitly **out of scope** with
-   15 days left and the demo not yet run end to end. Recorded as roadmap.
+3. **Post-hackathon, not now.** Conforming `TaskEscrow` to the ACP `Job`
+   interface is explicitly **out of scope** before the deadline. The mapping
+   itself is now written:
+   [12 — ERC-8183 mapping](12-erc8183-mapping.md) (2026-09-30). It finds that
+   the spec's prose and its reference contract disagree in about eight
+   places, that the two escrows make opposite bets on silence after delivery
+   (ERC-8183 refunds the client at expiry; `autoApprove` pays the worker), and
+   that conformance needs a new kernel with AGENTX as the evaluator contract
+   and an `IACPHook`, not an adapter. Recorded as roadmap.
 4. **One honest limitation to add** to the "not solved" list: scoring uses a
    damped mean, not a trimmed mean, so a coordinated ring of settled jobs
    between colluding agents would still move a score — it just has to pay full

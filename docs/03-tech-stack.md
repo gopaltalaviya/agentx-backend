@@ -168,9 +168,11 @@ As built (2026-09-29):
   the contract to refuse early with a clear error, then sends the call to the
   account as `execute(target, data)`, signed by a live session key (the
   owner's key as fallback). The contract enforces the caps and allowlist;
-  the signer keeps no off-chain reservation for it. The three workers use
-  plain EOAs, so for them the signer enforces the agent's `spend_policies`
-  row itself: it checks and reserves the spend in one `UPDATE` under the
+  the signer keeps no off-chain reservation for it. Since 2026-09-30 the
+  three demo workers act through `AgentAccount`s too (zero caps, only
+  `acceptJob` and `submitResult` on the escrow). For an agent with a plain
+  EOA wallet — one registered by someone else, e.g. through `/register` —
+  the signer enforces the agent's `spend_policies` row itself: it checks and reserves the spend in one `UPDATE` under the
   per-agent lock (rolling 24-hour window) and refuses an agent with no
   policy. That is enforcement outside the model, but not on-chain. See
   [04 §3.2](04-how-it-works.md#32-signer-service).
