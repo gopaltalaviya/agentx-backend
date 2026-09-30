@@ -10,6 +10,7 @@ import {
 import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import type { ChainConfig } from "@agentx/config";
 import { type Db, jobs } from "@agentx/db";
+import type { Metrics } from "@agentx/service";
 
 /**
  * The keeper: sends the escrow's permissionless exits when they fall due.
@@ -36,15 +37,22 @@ export const JobState = {
   CREATED: 1,
   ACCEPTED: 2,
   SUBMITTED: 3,
+  DISPUTED: 4,
 } as const;
 
-export type Exit = "expireUnaccepted" | "expireUndelivered" | "autoApprove";
+export type Exit =
+  | "expireUnaccepted"
+  | "expireUndelivered"
+  | "autoApprove"
+  | "expireDispute";
 
 export interface OnChainJob {
   state: number;
   acceptDeadline: bigint;
   workDeadline: bigint;
   reviewDeadline: bigint;
+  /** v2: set when the job is disputed; 0 otherwise. */
+  disputeDeadline?: bigint;
 }
 
 /**
@@ -63,6 +71,11 @@ export function dueExit(job: OnChainJob, now: bigint): Exit | null {
       return job.reviewDeadline > 0n && now > job.reviewDeadline
         ? "autoApprove"
         : null;
+    // v2: an arbiter who never rules no longer holds the funds forever.
+    case JobState.DISPUTED:
+      return (job.disputeDeadline ?? 0n) > 0n && now > job.disputeDeadline!
+        ? "expireDispute"
+        : null;
     default:
       return null;
   }
@@ -79,6 +92,8 @@ export interface KeeperDeps {
     info: (o: unknown, m?: string) => void;
     warn: (o: unknown, m?: string) => void;
   };
+  /** Counts exits sent and failed, by exit — optional. */
+  onExit?: (exit: Exit, outcome: "sent" | "failed") => void;
 }
 
 export interface SweepResult {
@@ -108,6 +123,7 @@ export class Keeper {
       try {
         const txHash = await this.deps.send(exit, id);
         result.sent.push({ chainJobId: id.toString(), exit, txHash });
+        this.deps.onExit?.(exit, "sent");
         this.log.info({ chainJobId: id.toString(), exit, txHash }, "exit sent");
       } catch (err) {
         // One job's failure must not stop the others — the likeliest cause is
@@ -116,6 +132,7 @@ export class Keeper {
         const reason =
           err instanceof Error ? err.message.split("\n")[0]! : String(err);
         result.failed.push({ chainJobId: id.toString(), exit, reason });
+        this.deps.onExit?.(exit, "failed");
         this.log.warn(
           { chainJobId: id.toString(), exit, reason },
           "exit not sent",
@@ -152,6 +169,8 @@ export function chainKeeper(opts: {
   abis: Record<string, Abi>;
   account: Account;
   logger?: KeeperDeps["logger"];
+  /** Exported as `keeper_exits_total{exit,outcome}` when given. */
+  metrics?: Metrics;
   /** Which jobs to ask the chain about. Defaults to the database's open escrow jobs. */
   openJobs?: KeeperDeps["openJobs"];
 }): Keeper {
@@ -163,8 +182,17 @@ export function chainKeeper(opts: {
   const escrow = chain.contracts["TaskEscrow"] as Hex;
   const abi = abis["TaskEscrow"] as Abi;
 
+  const exits = opts.metrics?.counter(
+    "keeper_exits_total",
+    "Permissionless exits the keeper sent or failed to send",
+    ["exit", "outcome"],
+  );
+
   return new Keeper({
     ...(opts.logger ? { logger: opts.logger } : {}),
+    ...(exits
+      ? { onExit: (exit, outcome) => exits.labels(exit, outcome).inc() }
+      : {}),
     openJobs:
       opts.openJobs ??
       (async () => {
@@ -176,7 +204,12 @@ export function chainKeeper(opts: {
               eq(jobs.chainId, chain.chainId),
               eq(jobs.path, "escrow"),
               isNotNull(jobs.chainJobId),
-              inArray(jobs.state, ["created", "accepted", "submitted"]),
+              inArray(jobs.state, [
+                "created",
+                "accepted",
+                "submitted",
+                "disputed",
+              ]),
             ),
           );
         return rows.map((r) => BigInt(r.chainJobId!));

@@ -4,7 +4,10 @@
   "private": true,
   "type": "module",
   "main": "./dist/main.js",
-  "scripts": { "build": "tsc -b", "start": "node dist/main.js" },
+  "scripts": {
+    "build": "tsc -b",
+    "start": "node dist/main.js"
+  },
   "dependencies": {
     "@agentx/config": "workspace:*",
     "@agentx/db": "workspace:*",
@@ -12,6 +15,8 @@
     "drizzle-orm": "^0.36.0",
     "viem": "^2.21.0",
     "fastify": "^5.1.0",
-    "pino": "^9.5.0"
+    "pino": "^9.5.0",
+    "@agentx/service": "workspace:*",
+    "zod": "^3.23.8"
   }
 }

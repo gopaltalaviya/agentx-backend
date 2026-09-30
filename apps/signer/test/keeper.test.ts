@@ -46,9 +46,24 @@ describe('which exit is due', () => {
   });
 
   it('leaves every terminal state alone', () => {
-    for (const state of [0, 4, 5, 6, 7]) {
-      expect(dueExit(job({state, reviewDeadline: 1n}), 10_000_000n)).toBeNull();
+    for (const state of [0, 5, 6, 7]) {
+      expect(dueExit(job({state, reviewDeadline: 1n, disputeDeadline: 1n}), 10_000_000n)).toBeNull();
     }
+  });
+
+  /**
+   * v1 listed DISPUTED (4) among the states to leave alone, because it HAD no
+   * exit: an arbiter who never ruled held the funds forever. v2's escrow gives
+   * it one, and the keeper sends it.
+   */
+  it('settles a dispute nobody ruled on, once its timeout passes', () => {
+    const disputed = job({state: 4, reviewDeadline: 3_000n, disputeDeadline: 5_000n});
+    expect(dueExit(disputed, 5_000n)).toBeNull();
+    expect(dueExit(disputed, 5_001n)).toBe('expireDispute');
+  });
+
+  it('never expires a dispute whose deadline the chain has not set', () => {
+    expect(dueExit(job({state: 4, disputeDeadline: 0n}), 10_000_000n)).toBeNull();
   });
 });
 

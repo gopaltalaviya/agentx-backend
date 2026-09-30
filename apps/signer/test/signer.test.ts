@@ -12,7 +12,7 @@ import {
 import {privateKeyToAccount} from 'viem/accounts';
 import {sql} from 'drizzle-orm';
 import {loadConfig, loadAbis} from '@agentx/config';
-import {createDb, closeDb, type Db} from '@agentx/db';
+import {createDb, closeDb, createLockPool, closeLockPool, type Db, type LockPool} from '@agentx/db';
 import {AgentxError, ErrorCode} from '@agentx/shared';
 import {SignerService} from '../src/signer.js';
 
@@ -57,6 +57,8 @@ interface ChainState {
   lastTx?: {to: string | undefined; data: Hex | undefined; raw: Hex};
   /** When set, eth_sendRawTransaction fails with this message. */
   broadcastError?: string;
+  /** When set, eth_estimateGas reverts with this ABI-encoded error data. */
+  estimateRevert?: Hex;
   broadcasts: number;
 }
 
@@ -64,6 +66,7 @@ let state: ChainState;
 let server: Server;
 let rpcUrl: string;
 let db: Db;
+let locks: LockPool;
 
 function reset(): ChainState {
   return {
@@ -102,6 +105,9 @@ function rpc(method: string, params: unknown[]): unknown {
     case 'eth_maxPriorityFeePerGas':
       return '0x3b9aca00';
     case 'eth_estimateGas':
+      if (state.estimateRevert) {
+        throw Object.assign(new Error('execution reverted'), {code: 3, data: state.estimateRevert});
+      }
       return '0x5208';
     case 'eth_blockNumber':
       return '0x1';
@@ -152,6 +158,7 @@ function rpc(method: string, params: unknown[]): unknown {
 beforeAll(async () => {
   state = reset();
   db = createDb(DB_URL, {max: 3});
+  locks = createLockPool(DB_URL, {max: 10});
 
   server = createServer((req, res) => {
     let body = '';
@@ -166,7 +173,11 @@ beforeAll(async () => {
           JSON.stringify({
             jsonrpc: '2.0',
             id: parsed.id,
-            error: {code: -32000, message: (err as Error).message},
+            error: {
+              code: (err as {code?: number}).code ?? -32000,
+              message: (err as Error).message,
+              ...((err as {data?: string}).data ? {data: (err as {data?: string}).data} : {}),
+            },
           }),
         );
       }
@@ -181,6 +192,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await new Promise<void>((r) => server.close(() => r()));
   await closeDb(db);
+  await closeLockPool(locks);
 });
 
 beforeEach(async () => {
@@ -201,6 +213,7 @@ function makeSigner(
   const chain = {...baseConfig.chain(31337), rpcUrl} as ReturnType<typeof baseConfig.chain>;
   return new SignerService({
     db,
+    locks,
     chain,
     abis: loadAbis() as never,
     keys: (over.keys ?? {
@@ -720,5 +733,103 @@ describe('what a failed broadcast is reported as', () => {
     state.broadcastError = 'execution reverted: 0x4d11988c00005035030eb20edae3';
     const err = await expectRefusal(makeSigner().sign(request(agentId)), ErrorCode.INVALID_STATE);
     expect(err.message).not.toMatch(/unreachable/);
+  });
+});
+
+/**
+ * The per-agent lock must be released on the connection that took it.
+ *
+ * `pg_advisory_lock` is SESSION-scoped, and the pool hands each query to
+ * whichever connection is free — so a lock taken on one connection and
+ * "released" on another is not released at all: the unlock returns false,
+ * and the lock stays held by an idle pooled connection for as long as it
+ * lives. The next sign for that agent, on any other connection, then waits
+ * forever. Found by the Session 26 audit; this reproduces it.
+ */
+describe('the per-agent lock', () => {
+  const KEYS = [1, 2, 3, 4, 5].map((i) => privateKeyToAccount(`0x${String(i).padStart(2, '0').repeat(32)}` as Hex));
+
+  async function agentFor(key: (typeof KEYS)[number]): Promise<number> {
+    const rows = (await db.execute(
+      sql`INSERT INTO agents (chain_id, owner_address, wallet_address, name, price_per_task)
+          VALUES (31337, ${key.address}, ${key.address}, 'Locker', 0) RETURNING id`,
+    )) as unknown as {id: number}[];
+    return rows[0]!.id;
+  }
+
+  const heldAdvisoryLocks = async () =>
+    Number(
+      ((await db.execute(
+        sql`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND granted`,
+      )) as unknown as {n: number}[])[0]!.n,
+    );
+
+  it('holds no lock once concurrent signs across agents have finished', async () => {
+    state.eoa = true;
+    const signer = makeSigner({
+      keys: {
+        accountFor: async (_id: number, wallet: string) =>
+          KEYS.find((k) => k.address.toLowerCase() === wallet.toLowerCase()) ?? null,
+        all: () => KEYS,
+      },
+    });
+    const agents = await Promise.all(KEYS.map(agentFor));
+
+    // Concurrency is what makes the pool hand lock and unlock to different
+    // connections; spend 0 needs no policy row.
+    await Promise.all(
+      Array.from({length: 4}, () => agents.map((id) => signer.sign(request(id, {spend: 0n})))).flat(),
+    );
+    expect(await heldAdvisoryLocks()).toBe(0);
+
+    // And every agent can still be signed for, promptly.
+    const again = Promise.all(agents.map((id) => signer.sign(request(id, {spend: 0n}))));
+    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('a sign waited on a stuck lock')), 5_000));
+    await Promise.race([again, timeout]);
+  });
+
+  it('releases the lock when the signing work throws', async () => {
+    state.eoa = true;
+    state.broadcastError = 'nonce too low';
+    const agentId = await anAgent();
+    await makeSigner()
+      .sign(request(agentId, {spend: 0n}))
+      .catch(() => undefined);
+    expect(await heldAdvisoryLocks()).toBe(0);
+  });
+});
+
+/**
+ * A contract refusal, named. v1 reported any failed broadcast as INVALID_STATE
+ * with viem's whole message — which can carry the transaction bytes, and
+ * which hid WHICH rule refused. v2 adds rules a caller must be able to tell
+ * apart: the same owner on both sides, a job below the minimum.
+ */
+describe('what a contract refusal is reported as', () => {
+  const errorData = (signature: string, args: readonly unknown[] = []) =>
+    (toFunctionSelector(signature) +
+      (args.length
+        ? encodeAbiParameters(
+            args.map(() => ({type: 'uint128'})),
+            args as never,
+          ).slice(2)
+        : '')) as Hex;
+
+  it('names the escrow rule that refused, without the raw transaction', async () => {
+    state.eoa = true;
+    state.estimateRevert = errorData('SameOwner()');
+    const agentId = await anAgent();
+    const err = await expectRefusal(makeSigner().sign(request(agentId, {spend: 0n})), ErrorCode.INVALID_STATE);
+    expect(err.detail).toMatch(/SameOwner/);
+    expect(err.detail).not.toMatch(/0x02f8|0xf8/);
+    expect(state.broadcasts).toBe(0);
+  });
+
+  it('decodes arguments too, so the caller learns the minimum', async () => {
+    state.eoa = true;
+    state.estimateRevert = errorData('AmountBelowMinimum(uint128,uint128)', [1n, 10_000n]);
+    const agentId = await anAgent();
+    const err = await expectRefusal(makeSigner().sign(request(agentId, {spend: 0n})), ErrorCode.INVALID_STATE);
+    expect(err.detail).toMatch(/AmountBelowMinimum\(1, 10000\)/);
   });
 });

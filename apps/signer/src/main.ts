@@ -1,35 +1,49 @@
-import Fastify from 'fastify';
-import pino from 'pino';
+import {createPublicClient, http} from 'viem';
+import {privateKeyToAccount} from 'viem/accounts';
+import {sql} from 'drizzle-orm';
+import {z} from 'zod';
 import {loadConfig, loadAbis} from '@agentx/config';
-import {createDb} from '@agentx/db';
-import {AgentxError} from '@agentx/shared';
+import {closeDb, closeLockPool, createDb, createLockPool} from '@agentx/db';
+import {createMetrics, env, installShutdown, loadEnv, serviceLogger} from '@agentx/service';
+import {buildSignerApp} from './app.js';
 import {EnvKeystoreSource, RawKeySource, type KeySource} from './keystore.js';
 import {SignerService} from './signer.js';
 import {chainKeeper} from './keeper.js';
-import {authorised, bindHost} from './auth.js';
-import {privateKeyToAccount} from 'viem/accounts';
+import {bindHost} from './auth.js';
 
 /**
  * The signer is NOT a public service.
  *
  * On Railway it binds to private networking only; the API reaches it at the
- * internal hostname. Exposing it publicly would put an unauthenticated
- * signing endpoint on the internet.
+ * internal hostname. Without SIGNER_TOKEN it binds to loopback and refuses to
+ * listen anywhere wider (see auth.ts).
  */
-const logger = pino({
-  level: process.env['LOG_LEVEL'] ?? 'info',
-  // Key material must never reach a log line, even by accident.
-  redact: ['req.body.privateKey', 'req.headers.authorization', 'SIGNER_KEYSTORE_JSON', 'SIGNER_KEYSTORE_PASSPHRASE', 'KEEPER_PRIVATE_KEY', 'SIGNER_TOKEN'],
+const Env = z.object({
+  DATABASE_URL: env.postgresUrl(),
+  SIGNER_PORT: env.port(7070),
+  SIGNER_HOST: z.string().optional(),
+  SIGNER_TOKEN: z.string().min(32, 'SIGNER_TOKEN must be at least 32 characters').optional(),
+  SIGNER_KEYSTORE_JSON: z.string().optional(),
+  KEEPER_PRIVATE_KEY: env.privateKey().optional(),
+  KEEPER_INTERVAL_MS: env.positiveInt(15_000),
+  METRICS_TOKEN: z.string().optional(),
+  TRUST_PROXY: env.flag(),
+  LOG_LEVEL: env.logLevel(),
+  DB_POOL_MAX: env.positiveInt(5),
+  LOCK_POOL_MAX: env.positiveInt(10),
 });
+
+const cfg = loadEnv(Env);
+const logger = serviceLogger('signer', cfg.LOG_LEVEL);
 
 const config = loadConfig();
 const abis = loadAbis() as Record<string, never>;
-const db = createDb(process.env['DATABASE_URL']!);
-
 const chain = config.chain();
+const db = createDb(cfg.DATABASE_URL, {max: cfg.DB_POOL_MAX});
+const locks = createLockPool(cfg.DATABASE_URL, {max: cfg.LOCK_POOL_MAX});
 
 let keys: KeySource;
-if (process.env['SIGNER_KEYSTORE_JSON']) {
+if (cfg.SIGNER_KEYSTORE_JSON) {
   keys = new EnvKeystoreSource();
   logger.info({kind: keys.kind, chainId: chain.chainId}, 'keys loaded');
 } else {
@@ -38,51 +52,57 @@ if (process.env['SIGNER_KEYSTORE_JSON']) {
   logger.warn({kind: keys.kind, chainId: chain.chainId}, 'using a raw development key');
 }
 
-const service = new SignerService({db, chain, keys, abis, logger});
-const app = Fastify({logger: false});
+const service = new SignerService({db, locks, chain, keys, abis, logger});
+const metrics = createMetrics('signer');
+const pub = createPublicClient({transport: http(chain.rpcUrl)});
 
-app.get('/health', async () => ({ok: true, chainId: chain.chainId, keys: keys.kind}));
-
-app.post('/sign', async (request, reply) => {
-  if (!authorised(request.headers.authorization, process.env['SIGNER_TOKEN'])) {
-    return reply.status(401).send({code: 'UNAUTHORIZED', detail: 'the signer requires its SIGNER_TOKEN'});
-  }
-  const body = request.body as Record<string, unknown>;
-  try {
-    const result = await service.sign({
-      agentId: Number(body['agentId']),
-      chainId: Number(body['chainId'] ?? chain.chainId),
-      target: body['target'] as `0x${string}`,
-      data: body['data'] as `0x${string}`,
-      spend: BigInt(String(body['spend'] ?? '0')),
-      idempotencyKey: String(body['idempotencyKey']),
-    });
-    return result;
-  } catch (err) {
-    if (err instanceof AgentxError) {
-      const problem = err.toProblem('Signing refused');
-      return reply.status(problem.status).send(problem);
-    }
-    logger.warn({err: (err as Error).message}, 'sign failed');
-    return reply.status(500).send({code: 'SIGNER_ERROR', detail: (err as Error).message});
-  }
+const app = buildSignerApp({
+  service,
+  chainId: chain.chainId,
+  keysKind: keys.kind,
+  ...(cfg.SIGNER_TOKEN ? {token: cfg.SIGNER_TOKEN} : {}),
+  ...(cfg.METRICS_TOKEN ? {metricsToken: cfg.METRICS_TOKEN} : {}),
+  trustProxy: cfg.TRUST_PROXY,
+  metrics,
+  logger,
+  checks: {
+    database: () => db.execute(sql`SELECT 1`),
+    rpc: () => pub.getBlockNumber(),
+  },
 });
 
 // The keeper sends the escrow's permissionless exits when they fall due —
 // without it, a worker that vanishes after accepting strands the client's
 // money. It runs here because this is the process allowed to hold a key, but
 // on a key of its own: sharing the signer's would race it for nonces.
-const keeperKey = process.env['KEEPER_PRIVATE_KEY'];
-if (keeperKey) {
+let stopKeeper: (() => void) | undefined;
+if (cfg.KEEPER_PRIVATE_KEY) {
   if (!chain.testnet) throw new Error('KEEPER_PRIVATE_KEY is a raw key; raw keys are for testnet only');
-  const keeper = chainKeeper({db, chain, abis, account: privateKeyToAccount(keeperKey as `0x${string}`), logger});
-  keeper.start(Number(process.env['KEEPER_INTERVAL_MS'] ?? 15_000));
+  const keeper = chainKeeper({
+    db,
+    chain,
+    abis,
+    account: privateKeyToAccount(cfg.KEEPER_PRIVATE_KEY as `0x${string}`),
+    logger,
+    metrics,
+  });
+  stopKeeper = keeper.start(cfg.KEEPER_INTERVAL_MS);
   logger.info({chainId: chain.chainId}, 'keeper sweeping for due exits');
 } else {
   logger.warn('no KEEPER_PRIVATE_KEY: expired escrow jobs will wait for someone else to exit them');
 }
 
-const port = Number(process.env['SIGNER_PORT'] ?? 7070);
+installShutdown({
+  logger,
+  closers: [
+    ['keeper', async () => stopKeeper?.()],
+    // Stops accepting, then waits for in-flight signs to finish.
+    ['http', () => app.close()],
+    ['locks', () => closeLockPool(locks)],
+    ['database', () => closeDb(db)],
+  ],
+});
+
 const host = bindHost(process.env);
-await app.listen({port, host});
-logger.info({port, host, chainId: chain.chainId, token: Boolean(process.env['SIGNER_TOKEN'])}, 'signer listening');
+await app.listen({port: cfg.SIGNER_PORT, host});
+logger.info({port: cfg.SIGNER_PORT, host, chainId: chain.chainId, token: Boolean(cfg.SIGNER_TOKEN)}, 'signer listening');

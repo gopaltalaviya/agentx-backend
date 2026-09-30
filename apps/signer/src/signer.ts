@@ -1,6 +1,7 @@
 import {
   createPublicClient,
   createWalletClient,
+  decodeErrorResult,
   encodeFunctionData,
   http,
   type Abi,
@@ -10,7 +11,7 @@ import {
 } from 'viem';
 import {and, eq, gte, isNull, sql} from 'drizzle-orm';
 import type {ChainConfig} from '@agentx/config';
-import {type Db, signerTxs, agents} from '@agentx/db';
+import {type Db, signerTxs, agents, withAdvisoryLock, type LockPool} from '@agentx/db';
 import {AgentxError, ErrorCode} from '@agentx/shared';
 import type {KeySource} from './keystore.js';
 
@@ -47,6 +48,12 @@ export interface SignResult {
 
 export interface SignerDeps {
   db: Db;
+  /**
+   * A pool used ONLY for the per-agent advisory lock. Separate from `db`,
+   * because the signing work inside the lock queries `db` too — sharing one
+   * pool lets concurrent holders exhaust it and wait on each other.
+   */
+  locks: LockPool;
   chain: ChainConfig;
   keys: KeySource;
   abis: Record<string, Abi>;
@@ -276,7 +283,7 @@ export class SignerService {
           {agentId: req.agentId, to, signer: signer.address, short: e.shortMessage, details: e.details, message: e.message?.slice(0, 2000)},
           'broadcast failed',
         );
-        throw asActionableError(err, chain.network.nativeCurrency.symbol, signer.address);
+        throw asActionableError(err, chain.network.nativeCurrency.symbol, signer.address, this.deps.abis);
       }
 
       await db
@@ -465,14 +472,12 @@ export class SignerService {
    * happily give us.
    */
   private async withAgentLock<T>(agentId: number, fn: () => Promise<T>): Promise<T> {
-    const {db} = this.deps;
     const key = BigInt(this.deps.chain.chainId) * 1_000_000n + BigInt(agentId);
-    await db.execute(sql`SELECT pg_advisory_lock(${key})`);
-    try {
-      return await fn();
-    } finally {
-      await db.execute(sql`SELECT pg_advisory_unlock(${key})`);
-    }
+    // Lock and unlock on ONE reserved connection. Through the shared pool
+    // they landed on different connections, the unlock silently failed, and
+    // the lock stayed held by an idle connection — the next sign for the
+    // agent waited forever (reproduced in signer.test.ts, "the per-agent lock").
+    return withAdvisoryLock(this.deps.locks, key, fn);
   }
 
   /**
@@ -531,8 +536,21 @@ const ACCOUNT_KEYS_ABI = [
  * the address to fund, because at that moment the useful output is an
  * address and not a stack trace.
  */
-function asActionableError(err: unknown, gasSymbol: string, from: string): AgentxError {
+function asActionableError(
+  err: unknown,
+  gasSymbol: string,
+  from: string,
+  abis: Record<string, Abi> = {},
+): AgentxError {
   const message = err instanceof Error ? err.message : String(err);
+
+  // A contract said no, and said which rule. Name it — and only it: viem's
+  // message can carry the whole signed transaction, which is the log's
+  // business, not the caller's.
+  const refused = contractRefusal(err, abis);
+  if (refused) {
+    return new AgentxError(ErrorCode.INVALID_STATE, `the contract refused: ${refused}`);
+  }
   // Classify on what the node SAID, not on viem's full message: that carries
   // the whole request body, and "503" inside a transaction's hex once turned
   // an empty gas wallet into "the RPC endpoint is unreachable".
@@ -554,5 +572,42 @@ function asActionableError(err: unknown, gasSymbol: string, from: string): Agent
     );
   }
 
-  return new AgentxError(ErrorCode.INVALID_STATE, `broadcast failed: ${message}`);
+  return new AgentxError(ErrorCode.INVALID_STATE, `broadcast failed: ${said.slice(0, 300)}`);
+}
+
+/**
+ * The custom error a contract reverted with, decoded against the escrow and
+ * account ABIs, as `Name(arg, arg)`. An AgentAccount wraps its target's revert
+ * in `CallFailed(bytes)`, so that is unwrapped once to reach the real reason.
+ */
+function contractRefusal(err: unknown, abis: Record<string, Abi>): string | null {
+  const data = revertData(err);
+  if (!data) return null;
+  const abi = [...(abis['TaskEscrow'] ?? []), ...(abis['AgentAccount'] ?? []), ...(abis['StakeVault'] ?? [])] as Abi;
+  const decode = (hex: Hex): string | null => {
+    try {
+      const {errorName, args} = decodeErrorResult({abi, data: hex});
+      if (errorName === 'CallFailed' && typeof args?.[0] === 'string') {
+        return decode(args[0] as Hex) ?? errorName;
+      }
+      return `${errorName}(${(args ?? []).map(String).join(', ')})`;
+    } catch {
+      return null;
+    }
+  };
+  return decode(data);
+}
+
+/** Revert data carried anywhere in a viem error's cause chain. */
+function revertData(err: unknown): Hex | null {
+  let current: unknown = err;
+  for (let depth = 0; current && depth < 8; depth++) {
+    const data = (current as {data?: unknown}).data;
+    if (typeof data === 'string' && /^0x[0-9a-fA-F]{8,}$/.test(data)) return data as Hex;
+    if (data && typeof data === 'object' && typeof (data as {data?: unknown}).data === 'string') {
+      return (data as {data: Hex}).data;
+    }
+    current = (current as {cause?: unknown}).cause;
+  }
+  return null;
 }
