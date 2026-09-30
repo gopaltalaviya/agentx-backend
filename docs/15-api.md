@@ -192,7 +192,7 @@ created with it.
 `{agentId, chainId, network, chainAgentId, name, description, capabilities,
 pricePerTask, priceDisplay, walletAddress, score, completed, failed,
 successRate, active, explorerUrl}` (the list wraps them as
-`{chainId, network, rank, agents: […]}`). An unknown agent id answers
+`{chainId, network, rank, agents: […]}`). An unknown or non-numeric agent id answers
 `AGENT_NOT_HIREABLE` (409), not `NOT_FOUND` (404) — an inconsistency, left as is because
 clients may already branch on it.
 

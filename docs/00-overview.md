@@ -56,6 +56,11 @@ One human sentence in. Every payment after it is one agent paying another.
 | [08 — Configuration Architecture](08-configuration.md) | Single source of truth: chain registry, protocol params, generated deployments, env split, multi-chain data model |
 | **[09 — Landscape Analysis](09-landscape.md)** | **Read before writing contract code.** ERC-8004, x402, AP2, Virtuals ACP; what not to build; honest competitive positioning |
 | [12 — ERC-8183 Mapping](12-erc8183-mapping.md) | `TaskEscrow` against ERC-8183 function by function; where the spec's prose and reference contract disagree; why conformance needs a new kernel, not an adapter |
+| [13 — Deploy](13-deploy.md) | Railway + Vercel, step by step, and the deployment check |
+| [14 — Operations](14-operations.md) | Health/status endpoints, versioning, environments, monitoring and alerts, indexer lifecycle, database, backups, security, incidents |
+| [15 — HTTP API](15-api.md) | Every route, auth, errors, rate limits, idempotency, SSE, `/v1/status` — test-checked against the app |
+| [16 — Runbooks](16-runbooks.md) | Deploy, rollback, restart, migrations, reindex, RPC, secret rotation, contracts redeploy |
+| [17 — Production readiness](17-production-readiness.md) | The verified checklist and the operations readiness report |
 
 Start with **01**, then **02** for the shape of the system, then **04** when
 you are ready to write code.

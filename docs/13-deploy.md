@@ -91,6 +91,7 @@ Migrations run before each deploy (`preDeployCommand`), from this image.
 | `TRUST_PROXY` | `1` — rate limits by the caller, not Railway's proxy |
 | `CORS_ORIGINS` | the Vercel URL, exactly, e.g. `https://agentx.vercel.app` (§2 gives it; until then any placeholder — the API refuses to boot in production without one) |
 | *model, optional* | `GEMINI_API_KEY` (or Groq / Anthropic), `BRAIN_CHAIN_ORCHESTRATOR=gemini`, `AGENT_MODE=live` |
+| `METRICS_TOKEN` | optional — `openssl rand -hex 24`. In production the API serves no `/metrics` without it |
 
 `/ready` answers 503 until the signer is up — that is correct, and why the
 signer goes first.
@@ -149,6 +150,12 @@ that the site answers, its CSP can reach the API, and unknown runs are real
 404s. Each failure says what to change. Rehearsed against the production
 images on 2026-09-30: every check passed, and a wrong site origin failed the
 CORS check as it should.
+
+The public status summary the site's status page reads —
+`curl -s https://<api-domain>/v1/status` — should say `"status": "operational"`
+once the indexer has caught up, and `build.commit` should be the commit
+Railway deployed ([docs/14](14-operations.md), [docs/15 §4](15-api.md#4-get-v1status)).
+Operating it afterwards: [docs/16 — Runbooks](16-runbooks.md).
 
 Then one real run: on the site's home page, paste the orchestrator agent's
 API key, type a goal, **Run**, and watch each step settle on the explorer.

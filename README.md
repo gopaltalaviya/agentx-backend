@@ -219,6 +219,10 @@ API, the agent workflow and the threat model, and
 injection problem.
 [12 — ERC-8183 mapping](docs/12-erc8183-mapping.md) sets `TaskEscrow` against
 the ERC-8183 Agentic Commerce draft, function by function.
+Running it: [13 — Deploy](docs/13-deploy.md),
+[14 — Operations](docs/14-operations.md), [15 — HTTP API](docs/15-api.md),
+[16 — Runbooks](docs/16-runbooks.md) and
+[17 — Production readiness](docs/17-production-readiness.md).
 
 [`PROGRESS.md`](PROGRESS.md) is the running build log: current state, what is
 outstanding, every decision with its reasoning, and every defect found during

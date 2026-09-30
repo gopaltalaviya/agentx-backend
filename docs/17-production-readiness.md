@@ -1,0 +1,212 @@
+# 17 — Production readiness
+
+Audit of the AGENTX backend's operations, 2026-09-30 (Session 27). Every row
+names what was checked. Legend: ✅ implemented and verified · ⚠️ partial ·
+❌ missing · 🔍 needs investigation · 🧑‍💻 owner decision.
+
+Scope: `agentx-backend`, reading `agentx-contracts` and `agentx-interface`.
+No hosted deployment exists (PROGRESS blocker B8), so nothing here was
+verified on Railway or Vercel.
+
+## Checklist
+
+### Health, status, versioning
+
+| | Item | Evidence |
+|---|---|---|
+| ✅ | Liveness `/health` on api, signer, indexer | `packages/service/src/http.ts`, `apps/api/src/app.ts`; tests in `service.test.ts`, `hardening.test.ts` |
+| ✅ | Readiness `/ready` checks real dependencies (api: db + signer; signer: db + RPC; indexer: db + recent tick) | same; `apps/indexer/src/main.ts` |
+| ✅ | Public `/ready` names a failed dependency without leaking its error | fixed this session; test injects an error naming an internal host and asserts it is absent |
+| ✅ | Public `GET /v1/status` — components, indexer lag, build; cached, bounded, no internal detail | `apps/api/src/routes/status.ts`, 7 tests in `status.test.ts` (failed on the old code first); real response against Monad testnet captured 2026-09-30 |
+| ✅ | Build metadata (version, commit, build time) on `/health` and `/v1/status` | `packages/service/src/build.ts` (3 tests); Dockerfile writes `/app/build-info.json`; local api image reported `a1f9485db5cc` + build time; CI asserts it |
+| ✅ | Indexer lag metrics | `indexer_head_block`, `indexer_indexed_block`, `indexer_lag_blocks`; `progress()` tested; `verify-indexer.mjs` passed live on testnet |
+| ✅ | API versioned by path (`/v1`) | every route in `apps/api/src/routes` |
+| ⚠️ | Release tags / changelog | none; commit SHA is the identity. 🧑‍💻 whether to tag |
+
+### API
+
+| | Item | Evidence |
+|---|---|---|
+| ✅ | API reference, checked against the app | `docs/15-api.md`; test fails if a route is added or removed without the doc |
+| ⚠️ | Machine-readable spec (OpenAPI) | not generated: routes validate with zod inside handlers, not Fastify schemas — a generator needs per-route schemas (a refactor). Bodies/responses in docs/15 are hand-read |
+| ✅ | RFC 7807 errors with stable codes and `traceId` | `apps/api/src/errors.ts`, `packages/shared/src/errors.ts` |
+| ✅ | Idempotency on money-moving routes (DB-enforced) | `Idempotency-Key` required on `POST /v1/jobs`, `/v1/x402/settle`; unique constraints in `0000`, `0002`; tests in `api.test.ts`, `x402.test.ts` |
+| ⚠️ | Rate limiting | per IP, 600/min — per process, so N× with N replicas (docs/08) |
+| ⚠️ | Pagination | bounded `limit` only, no cursor/offset (docs/15 §2) |
+| ⚠️ | SSE | replay + heartbeat + clean shutdown work; no event ids (`Last-Event-ID` ignored), indexer events not pushed live, per-instance bus (docs/15 §3) |
+| ✅ | `GET /v1/agents/:id` with a non-numeric id | was a **500** (`Number('abc')` reached Postgres) — found in this audit, fixed test-first (`hardening.test.ts`) |
+| ❌ | API key rotation / revocation endpoint | SQL only (docs/16 R9) |
+
+### Configuration and environments
+
+| | Item | Evidence |
+|---|---|---|
+| ✅ | Env validated at boot, every problem listed | `packages/service/src/env.ts`; each `main.ts` has a zod schema |
+| ✅ | Env var reference accurate | docs/08 §5 re-checked against every schema and `env` read; 17 names were missing, now listed |
+| ✅ | Chain facts single-sourced, copies checked | `chain/` = contracts repo, `sync-chain-facts.mjs --check` in CI; interface reads `/v1/network` |
+| ✅ | Secrets out of the repo | pre-commit + CI `check-no-secrets.mjs`, gitleaks full history in CI; `.env.example` names only |
+| ✅ | Mainnet guarded | no `deployments/143.json` → config refuses; signer refuses raw keys and keeper refuses off testnet |
+
+### Database
+
+| | Item | Evidence |
+|---|---|---|
+| ✅ | Migrations ordered, transactional, locked, fail closed | `packages/db/bin/migrate.mjs`; run in CI and `docker-compose.full.yml` |
+| ✅ | Migrations run before deploy | `deploy/railway/api.json` `preDeployCommand`; Railway does not proceed if it fails (Railway docs) |
+| ✅ | Every migration reviewed for locking; all additive | docs/14 §7 (0005 rewrites `jobs`/`runs` — fine at current size) |
+| ⚠️ | Rollback | no down migrations; code rollback safe while migrations stay additive (docs/14 §7) |
+| ✅ | Integrity constraints in the database | `0001_constraints.sql`; `packages/db/test/constraints.test.ts` |
+| ❌ | Backups | no hosted DB yet. 🧑‍💻 enable Railway daily + weekly backups on creation |
+| ❌ | Retention policy | nothing is ever deleted. 🧑‍💻 |
+| ❌ | Restore rehearsed | never |
+
+### Indexer
+
+| | Item | Evidence |
+|---|---|---|
+| ✅ | Idempotent replay | `replay.test.ts`; live `verify-indexer.mjs` 2026-09-30 ("replay is a no-op") |
+| ✅ | Reorg detection and rewind | live check "reorg rewind replayed without duplicating anything" |
+| ✅ | Halts (does not corrupt) on a deep reorg | `checkRewindWindow`; documented repair R4 (not rehearsed) |
+| ✅ | RPC failure: backoff, never dies | `loop.test.ts` |
+| ✅ | Forward-only state | `AT_OR_BEFORE`; Session 27 fix `b80db6f` |
+| ⚠️ | Backfill / reindex tooling | SQL on the cursor (docs/16 R3); no script |
+| 🔍 | Contracts redeploy against an old database | job ids restart at 1 vs `UNIQUE (chain_id, chain_job_id)` — derived, not observed (docs/16 R11) |
+
+### Monitoring, alerting, incidents
+
+| | Item | Evidence |
+|---|---|---|
+| ✅ | Structured logs with redaction and request ids | `packages/service/src/http.ts` |
+| ✅ | Prometheus metrics per service | metric list in docs/14 §5, read from code |
+| ✅ | `/metrics` not public by accident | api serves none in production without `METRICS_TOKEN` (tests) |
+| ❌ | Alerting | none. 🧑‍💻 an uptime monitor on `/v1/status` + `/ready` (docs/14 §5) |
+| ❌ | Error tracking, dashboards, metrics scraper | none |
+| ❌ | Wallet balance monitoring (agents, keeper) | none; checked by hand before demos |
+| ✅ | Severities, process, templates | docs/14 §11 |
+| ✅ | Runbooks | docs/16, R1–R11; R1, R3, R8 rehearsed locally, the rest not |
+
+### Deployment, CI/CD, security
+
+| | Item | Evidence |
+|---|---|---|
+| ✅ | Images: one recipe, non-root, graceful SIGTERM | `Dockerfile`; CI asserts non-root |
+| ✅ | CI: types, lint, format, secrets, audit, tests + coverage floors, image builds | `.github/workflows/ci.yml`; coverage 78.7/81.5/77.4/78.7 vs floors 75/78/74/75 |
+| ✅ | Dependency updates | Dependabot weekly (npm, actions, docker); `pnpm audit --prod` clean 2026-09-30 |
+| ⚠️ | CD | Railway/Vercel auto-deploy once connected; no staging environment |
+| ✅ | Signer private, token-gated, loopback without a token | `apps/signer/src/auth.ts`; tests in `auth.test.ts` |
+| ⚠️ | Registration abuse | `POST /v1/agents` unauthenticated, only the IP rate limit |
+| 🧑‍💻 | Access / bus factor | one person holds GitHub, Railway, Vercel and every key |
+| ❌ | Hosted deployment verified | blocked on accounts (B8) |
+
+---
+
+## Production Operations Readiness Report
+
+### 1. Architecture
+Four deployable services — api (public), signer (private, holds keys, runs the
+keeper), indexer (private poller), optional worker bots — on one Postgres 16,
+against Monad testnet, with the Next.js interface on Vercel. Flow and
+placement: [14 §1](14-operations.md#1-architecture-and-data-flow).
+
+### 2. Operational capabilities
+Boot-time env validation; liveness/readiness per service; public status
+summary; build identity; structured redacted logs with request ids;
+Prometheus metrics; graceful shutdown; retrying, reorg-aware, idempotent
+indexer; DB-enforced idempotency and integrity; locked, transactional
+migrations; a deployment checker.
+
+### 3. Endpoints
+27 API routes — 24 under `/v1` plus `/health`, `/ready`, `/metrics` — indexed in
+[15 §1](15-api.md#1-endpoint-index). Signer: `/health`, `/ready`, `/metrics`,
+`POST /sign` (private). Indexer: `/health`, `/ready`, `/metrics` on
+`INDEXER_HEALTH_PORT`. New this session: **`GET /v1/status`** (public).
+
+### 4. API documentation status
+Hand-written ([docs/15](15-api.md)), with a test that fails when the route
+list and the document disagree. No OpenAPI: routes carry no Fastify schemas;
+generating one is a per-route refactor, not done.
+
+### 5. Versioning
+Commit SHA is the release identity, baked into images and served; `/v1` for
+the API; ordered forward-only migrations; contract deployments carry their
+commit. [14 §3](14-operations.md#3-versioning).
+
+### 6. Monitoring and alerting
+Logs and metrics exist; alerting, error tracking and dashboards do not. The
+smallest useful step is an external uptime monitor on `/v1/status` and
+`/ready`; the alert table is [14 §5](14-operations.md#5-monitoring-and-alerting).
+
+### 7. Deployment architecture
+Railway for api, signer (private network only), indexer (one replica) and
+managed Postgres; Vercel for the interface. SSE and in-process runs rule out
+serverless for the API. Hetzner/VM via `docker-compose.full.yml` is viable
+but moves TLS, backups and patching onto the owner.
+
+### 8. Maintenance
+Runbooks R1–R11 ([docs/16](16-runbooks.md)): deploy/verify, database down,
+indexer behind/backfill/reindex, reorg halt and repair, RPC, recovery and
+restart, rollback, manual migrations, secret rotation, dependency updates,
+contracts redeploy.
+
+### 9. Backup and recovery
+None exist yet. Railway backups must be enabled on the Postgres service
+(daily 6 d, weekly 27 d, monthly 89 d retention). Projections are
+re-derivable from the chain; registrations, API keys, specs, results and run
+traces are not. [14 §8](14-operations.md#8-backup-and-disaster-recovery).
+
+### 10. Security findings
+Fixed: public `/ready` echoed dependency errors (internal hostnames); `/metrics`
+was public on the API unless a token was set; `GET /v1/agents/<non-numeric>`
+answered 500. Open: no key rotation/revocation
+endpoint; unauthenticated registration; signer fetch error message passed to
+callers; per-process rate limit; single-person access. [14 §9](14-operations.md#9-security-and-access).
+
+### 11. Missing capabilities
+Alerting, error tracking, dashboards, backups, retention, a staging
+environment, OpenAPI, SSE event ids, live indexer events, key management
+endpoints, wallet balance monitoring, reindex tooling.
+
+### 12. Implemented improvements (this session)
+- `GET /v1/status` — public status summary, cached 5 s, 2 s per check.
+- Build metadata on every service's `/health` (and `/v1/status`); the
+  Dockerfile bakes commit + build time; CI passes and asserts the commit.
+- Indexer head / indexed / lag gauges.
+- `/ready` on the API no longer echoes errors; `/metrics` off in production
+  without a token; a non-numeric agent id is a 409, not a 500.
+- docs/14, 15, 16, 17; docs/08 variable list corrected; docs/13 and indexes
+  linked; `.env.example` names added.
+
+### 13. Remaining risks
+One operator, no alerting and no backups — an outage or data loss would be
+noticed late and could not be undone. A reorg halt needs a manual SQL repair
+nobody has rehearsed. Model-provider availability decides whether hosted runs
+work at all (Gemini 503s in Session 26). Testnet MON runs out silently.
+
+### 14. Required owner decisions
+1. Enable Railway Postgres backups (daily + weekly) when creating the database.
+2. Pick an uptime monitor and point it at `/v1/status` and `/ready`.
+3. Set `METRICS_TOKEN` on the API if metrics will be scraped (else none are served).
+4. Whether to tag releases (`backend-v0.x.y`) and keep a changelog.
+5. Data retention for `job_events`, `run_events`, `signer_txs`.
+6. Agent key rotation: accept "new key = new wallet = re-register", or build tooling.
+7. Whether registration (`POST /v1/agents`) needs a stricter limit or a gate.
+8. RPO/RTO targets (proposed 24 h / 1 h).
+
+### 15. Verification results
+- Backend tests: **475 → 495 passed** (20 new, 1 changed). Run against the
+  old code first: 18 of the new tests and the changed `/ready` assertion
+  failed there, as intended; the 2 that passed both ways are regression
+  guards for the already-existing token check on `/metrics`.
+- Coverage 78.73 % statements / 81.51 % branches / 77.44 % functions /
+  78.73 % lines (floors 75/78/74/75).
+- `tsc -b`, test typecheck, `eslint .`, `prettier --check` on touched files:
+  clean.
+- Live: `scripts/verify-indexer.mjs` on Monad testnet — all 13 checks passed
+  (settlement, linking, projection, reputation, replay no-op, reorg rewind).
+- Live: `/v1/status` built from the compiled app against Monad testnet and
+  the dev database — real head block, lag, `signer: "down"` (no signer
+  running), `status: "degraded"`, no internal detail.
+- Image: api image built from this repo with `GIT_SHA`; `buildInfo()` inside
+  it reported the commit and build time; runs as uid 1000.
+- `pnpm audit --prod --audit-level high`: no known vulnerabilities.
+- Not verified: anything on Railway or Vercel; runbooks R2, R4–R7, R9–R11.
