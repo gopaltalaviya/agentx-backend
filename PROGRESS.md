@@ -3,8 +3,8 @@
 > **START HERE every session.** This file is the memory that survives a closed
 > terminal. Read it top to bottom before doing anything else.
 
-- Last updated: **2026-09-30** (Session 27 — chaos at 20%, M5-06 three timed clean runs, deploy-ready from one repo; three defects found live and fixed)
-- Days to deadline: **13** — verified: **2026-10-13, 11:59 PM ET**
+- Last updated: **2026-10-01** (Session 28 — recheck; ERC-8004 agent cards verified on chain; PLAN in sync; all open tasks are yours)
+- Days to deadline: **12** — verified: **2026-10-13, 11:59 PM ET**
 - Target track: **4 — Trust, Identity & AI Infrastructure** ($30,000)
 - Current state: **v2 live on Monad testnet, end to end, re-verified.** The
   escrow now refuses self-hires (`SameOwner`) and dust jobs, never traps a
@@ -12,8 +12,8 @@
   chain, including a real dispute expired by the keeper after its 1 h
   timeout. Backend and interface have lint, formatting, coverage floors, CI,
   containers, metrics, graceful shutdown and a browser smoke test.
-- Overall: `██████████████████░░` 92% — **106 / 115 tasks**, **726 tests green**
-  (184 contracts · 497 backend · 45 interface) + 30 browser tests (14 smoke, 16 accessibility)
+- Overall: `██████████████████░░` 91% — **106 / 116 tasks** (4 cut, recorded in PLAN), **730 tests green**
+  (184 contracts · 497 backend · 49 interface) + 30 browser tests (14 smoke, 16 accessibility)
 
 ---
 
@@ -146,7 +146,7 @@ cd ../agentx-backend && npx tsc -b && npx vitest run   # expect 497 passed
 cd ../agentx-interface && npx tsc --noEmit && npx vitest run && NEXT_PUBLIC_API_URL=http://127.0.0.1:8080 npx next build   # expect 40 passed
 ```
 
-Expected totals as of 2026-09-30: **184 contracts + 497 backend + 45 interface = 726** (Session 27), plus 30 Playwright tests (14 smoke, 16 axe accessibility).
+Expected totals as of 2026-09-30: **184 contracts + 497 backend + 49 interface = 730** (Session 28), plus 30 Playwright tests (14 smoke, 16 axe accessibility).
 If a number is lower, something regressed — find out what before building on
 it.
 
@@ -499,9 +499,9 @@ and metrics ports; every service validates its environment at boot.
 |---|---|---|
 | Contracts — unit, fuzz, invariant (3 suites), adversarial, v2 findings | **184** | ✅ 100% branch on StakeVault/AgentAccount/Factory, 96.5% TaskEscrow |
 | Backend — 31 files | **497** | ✅ lint, format, typecheck of tests, coverage floors 75/78/74/75 |
-| Interface — unit | **45** | ✅ plus lint, `next build`, audit |
+| Interface — unit | **49** | ✅ plus lint, `next build`, audit |
 | Interface — Playwright smoke + axe | **30** | ✅ every page, production build, mocked API; status page, 375 px layout + mobile menu, reduced motion |
-| **Total** | **726** + 30 | |
+| **Total** | **730** + 30 | |
 
 Every test that guards a Session 26 fix was run against the old code first
 and seen to fail.
@@ -649,6 +649,8 @@ Append-only. Never rewrite a decision — supersede it with a new row.
 | Sep 30 | M3 | **x402 is `directPay` behind a facilitator, scheme `agentx-directpay`**, not EIP-3009 `exact`: the agent holds no key to sign an authorisation, and MockUSDC has no `transferWithAuthorization`. Client settles first; the worker redeems the receipt once, checked against the chain | ✅ |
 | Sep 30 | — | **ERC-8183 conformance waits for the next deployment.** Mapping written (docs/12); conformance is a new kernel with AGENTX as evaluator + hook, and a redeploy would discard the live evidence | ✅ |
 | Sep 30 | — | **The video uses the Ollama recording.** Gemini was tried as asked: the default model was retired (fixed), then 503 twice. Arbiter and fee recipient stay on DEPLOYER; repos stay private until you flip them | ✅ |
+| Oct 1 | M2 | **No seeded history (M2-03 cut).** ~300 invented settlements would be fabricated reputation — the one thing AGENTX exists to prevent — and a judge who opens the explorer would find they never happened. The marketplace shows only real settled jobs, however few | ✅ |
+| Oct 1 | M1 | **Agent cards are inline `data:` URIs.** ERC-8004 allows base64 `data:` for fully on-chain metadata; it needs no host, and the testnet registry stores no URI to update later. `registrations` is empty because the id is assigned by the carrying transaction | ✅ |
 
 ---
 
@@ -686,6 +688,27 @@ the audit kept that for consistency and documented it. The interface's agent
 page branches on `NOT_FOUND`, and its mock API had always answered 404, so the
 smoke test agreed with the assumption: against the real API the page showed
 "could not load" and a useless retry. Now 404 (`e2ba24c`); 496 tests.
+
+### Session 28 — 2026-10-01 (recheck · ERC-8004 agent cards · PLAN in sync)
+
+**On "recheck and continue for remaining all".**
+- **Recheck** of PLAN.md against the code: its ticks had drifted (every M4
+  page was built but unticked). 54 rows ticked with evidence; 4 cut with the
+  reason written in the row (fallback registries, off-chain scoreOf, the
+  fabricated seed — see Decisions). Now **106 / 116 in scope**; the 10 open
+  are yours (deploy ×3, video ×2, submit, links, freeze, contracts-public
+  decision) plus M6-02, the final docs pass, which belongs just before
+  submission.
+- **The one genuinely missing 🤖 task, M1-03b agent cards**: identities were
+  registered with `agentx://<name>` / `ipfs://<label>` — URIs that resolve to
+  nothing. Now a real ERC-8004 registration-v1 card (shape read from the EIP)
+  travels as a `data:` URI from the register page and the demo. **Verified on
+  chain**: identity #146's `Registered` event decodes to the card. 4 unit
+  tests; the profile shows the ERC-8004 identity and links the registry.
+- READMEs: the backend says it is live and where; the interface opens with
+  the landing screenshot and a pitch.
+- Browser suite: 30/30 on four runs; one earlier run had a single failure
+  that did not reproduce (machine under load from another project's tests).
 
 ### Session 27 — deep browser testing (backend `a1ccec9`, interface `ac93de4`)
 

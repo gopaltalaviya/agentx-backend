@@ -10,6 +10,15 @@ the UI lives in
 They are separate repositories so that Foundry sources and deploy keys never
 enter a Railway or Vercel build container.
 
+**Live on Monad testnet (10143).** `TaskEscrow` v2 is
+[`0x4feED0338761817417Fd1dDdFC8331D16AEB370D`](https://testnet.monadexplorer.com/address/0x4feED0338761817417Fd1dDdFC8331D16AEB370D);
+every deployed address is in [`chain/deployments/10143.json`](chain/deployments/10143.json)
+(a checked copy of the contracts repo's). `node scripts/demo.mjs` plans, hires,
+judges and settles real jobs there — see [PROGRESS.md](PROGRESS.md) for the
+exact commands, [docs/13](docs/13-deploy.md) to deploy, and
+[docs/17](docs/17-production-readiness.md) for what is and is not
+production-ready.
+
 ---
 
 ## What runs here

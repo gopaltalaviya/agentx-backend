@@ -226,7 +226,7 @@ function card(s, o) {
     s.addText(what, {x: M + 6.0, y, w: CW - 6.0, h: 0.5, fontFace: BODY, fontSize: 13, color: MUTED, margin: 0, isTextBox: true, valign: 'middle'});
   });
 
-  const stats = [['726','tests green across\nthree repositories'], ['4', 'permissionless exits: no job\nstate can hold funds forever'], ['8', 'MCP tools, so any agent\ncan transact directly']];
+  const stats = [['730','tests green across\nthree repositories'], ['4', 'permissionless exits: no job\nstate can hold funds forever'], ['8', 'MCP tools, so any agent\ncan transact directly']];
   const cw = 3.85, gap = 0.36;
   stats.forEach(([big, label], i) => {
     const x = M + i * (cw + gap);

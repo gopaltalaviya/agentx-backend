@@ -60,4 +60,33 @@ export async function topUp(pub, payerClient, address, target) {
   return send(pub, payerClient, {to: address, value: target - balance});
 }
 
+/**
+ * An ERC-8004 registration file ("agent card") as a base64 JSON data: URI —
+ * the form the spec allows for fully on-chain metadata — so an identity the
+ * demo registers describes its agent to anyone reading the registry, instead
+ * of pointing at an address that resolves to nothing. Same shape as the
+ * interface's lib/agent-card.ts (registration-v1).
+ */
+export function agentCardUri({name, capabilities, apiUrl, description}) {
+  const card = {
+    type: 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1',
+    name,
+    description: description ?? `An AGENTX agent offering ${capabilities.join(', ')}.`,
+    image: '',
+    services: [
+      {
+        name: 'AGENTX',
+        endpoint: `${apiUrl.replace(/\/$/, '')}/v1/agents`,
+        version: 'v1',
+        skills: capabilities,
+      },
+    ],
+    x402Support: false,
+    active: true,
+    registrations: [],
+    supportedTrust: ['reputation'],
+  };
+  return `data:application/json;base64,${Buffer.from(JSON.stringify(card), 'utf8').toString('base64')}`;
+}
+
 export const unique = (label) => keccak256(toHex(`${label}:${Date.now()}:${Math.random()}`));

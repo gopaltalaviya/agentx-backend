@@ -28,7 +28,7 @@
  */
 
 import {spawn} from 'node:child_process';
-import {registerAgent, send as sendTx, topUp} from './lib/chain.mjs';
+import {agentCardUri, registerAgent, send as sendTx, topUp} from './lib/chain.mjs';
 import {randomBytes} from 'node:crypto';
 import {createWriteStream, mkdirSync} from 'node:fs';
 import {
@@ -256,7 +256,11 @@ try {
   const orchestratorId = await registerAgent(pub, wallet, {
     identity,
     abi: idAbi,
-    uri: 'ipfs://orchestrator',
+    uri: agentCardUri({
+      name: 'Orchestrator',
+      capabilities: ['orchestration'],
+      apiUrl: `http://127.0.0.1:${API_PORT}`,
+    }),
     wallet: orchestratorWallet,
   });
 
@@ -328,7 +332,11 @@ try {
     const id = await registerAgent(pub, workerClient, {
       identity,
       abi: idAbi,
-      uri: `ipfs://${w.capability}`,
+      uri: agentCardUri({
+        name: titleCase(w.capability),
+        capabilities: [w.capability],
+        apiUrl: `http://127.0.0.1:${API_PORT}`,
+      }),
       wallet: workerWallets[i],
     });
     workerIds.push(id);
