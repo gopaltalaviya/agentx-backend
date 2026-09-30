@@ -124,6 +124,9 @@ jobs:
         run: >
           docker buildx build --load
           --build-arg SERVICE=${{ matrix.service }}
+          --build-arg GIT_SHA=${{ github.sha }}
           -t agentx-ci .
+      # The image knows which commit it is (served on /health and /v1/status).
+      - run: docker run --rm --entrypoint cat agentx-ci /app/build-info.json | grep -q '"commit":"${{ github.sha }}"'
       # The image must run as an unprivileged user.
       - run: test "$(docker run --rm --entrypoint id agentx-ci -u)" != "0"
