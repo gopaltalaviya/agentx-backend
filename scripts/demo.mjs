@@ -980,6 +980,8 @@ function describeWorkerEvent(e) {
       return `accepted job ${e.jobId}`;
     case 'delivered':
       return `delivered job ${e.jobId} via ${e.provider} in ${e.latencyMs}ms`;
+    case 'retrying':
+      return `${e.stage} of job ${e.jobId} did not go through, retrying: ${e.reason}`;
     case 'failed':
       return `FAILED job ${e.jobId} at ${e.stage}: ${e.reason}`;
     default:

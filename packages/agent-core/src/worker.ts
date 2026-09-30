@@ -80,11 +80,13 @@ export type WorkerEvent =
   | {kind: 'declined'; jobId: string; reason: string; structural: boolean}
   | {kind: 'accepted'; jobId: string}
   | {kind: 'delivered'; jobId: string; provider: string; latencyMs: number}
+  /** A transient failure: the job is kept, and the stage is tried again next poll. */
+  | {kind: 'retrying'; jobId: string; stage: string; reason: string}
   | {kind: 'failed'; jobId: string; stage: string; reason: string};
 
 export type Outcome =
   | {status: 'declined'; reason: string}
-  /** Wants the job; the API asked it to retry the accept. Tried again next poll. */
+  /** Wants the job, or holds it; the API asked it to retry. Tried again next poll. */
   | {status: 'waiting'; jobId: string; reason: string}
   | {status: 'delivered'; jobId: string}
   | {status: 'failed'; stage: string; reason: string};
@@ -108,6 +110,13 @@ export class Worker<T> {
    * same question again.
    */
   private readonly willing = new Set<string>();
+
+  /**
+   * Work produced and not yet delivered, because the submit failed in a way
+   * the API said to retry. Kept so the retry is ONLY the submit: the job was
+   * already accepted and the work already paid for in model time.
+   */
+  private readonly undelivered = new Map<string, {output: T; provider: string; latencyMs: number}>();
 
   constructor(private readonly opts: WorkerOptions<T>) {
     this.requiredKeys = keysOf(opts.output);
@@ -170,8 +179,15 @@ export class Worker<T> {
   }
 
   async handle(offer: JobSummary): Promise<Outcome> {
-    if (!this.willing.has(offer.jobId)) return this.consider(offer);
-    return this.take(offer);
+    const pending = this.undelivered.get(offer.jobId);
+    if (pending) return this.deliver(offer, pending);
+    // Only this worker's jobs are listed (role: worker), so an ACCEPTED one is
+    // a job it already holds — accepted by an earlier poll whose response was
+    // lost, or by this worker before a restart. Triage is moot (it is
+    // committed), and accepting again is refused as INVALID_STATE, which used
+    // to make the worker abandon the job. Do the work.
+    if (offer.state === 'accepted' || this.willing.has(offer.jobId)) return this.take(offer);
+    return this.consider(offer);
   }
 
   private async consider(offer: JobSummary): Promise<Outcome> {
@@ -213,7 +229,7 @@ export class Worker<T> {
       // without emitting anything, and the job came back on the very next
       // poll — an invisible failure retried forever. `path` is fixed when the
       // job is created and does not lie.
-      if (offer.path === 'escrow') await this.opts.client.accept(offer.jobId);
+      if (offer.path === 'escrow' && offer.state !== 'accepted') await this.opts.client.accept(offer.jobId);
     } catch (err) {
       // "Not confirmed on-chain yet — retry in a moment" is the API's answer
       // until the indexer links a fresh escrow job, and it says so with a
@@ -234,7 +250,8 @@ export class Worker<T> {
       return {status: 'failed', stage: 'accept', reason: message(err)};
     }
     this.willing.delete(offer.jobId);
-    if (offer.path === 'escrow') this.emit({kind: 'accepted', jobId: offer.jobId});
+    if (offer.path === 'escrow' && offer.state !== 'accepted')
+      this.emit({kind: 'accepted', jobId: offer.jobId});
 
     const startedAt = Date.now();
     let output: T;
@@ -262,16 +279,45 @@ export class Worker<T> {
       return {status: 'failed', stage: 'self-check', reason: shape.reason};
     }
 
-    const latencyMs = Date.now() - startedAt;
+    return this.deliver(offer, {output, provider, latencyMs: Date.now() - startedAt});
+  }
+
+  /**
+   * Submit produced work.
+   *
+   * A failure here used to return silently, and the job came back on the next
+   * poll looking like a fresh offer — so the worker tried to accept a job it
+   * already held, was refused, and abandoned finished work. Now a transient
+   * failure keeps the work and retries only this step; any other failure is
+   * reported and the job is let go.
+   */
+  private async deliver(
+    offer: JobSummary,
+    work: {output: T; provider: string; latencyMs: number},
+  ): Promise<Outcome> {
     try {
       await this.opts.client.submitResult(offer.jobId, {
-        output: output as Record<string, unknown>,
+        output: work.output as Record<string, unknown>,
       });
     } catch (err) {
+      if (err instanceof AgentxError && err.retryAfter !== undefined) {
+        this.undelivered.set(offer.jobId, work);
+        this.emit({kind: 'retrying', jobId: offer.jobId, stage: 'submit', reason: message(err)});
+        return {status: 'waiting', jobId: offer.jobId, reason: message(err)};
+      }
+      this.undelivered.delete(offer.jobId);
+      this.declined.add(offer.jobId);
+      this.emit({kind: 'failed', jobId: offer.jobId, stage: 'submit', reason: message(err)});
       return {status: 'failed', stage: 'submit', reason: message(err)};
     }
 
-    this.emit({kind: 'delivered', jobId: offer.jobId, provider, latencyMs});
+    this.undelivered.delete(offer.jobId);
+    this.emit({
+      kind: 'delivered',
+      jobId: offer.jobId,
+      provider: work.provider,
+      latencyMs: work.latencyMs,
+    });
     return {status: 'delivered', jobId: offer.jobId};
   }
 

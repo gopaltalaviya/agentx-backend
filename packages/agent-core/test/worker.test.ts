@@ -64,14 +64,18 @@ class FakeBrain implements Brain {
 interface Calls {
   accepted: string[];
   submitted: {jobId: string; output: Record<string, unknown>}[];
+  submitAttempts: number;
 }
 
-function fakeClient(
-  offers: JobSummary[],
-  calls: Calls,
-  over: {acceptThrows?: unknown; acceptThrowsOnce?: unknown} = {},
-): AgentxClient {
+interface ClientFaults {
+  acceptThrows?: unknown;
+  acceptThrowsOnce?: unknown;
+  submitThrowsOnce?: unknown;
+}
+
+function fakeClient(offers: JobSummary[], calls: Calls, over: ClientFaults = {}): AgentxClient {
   let thrownOnce = false;
+  let submitThrown = false;
   return {
     listJobs: async () => offers,
     accept: async (jobId: string) => {
@@ -84,6 +88,11 @@ function fakeClient(
       return {jobId, chainId: 10143, state: 'accepted', txHash: '0x', explorerUrl: 'u'};
     },
     submitResult: async (jobId: string, result: {output: Record<string, unknown>}) => {
+      calls.submitAttempts++;
+      if (over.submitThrowsOnce && !submitThrown) {
+        submitThrown = true;
+        throw over.submitThrowsOnce;
+      }
       calls.submitted.push({jobId, output: result.output});
       return {jobId, chainId: 10143, state: 'submitted', txHash: '0x', explorerUrl: 'u'};
     },
@@ -117,9 +126,9 @@ function offer(over: Partial<JobSpec> = {}, jobId = '1'): JobSummary {
 function build(
   offers: JobSummary[],
   brain: Brain,
-  over: {acceptThrows?: unknown; acceptThrowsOnce?: unknown} = {},
+  over: ClientFaults = {},
 ): {worker: Worker<z.infer<typeof Output>>; calls: Calls; events: WorkerEvent[]} {
-  const calls: Calls = {accepted: [], submitted: []};
+  const calls: Calls = {accepted: [], submitted: [], submitAttempts: 0};
   const events: WorkerEvent[] = [];
   const worker = new Worker({
     client: fakeClient(offers, calls, over),
@@ -482,5 +491,65 @@ describe('an accept the API says to retry', () => {
     await worker.tick();
 
     expect(calls.accepted).toEqual([]);
+  });
+});
+
+describe('a delivery the chain did not take the first time', () => {
+  /**
+   * Found by the slow-RPC chaos run on v2. The signer's submit hit an RPC
+   * 503; the API reported it as retryable; the worker returned "failed at
+   * submit" WITHOUT emitting anything. The next poll listed the job again —
+   * still undelivered — so the worker treated it as a fresh offer, tried to
+   * accept a job it already held, got INVALID_STATE, and abandoned work it had
+   * already produced. The client waited out the work window for a refund.
+   */
+  const upstream = new AgentxError(ErrorCode.UPSTREAM_UNAVAILABLE, 'the signer answered 502', 2);
+
+  it('reports a retryable submit failure and retries only the submit on the next poll', async () => {
+    const brain = new FakeBrain();
+    const job = offer({});
+    const {worker, calls, events} = build([job], brain, {submitThrowsOnce: upstream});
+
+    await worker.tick();
+    expect(calls.accepted).toEqual(['1']);
+    expect(calls.submitted).toEqual([]);
+    expect(events.some((e) => e.kind === 'retrying' && e.stage === 'submit')).toBe(true);
+
+    // What the API lists after the accept landed.
+    job.state = 'accepted';
+    const promptsBefore = brain.prompts.length;
+    await worker.tick();
+
+    expect(calls.accepted).toEqual(['1']); // not accepted twice
+    expect(calls.submitted.map((c) => c.jobId)).toEqual(['1']);
+    expect(brain.prompts.length).toBe(promptsBefore); // the work was not redone
+    expect(events.at(-1)?.kind).toBe('delivered');
+  });
+
+  it('delivers a job it already accepted instead of trying to accept it again', async () => {
+    const job = offer({});
+    job.state = 'accepted';
+    const {worker, calls, events} = build([job], new FakeBrain());
+
+    await worker.tick();
+
+    expect(calls.accepted).toEqual([]);
+    expect(calls.submitted.map((c) => c.jobId)).toEqual(['1']);
+    expect(events.some((e) => e.kind === 'failed')).toBe(false);
+  });
+
+  it('reports a submit refusal that is not transient, and does not retry it', async () => {
+    const refused = new AgentxError(
+      ErrorCode.INVALID_STATE,
+      'job is "refunded", this action needs "accepted"',
+    );
+    const {worker, calls, events} = build([offer({})], new FakeBrain(), {submitThrowsOnce: refused});
+
+    await worker.tick();
+    await worker.tick();
+
+    expect(events.some((e) => e.kind === 'failed' && e.stage === 'submit')).toBe(true);
+    expect(calls.submitAttempts).toBe(1);
+    expect(calls.accepted).toEqual(['1']);
   });
 });
