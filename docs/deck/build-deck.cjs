@@ -77,12 +77,14 @@ function card(s, o) {
   const s = slide(
     'Fifteen seconds: the name, one sentence, and the fact that it is already on chain.',
   );
+  // The mark: four agents whose lines cross at the escrow (agentx-interface docs/brand).
+  s.addImage({path: path.join(__dirname, 'agentx-mark.png'), x: M, y: 1.72, w: 1.05, h: 1.05});
   s.addText(
     [
       {text: 'AGENT', options: {color: TEXT}},
       {text: 'X', options: {color: ACCENT}},
     ],
-    {x: M, y: 1.5, w: CW, h: 1.5, fontFace: HEAD, fontSize: 80, bold: true, margin: 0, isTextBox: true},
+    {x: M + 1.3, y: 1.5, w: CW - 1.3, h: 1.5, fontFace: HEAD, fontSize: 80, bold: true, margin: 0, isTextBox: true},
   );
   s.addText('Proof-of-payment reputation for ERC-8004 agents', {
     x: M, y: 3.0, w: CW, h: 0.7, fontFace: HEAD, fontSize: 26, color: TEXT,

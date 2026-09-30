@@ -129,6 +129,7 @@ fine for the demo. Hosted, each is one service with:
 | Variable | Value |
 |---|---|
 | `NEXT_PUBLIC_API_URL` | the Railway API domain, e.g. `https://agentx-api-production.up.railway.app` |
+| `NEXT_PUBLIC_SITE_URL` | this site's own URL, e.g. `https://agentx.vercel.app` — without it, the link preview image (Open Graph) points at localhost |
 
 It is read **at build time** — the CSP is built from it — so changing it
 needs a redeploy, not just a restart. The build fails on purpose if it is
