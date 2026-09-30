@@ -12,8 +12,8 @@
   chain, including a real dispute expired by the keeper after its 1 h
   timeout. Backend and interface have lint, formatting, coverage floors, CI,
   containers, metrics, graceful shutdown and a browser smoke test.
-- Overall: `██████████████████░░` 92% — **106 / 115 tasks**, **699 tests green**
-  (184 contracts · 475 backend · 40 interface) + 9 browser smoke tests
+- Overall: `██████████████████░░` 92% — **106 / 115 tasks**, **719 tests green**
+  (184 contracts · 495 backend · 40 interface) + 9 browser smoke tests
 
 ---
 
@@ -130,11 +130,11 @@ cd ../agentx-contracts && forge build
 
 # 3. Prove it is all still green
 FOUNDRY_PROFILE=ci forge test              # expect 184 passed
-cd ../agentx-backend && npx tsc -b && npx vitest run   # expect 475 passed
+cd ../agentx-backend && npx tsc -b && npx vitest run   # expect 495 passed
 cd ../agentx-interface && npx tsc --noEmit && npx vitest run && NEXT_PUBLIC_API_URL=http://127.0.0.1:8080 npx next build   # expect 40 passed
 ```
 
-Expected totals as of 2026-09-30: **184 contracts + 475 backend + 40 interface = 699** (Session 27), plus 9 Playwright smoke tests.
+Expected totals as of 2026-09-30: **184 contracts + 495 backend + 40 interface = 719** (Session 27, operations audit), plus 9 Playwright smoke tests.
 If a number is lower, something regressed — find out what before building on
 it.
 
@@ -486,10 +486,10 @@ and metrics ports; every service validates its environment at boot.
 | Suite | Count | State |
 |---|---|---|
 | Contracts — unit, fuzz, invariant (3 suites), adversarial, v2 findings | **184** | ✅ 100% branch on StakeVault/AgentAccount/Factory, 96.5% TaskEscrow |
-| Backend — 29 files | **475** | ✅ lint, format, typecheck of tests, coverage floors 75/78/74/75 |
+| Backend — 31 files | **495** | ✅ lint, format, typecheck of tests, coverage floors 75/78/74/75 |
 | Interface — unit | **40** | ✅ plus lint, `next build`, audit |
 | Interface — Playwright smoke | **9** | ✅ every page, production build, mocked API |
-| **Total** | **699** + 9 | |
+| **Total** | **719** + 9 | |
 
 Every test that guards a Session 26 fix was run against the old code first
 and seen to fail.
@@ -643,6 +643,30 @@ Append-only. Never rewrite a decision — supersede it with a new row.
 ## 📓 Session log
 
 Newest first. One entry per working session, however short.
+
+### Session 27 — operations audit (2026-09-30)
+
+A production-operations audit of the backend, filtered to what AGENTX has (no
+Redis, WebSockets, subgraph or markets). **Docs:** [14 — Operations](docs/14-operations.md)
+(health/status classification, versioning, environments and which copy of
+each fact is authoritative, monitoring and an alert table, indexer
+lifecycle, every migration reviewed for locking, backups, security,
+incidents with templates), [15 — HTTP API](docs/15-api.md) (hand-written —
+routes validate with zod in handlers, so no OpenAPI without a refactor — and
+a test fails if its route index and the app disagree),
+[16 — Runbooks](docs/16-runbooks.md) R1–R11, and
+[17 — Production readiness](docs/17-production-readiness.md) (checklist +
+report). docs/08 §5 was missing 17 variables the services read; fixed.
+**Code, each test run against the old code first:** public `GET /v1/status`
+(components, per-chain RPC and indexer lag, build; cached 5 s, 2 s per check,
+never an error text) · build metadata (commit + build time baked into images,
+on every `/health`) · indexer head/indexed/lag gauges · the API's public
+`/ready` no longer echoes driver errors (internal hostnames) · `/metrics` not
+served in production without `METRICS_TOKEN` · `GET /v1/agents/abc` was a 500.
+`verify-indexer.mjs` passed live on testnet; the api image was built and
+reported its commit. 475 → 495 backend tests. **Owner decisions** are listed
+in docs/17 §14 — above all, enable Railway Postgres backups and point an
+uptime monitor at `/v1/status`.
 
 ### Session 27 — 2026-09-30 (the 20%-lossy chaos run · two retry defects · indexer re-verified)
 
