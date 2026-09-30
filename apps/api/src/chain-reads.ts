@@ -26,10 +26,7 @@ export interface BudgetReading {
   dayStart: bigint;
 }
 
-export type BudgetReader = (args: {
-  chainId: number;
-  walletAddress: string;
-}) => Promise<BudgetReading | null>;
+export type BudgetReader = (args: {chainId: number; walletAddress: string}) => Promise<BudgetReading | null>;
 
 /**
  * Real reader, against `AgentAccount`.
@@ -49,7 +46,7 @@ export function makeBudgetReader(config: AgentxConfig, abis?: Record<string, Abi
   const clientFor = (chainId: number): PublicClient => {
     let client = clients.get(chainId);
     if (!client) {
-      client = createPublicClient({transport: http(config.chain(chainId).rpcUrl)}) as PublicClient;
+      client = createPublicClient({transport: http(config.chain(chainId).rpcUrl)});
       clients.set(chainId, client);
     }
     return client;
@@ -146,8 +143,18 @@ export function makeIdentityReader(config: AgentxConfig): IdentityReader {
     const pub = createPublicClient({transport: http(chain.rpcUrl)});
     try {
       const [owner, wallet] = await Promise.all([
-        pub.readContract({address: registry, abi: IDENTITY_ABI, functionName: 'ownerOf', args: [chainAgentId]}),
-        pub.readContract({address: registry, abi: IDENTITY_ABI, functionName: 'getAgentWallet', args: [chainAgentId]}),
+        pub.readContract({
+          address: registry,
+          abi: IDENTITY_ABI,
+          functionName: 'ownerOf',
+          args: [chainAgentId],
+        }),
+        pub.readContract({
+          address: registry,
+          abi: IDENTITY_ABI,
+          functionName: 'getAgentWallet',
+          args: [chainAgentId],
+        }),
       ]);
       return {owner, wallet};
     } catch {
@@ -165,9 +172,7 @@ export interface DirectPaidLog {
 }
 
 export type PaymentReading =
-  | {status: 'pending'}
-  | {status: 'reverted'}
-  | {status: 'success'; directPaid: DirectPaidLog[]};
+  {status: 'pending'} | {status: 'reverted'} | {status: 'success'; directPaid: DirectPaidLog[]};
 
 export type PaymentReader = (args: {chainId: number; txHash: Hex}) => Promise<PaymentReading>;
 
@@ -203,7 +208,7 @@ const DIRECT_PAID_ABI = [
 export function makePaymentReader(config: AgentxConfig): PaymentReader {
   return async ({chainId, txHash}) => {
     const chain = config.chain(chainId);
-    const escrow = (chain.contracts['TaskEscrow'] as string | undefined)?.toLowerCase();
+    const escrow = chain.contracts['TaskEscrow']?.toLowerCase();
     const pub = createPublicClient({transport: http(chain.rpcUrl)});
 
     let receipt;

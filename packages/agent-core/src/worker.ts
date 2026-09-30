@@ -47,10 +47,7 @@ import {validateShape} from './judge.js';
  * fails, because it is not a confidence.
  */
 export const confidence = () =>
-  z.preprocess(
-    (v) => (typeof v === 'number' && v > 1 && v <= 100 ? v / 100 : v),
-    z.number().min(0).max(1),
-  );
+  z.preprocess((v) => (typeof v === 'number' && v > 1 && v <= 100 ? v / 100 : v), z.number().min(0).max(1));
 
 /** The worker could not think about the offer at all. Not a judgement on it. */
 export class TriageUnavailable extends Error {
@@ -387,9 +384,9 @@ export class Worker<T> {
 
 /** The top-level field names a schema produces. */
 function keysOf(schema: z.ZodType): Set<string> {
-  const unwrapped = schema instanceof z.ZodEffects ? schema.innerType() : schema;
+  const unwrapped: z.ZodType = schema instanceof z.ZodEffects ? (schema.innerType() as z.ZodType) : schema;
   return unwrapped instanceof z.ZodObject
-    ? new Set(Object.keys(unwrapped.shape as Record<string, unknown>))
+    ? new Set(Object.keys((unwrapped as z.ZodObject<z.ZodRawShape>).shape))
     : new Set<string>();
 }
 

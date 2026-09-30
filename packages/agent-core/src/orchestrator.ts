@@ -288,7 +288,7 @@ export class Orchestrator {
 
     const candidates = (
       await this.opts.client.discover({
-        capability: spec.capability as never,
+        capability: spec.capability,
         maxPrice: ceiling.toString(),
         rank: 'balanced',
         limit: 10,
@@ -313,9 +313,7 @@ export class Orchestrator {
     let previous: StepOutcome | undefined;
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      const pool = candidates.filter(
-        (c) => !tried.has(c.agentId) && BigInt(c.pricePerTask) <= remaining,
-      );
+      const pool = candidates.filter((c) => !tried.has(c.agentId) && BigInt(c.pricePerTask) <= remaining);
       if (pool.length === 0) break;
 
       // A model outage while CHOOSING is a failed step, not a failed run.
@@ -429,7 +427,11 @@ export class Orchestrator {
           });
         }
         return {
-          retry: {...common, status: 'timeout', detail: `agent ${chosen.agentId} never accepted — cancelled and refunded`},
+          retry: {
+            ...common,
+            status: 'timeout',
+            detail: `agent ${chosen.agentId} never accepted — cancelled and refunded`,
+          },
           locked: 0n,
         };
       }

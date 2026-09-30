@@ -55,23 +55,23 @@ export function makeSignerSubmit(deps: SignerSubmitDeps): JobRouteDeps['submit']
     let res: Response;
     try {
       res = await doFetch(`${deps.signerUrl}/sign`, {
-      method: 'POST',
-      // No timeout used to mean a hung signer hung every hire with it.
-      signal: AbortSignal.timeout(deps.timeoutMs ?? 30_000),
-      headers: {
-        'content-type': 'application/json',
-        ...(deps.signerToken ? {authorization: `Bearer ${deps.signerToken}`} : {}),
-        // One id from the caller's request to the signer's log line.
-        ...(traceId ? {'x-request-id': traceId} : {}),
-      },
-      body: JSON.stringify({
-        agentId,
-        chainId,
-        target: escrow,
-        data,
-        spend: spend.toString(),
-        idempotencyKey,
-      }),
+        method: 'POST',
+        // No timeout used to mean a hung signer hung every hire with it.
+        signal: AbortSignal.timeout(deps.timeoutMs ?? 30_000),
+        headers: {
+          'content-type': 'application/json',
+          ...(deps.signerToken ? {authorization: `Bearer ${deps.signerToken}`} : {}),
+          // One id from the caller's request to the signer's log line.
+          ...(traceId ? {'x-request-id': traceId} : {}),
+        },
+        body: JSON.stringify({
+          agentId,
+          chainId,
+          target: escrow,
+          data,
+          spend: spend.toString(),
+          idempotencyKey,
+        }),
       });
     } catch (err) {
       // Nothing was signed, or the idempotency key makes a retry safe if it was.
@@ -125,13 +125,13 @@ function encodeCall(
   },
 ): Hex {
   const chainJobId = ctx.job?.chainJobId ? BigInt(ctx.job.chainJobId) : 0n;
-  const specHash = (ctx.payload?.['specHash'] as Hex) ?? ('0x' + '0'.repeat(64) as Hex);
+  const specHash = (ctx.payload?.['specHash'] as Hex) ?? (('0x' + '0'.repeat(64)) as Hex);
 
   // ERC-8004 ids supplied by the caller. NEVER ctx.agentId — that is the
   // database's serial, and the contract would resolve it to a different
   // agent's wallet without erroring.
-  const workerAgentId = BigInt(String(ctx.payload?.['workerChainAgentId'] ?? 0));
-  const clientAgentId = BigInt(String(ctx.payload?.['clientChainAgentId'] ?? 0));
+  const workerAgentId = agentIdOf(ctx.payload?.['workerChainAgentId']);
+  const clientAgentId = agentIdOf(ctx.payload?.['clientChainAgentId']);
 
   switch (kind) {
     case 'directPay':
@@ -185,4 +185,11 @@ function encodeCall(
       throw new Error(`unhandled action ${String(never)}`);
     }
   }
+}
+
+/** An ERC-8004 id from the hire payload: a decimal string, number or bigint — nothing else. */
+function agentIdOf(v: unknown): bigint {
+  if (typeof v === 'bigint') return v;
+  if (typeof v === 'number' || (typeof v === 'string' && /^\d+$/.test(v))) return BigInt(v);
+  return 0n;
 }

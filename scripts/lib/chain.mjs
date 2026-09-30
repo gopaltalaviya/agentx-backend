@@ -29,7 +29,9 @@ export async function send(pub, walletClient, request) {
       const msg = `${err.shortMessage ?? ''} ${err.details ?? ''} ${err.message ?? ''}`;
       if (/already known|nonce too low|replacement transaction underpriced/i.test(msg)) break;
       const transient =
-        err.name === 'HttpRequestError' || err.name === 'TimeoutError' || /\b50[234]\b|fetch failed|ECONNRESET/i.test(msg);
+        err.name === 'HttpRequestError' ||
+        err.name === 'TimeoutError' ||
+        /\b50[234]\b|fetch failed|ECONNRESET/i.test(msg);
       if (!transient || attempt >= 5) throw err;
       await new Promise((r) => setTimeout(r, 500 * 2 ** attempt));
     }

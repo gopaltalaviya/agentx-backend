@@ -17,7 +17,10 @@ export function registerErrorHandler(app: FastifyInstance): void {
     if (err instanceof AgentxError) {
       const problem = err.toProblem(titleFor(err.code));
       if (problem.retryAfter) reply.header('retry-after', String(problem.retryAfter));
-      return reply.status(problem.status).type('application/problem+json').send({...problem, traceId});
+      return reply
+        .status(problem.status)
+        .type('application/problem+json')
+        .send({...problem, traceId});
     }
 
     // A malformed request is the caller's fault, not ours. Zod throws a
@@ -40,17 +43,14 @@ export function registerErrorHandler(app: FastifyInstance): void {
 
     // Fastify's own schema validation, surfaced in the same shape.
     if ((err as {validation?: unknown}).validation) {
-      return reply
-        .status(422)
-        .type('application/problem+json')
-        .send({
-          type: 'https://agentx.dev/errors/schema-mismatch',
-          title: 'Request failed validation',
-          status: 422,
-          code: ErrorCode.SCHEMA_MISMATCH,
-          detail: err.message,
-          traceId,
-        });
+      return reply.status(422).type('application/problem+json').send({
+        type: 'https://agentx.dev/errors/schema-mismatch',
+        title: 'Request failed validation',
+        status: 422,
+        code: ErrorCode.SCHEMA_MISMATCH,
+        detail: err.message,
+        traceId,
+      });
     }
 
     // Postgres 23505. A uniqueness conflict is something the caller can act
@@ -62,25 +62,29 @@ export function registerErrorHandler(app: FastifyInstance): void {
     // which during an incident points whoever is reading at the wrong table:
     // a duplicate on-chain job id reported as a duplicate wallet costs real
     // minutes.
-    if ((err as {code?: string}).code === '23505') {
-      const constraint =
-        (err as {constraint_name?: string; constraint?: string}).constraint_name ??
-        (err as {constraint?: string}).constraint ??
-        '';
+    // drizzle (0.45+) wraps the driver's error in a DrizzleQueryError and
+    // puts the Postgres error on `cause` — reading `code` off the wrapper
+    // silently turned every uniqueness conflict into a 500.
+    const pg = ((err as {cause?: unknown}).cause ?? err) as {
+      code?: string;
+      constraint_name?: string;
+      constraint?: string;
+    };
+    if (pg.code === '23505') {
+      const constraint = pg.constraint_name ?? pg.constraint ?? '';
 
-      const detail = CONFLICT_DETAIL[constraint] ?? `a uniqueness constraint was violated${constraint ? ` (${constraint})` : ''}`;
+      const detail =
+        CONFLICT_DETAIL[constraint] ??
+        `a uniqueness constraint was violated${constraint ? ` (${constraint})` : ''}`;
 
-      return reply
-        .status(409)
-        .type('application/problem+json')
-        .send({
-          type: 'https://agentx.dev/errors/already-exists',
-          title: 'Already exists',
-          status: 409,
-          code: 'ALREADY_EXISTS',
-          detail,
-          traceId,
-        });
+      return reply.status(409).type('application/problem+json').send({
+        type: 'https://agentx.dev/errors/already-exists',
+        title: 'Already exists',
+        status: 409,
+        code: 'ALREADY_EXISTS',
+        detail,
+        traceId,
+      });
     }
 
     if ((err as {statusCode?: number}).statusCode === 429) {
@@ -105,16 +109,19 @@ export function registerErrorHandler(app: FastifyInstance): void {
     const status = (err as {statusCode?: number}).statusCode;
     if (typeof status === 'number' && status >= 400 && status < 500) {
       request.log.warn({err, traceId}, 'client error');
-      return reply.status(status).type('application/problem+json').send({
-        type: 'https://agentx.dev/errors/bad-request',
-        title: 'Bad request',
-        status,
-        // The code is Fastify's own (FST_ERR_*) when it has one: the caller
-        // has to be able to tell these apart to fix them.
-        code: (err as {code?: string}).code ?? 'BAD_REQUEST',
-        detail: err.message,
-        traceId,
-      });
+      return reply
+        .status(status)
+        .type('application/problem+json')
+        .send({
+          type: 'https://agentx.dev/errors/bad-request',
+          title: 'Bad request',
+          status,
+          // The code is Fastify's own (FST_ERR_*) when it has one: the caller
+          // has to be able to tell these apart to fix them.
+          code: (err as {code?: string}).code ?? 'BAD_REQUEST',
+          detail: err.message,
+          traceId,
+        });
     }
 
     request.log.error({err, traceId}, 'unhandled error');
@@ -130,14 +137,17 @@ export function registerErrorHandler(app: FastifyInstance): void {
   });
 
   app.setNotFoundHandler((request, reply) =>
-    reply.status(404).type('application/problem+json').send({
-      type: 'https://agentx.dev/errors/not-found',
-      title: 'Not found',
-      status: 404,
-      code: 'NOT_FOUND',
-      detail: `${request.method} ${request.url}`,
-      traceId: request.id,
-    }),
+    reply
+      .status(404)
+      .type('application/problem+json')
+      .send({
+        type: 'https://agentx.dev/errors/not-found',
+        title: 'Not found',
+        status: 404,
+        code: 'NOT_FOUND',
+        detail: `${request.method} ${request.url}`,
+        traceId: request.id,
+      }),
   );
 }
 

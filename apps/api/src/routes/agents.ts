@@ -5,7 +5,7 @@ import {agents, agentCapabilities, agentStats, apiKeys, spendPolicies, type Db} 
 import {AgentxError, BaseUnits, Capability, ErrorCode} from '@agentx/shared';
 import type {ChainConfig} from '@agentx/config';
 import {authenticate, generateApiKey, hashApiKey, resolveChainId} from '../auth.js';
-import {rank, RANK_MODES, type RankMode} from '../ranking.js';
+import {rank, RANK_MODES} from '../ranking.js';
 import type {AgentRow} from '../types.js';
 import type {IdentityReader} from '../chain-reads.js';
 
@@ -88,11 +88,9 @@ export async function registerAgentRoutes(app: FastifyInstance, deps: RouteDeps)
       .groupBy(agents.id, agentStats.agentId)
       .limit(500);
 
-    const filtered = q.capability
-      ? rows.filter((r) => (r.capabilities as string[]).includes(q.capability!))
-      : rows;
+    const filtered = q.capability ? rows.filter((r) => r.capabilities.includes(q.capability!)) : rows;
 
-    const ranked = rank(filtered as AgentRow[], q.rank as RankMode).slice(0, q.limit);
+    const ranked = rank(filtered, q.rank).slice(0, q.limit);
 
     return {
       chainId,
@@ -138,7 +136,7 @@ export async function registerAgentRoutes(app: FastifyInstance, deps: RouteDeps)
     const chain = chains[agent.chainId];
     if (!chain) throw new AgentxError(ErrorCode.CHAIN_NOT_ENABLED, `chain ${agent.chainId} is not enabled`);
 
-    return present({...agent, capabilities: caps.map((c) => c.capability)} as AgentRow, chain);
+    return present({...agent, capabilities: caps.map((c) => c.capability)}, chain);
   });
 
   /**
@@ -185,9 +183,9 @@ export async function registerAgentRoutes(app: FastifyInstance, deps: RouteDeps)
         })
         .returning();
 
-      await tx.insert(agentCapabilities).values(
-        body.capabilities.map((capability) => ({agentId: agent!.id, capability})),
-      );
+      await tx
+        .insert(agentCapabilities)
+        .values(body.capabilities.map((capability) => ({agentId: agent!.id, capability})));
       await tx.insert(agentStats).values({agentId: agent!.id});
 
       // A starting spend policy, from this chain's configured defaults.
@@ -237,7 +235,11 @@ export async function registerAgentRoutes(app: FastifyInstance, deps: RouteDeps)
     resolveChainId(request, caller, enabled);
 
     const patch = z
-      .object({pricePerTask: BaseUnits.optional(), active: z.boolean().optional(), description: z.string().max(1000).optional()})
+      .object({
+        pricePerTask: BaseUnits.optional(),
+        active: z.boolean().optional(),
+        description: z.string().max(1000).optional(),
+      })
       .parse(request.body);
 
     const [updated] = await db
@@ -303,7 +305,10 @@ async function verifyIdentity(
   }
   const identity = await read({chainId, chainAgentId});
   if (!identity) {
-    throw new AgentxError(ErrorCode.INVALID_STATE, `ERC-8004 identity ${chainAgentId} does not exist on chain ${chainId}`);
+    throw new AgentxError(
+      ErrorCode.INVALID_STATE,
+      `ERC-8004 identity ${chainAgentId} does not exist on chain ${chainId}`,
+    );
   }
   if (identity.owner.toLowerCase() !== body.ownerAddress.toLowerCase()) {
     throw new AgentxError(

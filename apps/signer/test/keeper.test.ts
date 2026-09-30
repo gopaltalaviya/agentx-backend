@@ -1,5 +1,4 @@
 import {describe, expect, it} from 'vitest';
-import type {Hex} from 'viem';
 import {Keeper, JobState, dueExit, type Exit, type OnChainJob} from '../src/keeper.js';
 
 /**
@@ -75,9 +74,10 @@ describe('a sweep', () => {
       readJob: async (id) => jobs[id.toString()]!,
       now: async () => now,
       send: async (exit, id) => {
-        if (failOn.includes(id.toString())) throw new Error('execution reverted: InvalidState()\nmore detail');
+        if (failOn.includes(id.toString()))
+          throw new Error('execution reverted: InvalidState()\nmore detail');
         sent.push({exit, id: id.toString()});
-        return `0x${id.toString().padStart(64, '0')}` as Hex;
+        return `0x${id.toString().padStart(64, '0')}`;
       },
     });
     return {keeper, sent};

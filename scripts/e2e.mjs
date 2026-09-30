@@ -43,8 +43,7 @@ const sql = postgres(DB_URL, {max: 2, onnotice: () => {}});
 const db = createDb(DB_URL);
 
 const DEPLOYER = privateKeyToAccount(
-  process.env.DEPLOYER_PRIVATE_KEY ??
-    '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
+  process.env.DEPLOYER_PRIVATE_KEY ?? '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
 );
 const viemChain = {...foundry, id: CHAIN_ID};
 const pub = createPublicClient({chain: viemChain, transport: http(chain.rpcUrl)});
@@ -81,15 +80,24 @@ try {
   // the client's own wallet would net to zero and prove nothing. The worker
   // registers its own identity, so it owns it.
   const WORKER = privateKeyToAccount(
-    process.env.AGENT_B_PRIVATE_KEY ??
-      '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d', // anvil #1
+    process.env.AGENT_B_PRIVATE_KEY ?? '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d', // anvil #1
   );
   const WORKER_WALLET = WORKER.address;
   const workerClient = createWalletClient({account: WORKER, chain: viemChain, transport: http(chain.rpcUrl)});
   await topUp(pub, wallet, WORKER.address, 100_000_000_000_000_000n); // 0.1 native for one registration
   const idAbi = abis['MockIdentityRegistry'];
-  const clientChainId = await registerAgent(pub, wallet, {identity, abi: idAbi, uri: 'ipfs://client', wallet: DEPLOYER.address});
-  const workerChainId = await registerAgent(pub, workerClient, {identity, abi: idAbi, uri: 'ipfs://worker', wallet: WORKER_WALLET});
+  const clientChainId = await registerAgent(pub, wallet, {
+    identity,
+    abi: idAbi,
+    uri: 'ipfs://client',
+    wallet: DEPLOYER.address,
+  });
+  const workerChainId = await registerAgent(pub, workerClient, {
+    identity,
+    abi: idAbi,
+    uri: 'ipfs://worker',
+    wallet: WORKER_WALLET,
+  });
 
   await write(token, erc20, 'mint', [DEPLOYER.address, 1_000_000_000n]);
   await write(token, erc20, 'approve', [vault, 1_000_000_000n]);
@@ -104,7 +112,10 @@ try {
     ENABLED_CHAIN_IDS: String(CHAIN_ID),
     DEFAULT_CHAIN_ID: String(CHAIN_ID),
     AGENTX_CONTRACTS_ROOT: process.env.AGENTX_CONTRACTS_ROOT ?? '../agentx-contracts',
-    SIGNER_DEV_PRIVATE_KEY: DEPLOYER.address ? process.env.DEPLOYER_PRIVATE_KEY ?? '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80' : '',
+    SIGNER_DEV_PRIVATE_KEY: DEPLOYER.address
+      ? (process.env.DEPLOYER_PRIVATE_KEY ??
+        '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80')
+      : '',
     SIGNER_PORT: String(SIGNER_PORT),
     SIGNER_URL: `http://127.0.0.1:${SIGNER_PORT}`,
     // Shared by the API and the signer, fresh per run.
@@ -131,7 +142,9 @@ try {
       try {
         const r = await fetch(url);
         if (r.ok) return ok(`${label} is up`);
-      } catch {}
+      } catch {
+        // not up yet — that is what this loop is waiting out
+      }
       await new Promise((r) => setTimeout(r, 500));
     }
     throw new Error(`${label} never became healthy at ${url}`);
@@ -191,7 +204,10 @@ try {
   await indexer.seedCursorToHead();
 
   const workerBalanceBefore = await pub.readContract({
-    address: token, abi: erc20, functionName: 'balanceOf', args: [WORKER_WALLET],
+    address: token,
+    abi: erc20,
+    functionName: 'balanceOf',
+    args: [WORKER_WALLET],
   });
 
   const receipt = await sdk.hire({
@@ -229,10 +245,15 @@ try {
 
   // ── 7. the money actually moved ───────────────────────────────────────
   const txReceipt = await pub.waitForTransactionReceipt({hash: receipt.txHash});
-  txReceipt.status === 'success' ? ok(`settled in block ${txReceipt.blockNumber}`) : fail('the transaction reverted');
+  txReceipt.status === 'success'
+    ? ok(`settled in block ${txReceipt.blockNumber}`)
+    : fail('the transaction reverted');
 
   const workerBalanceAfter = await pub.readContract({
-    address: token, abi: erc20, functionName: 'balanceOf', args: [WORKER_WALLET],
+    address: token,
+    abi: erc20,
+    functionName: 'balanceOf',
+    args: [WORKER_WALLET],
   });
   const paid = workerBalanceAfter - workerBalanceBefore;
   const fee = 20000n / 100n;
@@ -250,7 +271,8 @@ try {
   job?.state === 'settled' ? ok(`job projected to "${job.state}"`) : fail(`job state is "${job?.state}"`);
   job?.chain_job_id ? ok(`linked to on-chain id ${job.chain_job_id}`) : fail('chain_job_id was never linked');
 
-  const [stats] = await sql`SELECT completed, failed, score FROM agent_stats WHERE agent_id = ${workerAgent.agentId}`;
+  const [stats] =
+    await sql`SELECT completed, failed, score FROM agent_stats WHERE agent_id = ${workerAgent.agentId}`;
   Number(stats?.completed) === 1
     ? ok(`reputation: completed=${stats.completed} failed=${stats.failed} score=${stats.score}`)
     : fail(`completed=${stats?.completed}, expected exactly 1`);

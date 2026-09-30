@@ -44,7 +44,11 @@ createServer((req, res) => {
       res.end('upstream unavailable (injected)');
     } else {
       try {
-        const up = await fetch(UPSTREAM, {method: 'POST', headers: {'content-type': 'application/json'}, body});
+        const up = await fetch(UPSTREAM, {
+          method: 'POST',
+          headers: {'content-type': 'application/json'},
+          body,
+        });
         res.writeHead(up.status, {'content-type': 'application/json'});
         res.end(await up.text());
       } catch (err) {

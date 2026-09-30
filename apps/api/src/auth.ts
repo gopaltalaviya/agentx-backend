@@ -99,7 +99,10 @@ export function resolveChainId(request: FastifyRequest, caller: Caller, enabled:
 
   const asked = Number(q);
   if (!enabled.includes(asked)) {
-    throw new AgentxError(ErrorCode.CHAIN_NOT_ENABLED, `chain ${asked} is not enabled (have ${enabled.join(',')})`);
+    throw new AgentxError(
+      ErrorCode.CHAIN_NOT_ENABLED,
+      `chain ${asked} is not enabled (have ${enabled.join(',')})`,
+    );
   }
   if (asked !== caller.chainId) {
     throw new AgentxError(

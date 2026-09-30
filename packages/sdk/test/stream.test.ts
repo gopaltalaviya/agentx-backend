@@ -16,12 +16,11 @@ import {AgentxClient} from '../src/index.js';
 const LF = String.fromCharCode(10);
 
 /** One SSE frame: `event: <name>`, `data: <json>`, blank line. */
-const frame = (event: string, data: string) =>
-  ['event: ' + event, 'data: ' + data, '', ''].join(LF);
+const frame = (event: string, data: string) => ['event: ' + event, 'data: ' + data, '', ''].join(LF);
 
 /** A fetch whose response body yields exactly these chunks. */
 function streaming(chunks: string[]): typeof fetch {
-  return (async () =>
+  return async () =>
     new Response(
       new ReadableStream<Uint8Array>({
         start(controller) {
@@ -30,7 +29,7 @@ function streaming(chunks: string[]): typeof fetch {
         },
       }),
       {status: 200, headers: {'content-type': 'text/event-stream'}},
-    )) as unknown as typeof fetch;
+    );
 }
 
 function client(impl: typeof fetch) {

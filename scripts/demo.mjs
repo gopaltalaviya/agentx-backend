@@ -26,7 +26,16 @@ import {spawn} from 'node:child_process';
 import {registerAgent, send as sendTx, topUp} from './lib/chain.mjs';
 import {randomBytes} from 'node:crypto';
 import {createWriteStream, mkdirSync} from 'node:fs';
-import {createPublicClient, createWalletClient, decodeErrorResult, encodeFunctionData, http, parseAbi, parseEventLogs, toFunctionSelector} from 'viem';
+import {
+  createPublicClient,
+  createWalletClient,
+  decodeErrorResult,
+  encodeFunctionData,
+  http,
+  parseAbi,
+  parseEventLogs,
+  toFunctionSelector,
+} from 'viem';
 import {privateKeyToAccount} from 'viem/accounts';
 import {foundry} from 'viem/chains';
 import postgres from 'postgres';
@@ -63,8 +72,7 @@ const sql = postgres(DB_URL, {max: 2, onnotice: () => {}});
 const db = createDb(DB_URL);
 
 const DEPLOYER = privateKeyToAccount(
-  process.env.DEPLOYER_PRIVATE_KEY ??
-    '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
+  process.env.DEPLOYER_PRIVATE_KEY ?? '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
 );
 const viemChain = {...foundry, id: CHAIN_ID};
 const pub = createPublicClient({chain: viemChain, transport: http(chain.rpcUrl)});
@@ -115,7 +123,10 @@ const WORKERS = [
     price: '60000',
     role: 'an execution planning agent that produces an ordered plan with an abort condition',
     output: z.object({
-      steps: z.array(z.object({action: z.string().min(5)})).min(1).max(6),
+      steps: z
+        .array(z.object({action: z.string().min(5)}))
+        .min(1)
+        .max(6),
       preconditions: z.array(z.string().min(5)).min(1).max(5),
       abortIf: z.string().min(10),
     }),
@@ -207,9 +218,16 @@ try {
   const runSalt = (n) => `0x${((runStart << 64n) | BigInt(n)).toString(16).padStart(64, '0')}`;
   const salt = runSalt(0);
   const orchestratorWallet = await pub.readContract({
-    address: factory, abi: abis['AgentAccountFactory'], functionName: 'predictAddress', args: [DEPLOYER.address, salt],
+    address: factory,
+    abi: abis['AgentAccountFactory'],
+    functionName: 'predictAddress',
+    args: [DEPLOYER.address, salt],
   });
-  const caps = {perTaskCap: BigInt(chain.params.defaultPerTaskCap), dailyCap: BigInt(chain.params.defaultDailyCap), allowlistOnly: true};
+  const caps = {
+    perTaskCap: BigInt(chain.params.defaultPerTaskCap),
+    dailyCap: BigInt(chain.params.defaultDailyCap),
+    allowlistOnly: true,
+  };
   await write(factory, abis['AgentAccountFactory'], 'createAccount', [DEPLOYER.address, salt, caps]);
   for (const fn of ['createJob', 'directPay', 'approve', 'dispute', 'cancel']) {
     await write(orchestratorWallet, accountAbi, 'setAllowedCall', [escrow, escrowSelector(fn), true]);
@@ -219,13 +237,22 @@ try {
   const hotKey = `0x${'0a'.repeat(32)}`;
   const hot = privateKeyToAccount(hotKey);
   const block = await pub.getBlock({blockTag: 'latest'});
-  await write(orchestratorWallet, accountAbi, 'grantSessionKey', [hot.address, block.timestamp + 23n * 3600n, caps.dailyCap]);
-  ok(`orchestrator spends through AgentAccount ${orchestratorWallet} — caps ${chain.formatToken(caps.perTaskCap)}/task, ${chain.formatToken(caps.dailyCap)}/day, escrow-only, session key ${hot.address.slice(0, 10)}…`);
+  await write(orchestratorWallet, accountAbi, 'grantSessionKey', [
+    hot.address,
+    block.timestamp + 23n * 3600n,
+    caps.dailyCap,
+  ]);
+  ok(
+    `orchestrator spends through AgentAccount ${orchestratorWallet} — caps ${chain.formatToken(caps.perTaskCap)}/task, ${chain.formatToken(caps.dailyCap)}/day, escrow-only, session key ${hot.address.slice(0, 10)}…`,
+  );
 
   // Ids are READ from the Registered event, never assumed as nextId + i: on a
   // shared testnet anyone may register between two of our transactions.
   const orchestratorId = await registerAgent(pub, wallet, {
-    identity, abi: idAbi, uri: 'ipfs://orchestrator', wallet: orchestratorWallet,
+    identity,
+    abi: idAbi,
+    uri: 'ipfs://orchestrator',
+    wallet: orchestratorWallet,
   });
 
   // Each worker holds its OWN key. That key is the worker account's session
@@ -234,9 +261,7 @@ try {
   // orchestrator's. v2's escrow refuses a hire between two agents of one
   // owner (SameOwner): a demo that registered everyone from one key could no
   // longer hire anybody, which is the point.
-  const workerKeys = WORKERS.map(
-    (_, i) => `0x${(i + 1).toString(16).padStart(2, '0').repeat(32)}`,
-  );
+  const workerKeys = WORKERS.map((_, i) => `0x${(i + 1).toString(16).padStart(2, '0').repeat(32)}`);
   const workerAccounts = workerKeys.map((k) => privateKeyToAccount(k));
 
   // Gas first: the workers now pay for their own registration. 0.5 MON each —
@@ -247,7 +272,11 @@ try {
   // signer starts, so it cannot race the keeper for FUNDER's nonces.
   const GAS_TOPUP = 500_000_000_000_000_000n;
   const gasPayer = process.env.FUNDER_PRIVATE_KEY
-    ? createWalletClient({account: privateKeyToAccount(process.env.FUNDER_PRIVATE_KEY), chain: viemChain, transport: http(chain.rpcUrl)})
+    ? createWalletClient({
+        account: privateKeyToAccount(process.env.FUNDER_PRIVATE_KEY),
+        chain: viemChain,
+        transport: http(chain.rpcUrl),
+      })
     : wallet;
   for (const account of [...workerAccounts, hot]) {
     await topUp(pub, gasPayer, account.address, GAS_TOPUP);
@@ -264,28 +293,46 @@ try {
   for (const [i, key] of workerAccounts.entries()) {
     const workerSalt = runSalt(i + 1);
     const account = await pub.readContract({
-      address: factory, abi: abis['AgentAccountFactory'], functionName: 'predictAddress', args: [DEPLOYER.address, workerSalt],
+      address: factory,
+      abi: abis['AgentAccountFactory'],
+      functionName: 'predictAddress',
+      args: [DEPLOYER.address, workerSalt],
     });
-    await write(factory, abis['AgentAccountFactory'], 'createAccount', [DEPLOYER.address, workerSalt, workerCaps]);
+    await write(factory, abis['AgentAccountFactory'], 'createAccount', [
+      DEPLOYER.address,
+      workerSalt,
+      workerCaps,
+    ]);
     for (const fn of ['acceptJob', 'submitResult']) {
       await write(account, accountAbi, 'setAllowedCall', [escrow, escrowSelector(fn), true]);
     }
     await write(account, accountAbi, 'grantSessionKey', [key.address, block.timestamp + 23n * 3600n, 0n]);
     workerWallets.push(account);
   }
-  ok(`${WORKERS.length} workers act through AgentAccounts — zero caps, only acceptJob + submitResult on the escrow, each on its own session key`);
+  ok(
+    `${WORKERS.length} workers act through AgentAccounts — zero caps, only acceptJob + submitResult on the escrow, each on its own session key`,
+  );
 
   const workerIds = [];
   for (const [i, w] of WORKERS.entries()) {
-    const workerClient = createWalletClient({account: workerAccounts[i], chain: viemChain, transport: http(chain.rpcUrl)});
+    const workerClient = createWalletClient({
+      account: workerAccounts[i],
+      chain: viemChain,
+      transport: http(chain.rpcUrl),
+    });
     const id = await registerAgent(pub, workerClient, {
-      identity, abi: idAbi, uri: `ipfs://${w.capability}`, wallet: workerWallets[i],
+      identity,
+      abi: idAbi,
+      uri: `ipfs://${w.capability}`,
+      wallet: workerWallets[i],
     });
     workerIds.push(id);
     // Anyone may bond an agent; the deployer does, standing in for the owner.
     await write(vault, abis['StakeVault'], 'deposit', [id, 10_000_000n]);
   }
-  ok(`${WORKERS.length + 1} agents on-chain (orchestrator ${orchestratorId}, workers ${workerIds.join(', ')} — each worker its own owner), bonded and funded for gas`);
+  ok(
+    `${WORKERS.length + 1} agents on-chain (orchestrator ${orchestratorId}, workers ${workerIds.join(', ')} — each worker its own owner), bonded and funded for gas`,
+  );
 
   // ── 2. services ───────────────────────────────────────────────────────
   const env = {
@@ -308,7 +355,9 @@ try {
     SIGNER_TOKEN: randomBytes(24).toString('hex'),
     // The keeper, on a key the signer never uses, so the two cannot race
     // for nonces. FUNDER only ever tops up wallets, and not during a run.
-    ...(process.env.FUNDER_PRIVATE_KEY ? {KEEPER_PRIVATE_KEY: process.env.FUNDER_PRIVATE_KEY, KEEPER_INTERVAL_MS: '10000'} : {}),
+    ...(process.env.FUNDER_PRIVATE_KEY
+      ? {KEEPER_PRIVATE_KEY: process.env.FUNDER_PRIVATE_KEY, KEEPER_INTERVAL_MS: '10000'}
+      : {}),
     PORT: String(API_PORT),
     LOG_LEVEL: 'warn',
   };
@@ -339,7 +388,9 @@ try {
     for (let i = 0; i < 60; i++) {
       try {
         if ((await fetch(url)).ok) return ok(`${label} is up`);
-      } catch {}
+      } catch {
+        // not up yet — that is what this loop is waiting out
+      }
       await sleep(500);
     }
     throw new Error(`${label} never became healthy at ${url}`);
@@ -373,7 +424,13 @@ try {
     return body;
   };
 
-  const orchestratorAgent = await register('Orchestrator', 'orchestration', '0', orchestratorId, orchestratorWallet);
+  const orchestratorAgent = await register(
+    'Orchestrator',
+    'orchestration',
+    '0',
+    orchestratorId,
+    orchestratorWallet,
+  );
   const workerAgents = [];
   for (const [i, w] of WORKERS.entries()) {
     workerAgents.push(
@@ -428,7 +485,9 @@ try {
   // ── 6. the run ────────────────────────────────────────────────────────
   const client = new AgentxClient({baseUrl: base, apiKey: orchestratorAgent.apiKey, chainId: CHAIN_ID});
   const balancesBefore = await Promise.all(
-    workerWallets.map((w) => pub.readContract({address: token, abi: erc20, functionName: 'balanceOf', args: [w]})),
+    workerWallets.map((w) =>
+      pub.readContract({address: token, abi: erc20, functionName: 'balanceOf', args: [w]}),
+    ),
   );
 
   console.log(`\n  goal: ${GOAL}\n`);
@@ -499,7 +558,9 @@ try {
   const broken = report.steps.filter((s) => s.status === 'failed' || s.status === 'timeout');
   broken.length === 0
     ? ok('every step ended in a decision, none in a failure')
-    : fail(`${broken.length} step(s) broke rather than decided: ${broken.map((s) => `${s.capability} (${s.status}: ${s.detail})`).join('; ')}`);
+    : fail(
+        `${broken.length} step(s) broke rather than decided: ${broken.map((s) => `${s.capability} (${s.status}: ${s.detail})`).join('; ')}`,
+      );
 
   const settled = report.steps.filter((s) => s.status === 'settled');
   settled.length > 0
@@ -514,7 +575,9 @@ try {
 
   // The assertion that cannot be faked: the money moved.
   const balancesAfter = await Promise.all(
-    workerWallets.map((w) => pub.readContract({address: token, abi: erc20, functionName: 'balanceOf', args: [w]})),
+    workerWallets.map((w) =>
+      pub.readContract({address: token, abi: erc20, functionName: 'balanceOf', args: [w]}),
+    ),
   );
   const paid = balancesAfter.reduce((sum, after, i) => sum + (after - balancesBefore[i]), 0n);
   paid > 0n
@@ -526,9 +589,15 @@ try {
   // including one later cancelled and refunded — a refund arrives as a
   // deposit, not as negative spend — so the invariant is the cap, not the sum
   // of the settled steps.
-  const spentOnChain = await pub.readContract({address: orchestratorWallet, abi: accountAbi, functionName: 'spentToday'});
+  const spentOnChain = await pub.readContract({
+    address: orchestratorWallet,
+    abi: accountAbi,
+    functionName: 'spentToday',
+  });
   spentOnChain > 0n && spentOnChain <= caps.dailyCap
-    ? ok(`the orchestrator's AgentAccount recorded ${chain.formatToken(spentOnChain)} spent, on chain, within its ${chain.formatToken(caps.dailyCap)} daily cap`)
+    ? ok(
+        `the orchestrator's AgentAccount recorded ${chain.formatToken(spentOnChain)} spent, on chain, within its ${chain.formatToken(caps.dailyCap)} daily cap`,
+      )
     : fail(`AgentAccount spentToday is ${spentOnChain} against a daily cap of ${caps.dailyCap}`);
 
   // ── x402: the same worker, paid per request over HTTP ─────────────────
@@ -540,7 +609,11 @@ try {
   // times it was shown.
   if (process.env.DEMO_X402 === '1') {
     const r = WORKERS.findIndex((w) => w.capability === 'market-research' && !w.silent);
-    const researchClient = new AgentxClient({baseUrl: base, apiKey: workerAgents[r].apiKey, chainId: CHAIN_ID});
+    const researchClient = new AgentxClient({
+      baseUrl: base,
+      apiKey: workerAgents[r].apiKey,
+      chainId: CHAIN_ID,
+    });
     const researchInfo = await researchClient.getAgent(workerAgents[r].agentId);
     const x402Server = await serveX402({
       worker: new Worker({
@@ -557,28 +630,47 @@ try {
       payTo: researchInfo.walletAddress,
       asset: token,
       network: `eip155:${CHAIN_ID}`,
-      log: (e) => console.log(`    [x402] ${e.kind}${e.reason ? ` — ${e.reason}` : ''}${e.jobId ? ` job ${e.jobId}` : ''}`),
+      log: (e) =>
+        console.log(
+          `    [x402] ${e.kind}${e.reason ? ` — ${e.reason}` : ''}${e.jobId ? ` job ${e.jobId}` : ''}`,
+        ),
     });
     const x402Url = x402Server.url;
-    const question = {input: {question: 'What is the typical 2% order-book depth for ETH/USDC on major venues?'}};
+    const question = {
+      input: {question: 'What is the typical 2% order-book depth for ETH/USDC on major venues?'},
+    };
 
-    const unpaid = await fetch(x402Url, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(question)});
+    const unpaid = await fetch(x402Url, {
+      method: 'POST',
+      headers: {'content-type': 'application/json'},
+      body: JSON.stringify(question),
+    });
     unpaid.status === 402
-      ? ok(`x402: unpaid request answered 402, quoting ${chain.formatToken(BigInt((await unpaid.json()).accepts[0].maxAmountRequired))}`)
+      ? ok(
+          `x402: unpaid request answered 402, quoting ${chain.formatToken(BigInt((await unpaid.json()).accepts[0].maxAmountRequired))}`,
+        )
       : fail(`x402: an unpaid request got ${unpaid.status}, not 402`);
 
     const x402Started = Date.now();
     const {response, settlement} = await client.payX402(x402Url, {maxAmount: '30000', body: question});
     const answered = await response.json();
     response.status === 200 && answered.output
-      ? ok(`x402: paid ${settlement.transaction.slice(0, 12)}… and served in ${((Date.now() - x402Started) / 1000).toFixed(1)} s — ${chain.explorerTx(settlement.transaction)}`)
+      ? ok(
+          `x402: paid ${settlement.transaction.slice(0, 12)}… and served in ${((Date.now() - x402Started) / 1000).toFixed(1)} s — ${chain.explorerTx(settlement.transaction)}`,
+        )
       : fail(`x402: paid, then got ${response.status}: ${JSON.stringify(answered)}`);
 
     // The chain, not our word for it.
     const x402Receipt = await pub.getTransactionReceipt({hash: settlement.transaction});
-    const directPaid = parseEventLogs({abi: abis['TaskEscrow'], logs: x402Receipt.logs, eventName: 'DirectPaid'});
+    const directPaid = parseEventLogs({
+      abi: abis['TaskEscrow'],
+      logs: x402Receipt.logs,
+      eventName: 'DirectPaid',
+    });
     directPaid.some((e) => e.args.workerAgentId === workerIds[r])
-      ? ok(`x402: DirectPaid on chain to worker ${workerIds[r]}, ${chain.formatToken(directPaid[0].args.amount)}`)
+      ? ok(
+          `x402: DirectPaid on chain to worker ${workerIds[r]}, ${chain.formatToken(directPaid[0].args.amount)}`,
+        )
       : fail('x402: no DirectPaid to the research worker in the settlement receipt');
 
     const replayed = await fetch(x402Url, {
@@ -601,7 +693,12 @@ try {
   // key that has left it.
   const refusedBy = async (label, args, expected) => {
     try {
-      await pub.simulateContract({account: workerAccounts[0], address: workerWallets[0], abi: accountAbi, ...args});
+      await pub.simulateContract({
+        account: workerAccounts[0],
+        address: workerWallets[0],
+        abi: accountAbi,
+        ...args,
+      });
       fail(`a stolen worker key could ${label}`);
     } catch (err) {
       const name = err.cause?.data?.errorName ?? err.cause?.reason ?? err.shortMessage;
@@ -612,15 +709,39 @@ try {
   };
   await refusedBy(
     'move the earnings (USDC transfer)',
-    {functionName: 'execute', args: [token, encodeFunctionData({abi: parseAbi(['function transfer(address,uint256)']), functionName: 'transfer', args: ['0x000000000000000000000000000000000000dEaD', 1n]})]},
+    {
+      functionName: 'execute',
+      args: [
+        token,
+        encodeFunctionData({
+          abi: parseAbi(['function transfer(address,uint256)']),
+          functionName: 'transfer',
+          args: ['0x000000000000000000000000000000000000dEaD', 1n],
+        }),
+      ],
+    },
     'TargetNotAllowed',
   );
   await refusedBy(
     'hire another agent (createJob)',
-    {functionName: 'execute', args: [escrow, encodeFunctionData({abi: abis['TaskEscrow'], functionName: 'createJob', args: [workerIds[0], workerIds[1], 20_000n, `0x${'00'.repeat(32)}`, 3600n, 3600n]})]},
+    {
+      functionName: 'execute',
+      args: [
+        escrow,
+        encodeFunctionData({
+          abi: abis['TaskEscrow'],
+          functionName: 'createJob',
+          args: [workerIds[0], workerIds[1], 20_000n, `0x${'00'.repeat(32)}`, 3600n, 3600n],
+        }),
+      ],
+    },
     'SelectorNotAllowed',
   );
-  await refusedBy('sweep the account to itself', {functionName: 'sweep', args: [workerAccounts[0].address, 1n]}, 'NotOwner');
+  await refusedBy(
+    'sweep the account to itself',
+    {functionName: 'sweep', args: [workerAccounts[0].address, 1n]},
+    'NotOwner',
+  );
 
   // ── v2's escrow rules, tried on chain as the orchestrator's session key ──
   // Simulated (eth_call): the same checks a broadcast meets, no gas. The
@@ -628,7 +749,13 @@ try {
   // which escrow rule refused.
   const escrowRefusal = async (label, data, expected) => {
     try {
-      await pub.simulateContract({account: hot, address: orchestratorWallet, abi: accountAbi, functionName: 'execute', args: [escrow, data]});
+      await pub.simulateContract({
+        account: hot,
+        address: orchestratorWallet,
+        abi: accountAbi,
+        functionName: 'execute',
+        args: [escrow, data],
+      });
       fail(`the escrow accepted ${label}`);
     } catch (err) {
       let name = err.cause?.data?.errorName;
@@ -647,30 +774,56 @@ try {
   };
   // A puppet identity owned by the orchestrator's own owner: the v1 hole.
   const puppetId = await registerAgent(pub, wallet, {
-    identity, abi: idAbi, uri: 'ipfs://puppet', wallet: `0x${'5a'.repeat(20)}`,
+    identity,
+    abi: idAbi,
+    uri: 'ipfs://puppet',
+    wallet: `0x${'5a'.repeat(20)}`,
   });
   await escrowRefusal(
     'a hire between two agents of one owner',
-    encodeFunctionData({abi: abis['TaskEscrow'], functionName: 'directPay', args: [orchestratorId, puppetId, 20_000n, `0x${'01'.repeat(32)}`]}),
+    encodeFunctionData({
+      abi: abis['TaskEscrow'],
+      functionName: 'directPay',
+      args: [orchestratorId, puppetId, 20_000n, `0x${'01'.repeat(32)}`],
+    }),
     'SameOwner',
   );
   await escrowRefusal(
     'a payment below the minimum job',
-    encodeFunctionData({abi: abis['TaskEscrow'], functionName: 'directPay', args: [orchestratorId, workerIds[0], 1n, `0x${'02'.repeat(32)}`]}),
+    encodeFunctionData({
+      abi: abis['TaskEscrow'],
+      functionName: 'directPay',
+      args: [orchestratorId, workerIds[0], 1n, `0x${'02'.repeat(32)}`],
+    }),
     'AmountBelowMinimum',
   );
 
   // The earnings are the owner's. `sweep` is the one way money leaves a
   // worker's account, and only the owner can call it.
-  const ownerBefore = await pub.readContract({address: token, abi: erc20, functionName: 'balanceOf', args: [DEPLOYER.address]});
+  const ownerBefore = await pub.readContract({
+    address: token,
+    abi: erc20,
+    functionName: 'balanceOf',
+    args: [DEPLOYER.address],
+  });
   let swept = 0n;
   for (const account of workerWallets) {
-    const held = await pub.readContract({address: token, abi: erc20, functionName: 'balanceOf', args: [account]});
+    const held = await pub.readContract({
+      address: token,
+      abi: erc20,
+      functionName: 'balanceOf',
+      args: [account],
+    });
     if (held === 0n) continue;
     await write(account, accountAbi, 'sweep', [DEPLOYER.address, held]);
     swept += held;
   }
-  const ownerAfter = await pub.readContract({address: token, abi: erc20, functionName: 'balanceOf', args: [DEPLOYER.address]});
+  const ownerAfter = await pub.readContract({
+    address: token,
+    abi: erc20,
+    functionName: 'balanceOf',
+    args: [DEPLOYER.address],
+  });
   swept > 0n && ownerAfter - ownerBefore === swept
     ? ok(`the owner swept ${chain.formatToken(swept)} of earnings out of the worker accounts`)
     : fail(`sweep moved ${ownerAfter - ownerBefore}, expected ${swept}`);
@@ -680,13 +833,16 @@ try {
   for (let i = 0; i < 40 && !(await reputationWritten()); i++) await sleep(500);
   const stats = await sql`SELECT agent_id, completed, score FROM agent_stats WHERE completed > 0`;
   stats.length > 0
-    ? ok(`reputation written from settlement: ${stats.map((s) => `agent ${s.agent_id} completed=${s.completed} score=${s.score}`).join(', ')}`)
+    ? ok(
+        `reputation written from settlement: ${stats.map((s) => `agent ${s.agent_id} completed=${s.completed} score=${s.score}`).join(', ')}`,
+      )
     : fail('no reputation was written — settlement did not reach the projection');
 
   if (CHAOS) {
     const silentId = workerAgents[WORKERS.length - 1].agentId;
     const retried = events.find((e) => e.kind === 'retrying');
-    const [stranded] = await sql`SELECT id, chain_job_id, state FROM jobs WHERE worker_agent_id = ${silentId}`;
+    const [stranded] =
+      await sql`SELECT id, chain_job_id, state FROM jobs WHERE worker_agent_id = ${silentId}`;
     if (!stranded) {
       fail('chaos was not exercised: the selector never hired the broken worker — re-run');
     } else {
@@ -747,7 +903,11 @@ async function reputationWritten() {
  */
 async function silentWorker(w, agent) {
   if (w.silent === 'no-accept') return;
-  const client = new AgentxClient({baseUrl: `http://127.0.0.1:${API_PORT}`, apiKey: agent.apiKey, chainId: CHAIN_ID});
+  const client = new AgentxClient({
+    baseUrl: `http://127.0.0.1:${API_PORT}`,
+    apiKey: agent.apiKey,
+    chainId: CHAIN_ID,
+  });
   while (!stopped.signal.aborted) {
     const [offer] = await client.listJobs({role: 'worker', state: 'created'}).catch(() => []);
     if (offer) {
@@ -821,7 +981,10 @@ function describeWorkerEvent(e) {
  * on chain. Declarations hoist; consts do not.
  */
 function titleCase(s) {
-  return s.split('-').map((w) => w[0].toUpperCase() + w.slice(1)).join('');
+  return s
+    .split('-')
+    .map((w) => w[0].toUpperCase() + w.slice(1))
+    .join('');
 }
 
 function sleep(ms) {

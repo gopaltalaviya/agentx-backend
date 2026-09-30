@@ -3,12 +3,18 @@ import {z} from 'zod';
 import {
   X402_SCHEME,
   encodePaymentHeader,
-  type JobSpec,
   type PaymentRequirements,
   type VerifyResponse,
 } from '@agentx/shared';
 import type {AgentxClient, JobSummary} from '@agentx/sdk';
-import {Worker, serveX402, type Brain, type CompletionRequest, type CompletionResult, type X402Server} from '../src/index.js';
+import {
+  Worker,
+  serveX402,
+  type Brain,
+  type CompletionRequest,
+  type CompletionResult,
+  type X402Server,
+} from '../src/index.js';
 
 /**
  * A worker's paid endpoint, and the one change x402 makes to its job loop.
@@ -27,7 +33,8 @@ class FakeBrain implements Brain {
   calls = 0;
   async complete<T>(req: CompletionRequest<T>): Promise<CompletionResult<T>> {
     this.calls++;
-    const reply = req.schemaName === 'TriageDecision' ? {accept: true, reason: 'ok'} : {summary: 'deep', confidence: 0.9};
+    const reply =
+      req.schemaName === 'TriageDecision' ? {accept: true, reason: 'ok'} : {summary: 'deep', confidence: 0.9};
     return {value: req.schema.parse(reply), provider: 'fake', model: 'fake', cached: false};
   }
   async available() {
@@ -91,8 +98,16 @@ async function start(verdicts: VerifyResponse[]) {
   return {seen, brain, url: server.url};
 }
 
-const post = (url: string, headers: Record<string, string> = {}, body: unknown = {input: {question: 'depth?'}}) =>
-  fetch(url, {method: 'POST', headers: {'content-type': 'application/json', ...headers}, body: JSON.stringify(body)});
+const post = (
+  url: string,
+  headers: Record<string, string> = {},
+  body: unknown = {input: {question: 'depth?'}},
+) =>
+  fetch(url, {
+    method: 'POST',
+    headers: {'content-type': 'application/json', ...headers},
+    body: JSON.stringify(body),
+  });
 
 describe('the paid endpoint', () => {
   it('answers 402 with a quote, and does no work, when there is no payment', async () => {
@@ -100,7 +115,7 @@ describe('the paid endpoint', () => {
     const res = await post(url);
 
     expect(res.status).toBe(402);
-    const body = await res.json();
+    const body = (await res.json()) as {x402Version: number; accepts: unknown[]};
     expect(body.x402Version).toBe(1);
     expect(body.accepts).toEqual([
       expect.objectContaining({
@@ -119,13 +134,22 @@ describe('the paid endpoint', () => {
     const res = await post(url, {'x-payment': HEADER});
 
     expect(res.status).toBe(200);
-    expect((await res.json()).output).toEqual({summary: 'deep', confidence: 0.9});
-    expect(seen.redeemed).toEqual([{req: expect.objectContaining({resource: 'http://127.0.0.1:9402/market-research'}), header: HEADER}]);
+    expect(((await res.json()) as {output: unknown}).output).toEqual({summary: 'deep', confidence: 0.9});
+    expect(seen.redeemed).toEqual([
+      {req: expect.objectContaining({resource: 'http://127.0.0.1:9402/market-research'}), header: HEADER},
+    ]);
     expect(brain.calls).toBe(1);
     expect(seen.submitted).toEqual([{jobId: JOB, output: {summary: 'deep', confidence: 0.9}}]);
 
-    const receipt = JSON.parse(Buffer.from(res.headers.get('x-payment-response')!, 'base64').toString('utf8'));
-    expect(receipt).toEqual({success: true, transaction: `0x${'ab'.repeat(32)}`, network: 'eip155:10143', payer: 1});
+    const receipt = JSON.parse(
+      Buffer.from(res.headers.get('x-payment-response')!, 'base64').toString('utf8'),
+    );
+    expect(receipt).toEqual({
+      success: true,
+      transaction: `0x${'ab'.repeat(32)}`,
+      network: 'eip155:10143',
+      payer: 1,
+    });
   });
 
   it('refuses with 402, and does no work, when the facilitator says the payment is no good', async () => {
@@ -133,7 +157,7 @@ describe('the paid endpoint', () => {
     const res = await post(url, {'x-payment': HEADER});
 
     expect(res.status).toBe(402);
-    expect((await res.json()).error).toBe('already_redeemed');
+    expect(((await res.json()) as {error: string}).error).toBe('already_redeemed');
     expect(brain.calls).toBe(0);
     expect(seen.submitted).toHaveLength(0);
   });
@@ -154,7 +178,7 @@ describe('the paid endpoint', () => {
     const res = await post(url, {'x-payment': HEADER});
 
     expect(res.status).toBe(402);
-    expect((await res.json()).error).toBe('payment_pending');
+    expect(((await res.json()) as {error: string}).error).toBe('payment_pending');
     expect(brain.calls).toBe(0);
   }, 10_000);
 
@@ -179,7 +203,7 @@ describe('the job loop, beside the paid endpoint', () => {
         capability: 'market-research',
         input: {x402: {resource: 'http://127.0.0.1:9402/market-research', nonce: 'n'}},
         deadlineSeconds: 300,
-      } as JobSpec,
+      },
       specHash: '0x',
       role: 'worker',
       hasResult: false,

@@ -27,7 +27,7 @@ export function loadEnv<S extends z.ZodTypeAny>(
   // so a `.default()` applies instead of a confusing "invalid" error.
   const cleaned = Object.fromEntries(Object.entries(env).filter(([, v]) => v !== ''));
   const result = schema.safeParse(cleaned);
-  if (result.success) return result.data;
+  if (result.success) return result.data as z.infer<S>;
   throw new EnvError(
     result.error.issues.map((i: z.ZodIssue) => `${i.path.join('.') || '(env)'}: ${i.message}`),
   );
@@ -36,7 +36,11 @@ export function loadEnv<S extends z.ZodTypeAny>(
 /** Building blocks for service schemas. */
 export const env = {
   postgresUrl: () => z.string().regex(/^postgres(ql)?:\/\//, 'must be a postgres:// URL'),
-  httpUrl: () => z.string().url().regex(/^https?:\/\//, 'must be an http(s) URL'),
+  httpUrl: () =>
+    z
+      .string()
+      .url()
+      .regex(/^https?:\/\//, 'must be an http(s) URL'),
   port: (fallback: number) => z.coerce.number().int().min(1).max(65_535).default(fallback),
   positiveInt: (fallback: number) => z.coerce.number().int().positive().default(fallback),
   flag: () =>

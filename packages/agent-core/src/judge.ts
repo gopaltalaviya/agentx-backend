@@ -77,9 +77,7 @@ export interface JudgeInput {
 export class Judge {
   constructor(private readonly brain: Brain) {}
 
-  async evaluate(
-    input: JudgeInput,
-  ): Promise<Verdict & {quality: number; provider: string; cached: boolean}> {
+  async evaluate(input: JudgeInput): Promise<Verdict & {quality: number; provider: string; cached: boolean}> {
     const prompt = [
       `Capability commissioned: ${input.capability}`,
       '',

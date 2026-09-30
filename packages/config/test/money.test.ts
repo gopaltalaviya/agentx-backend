@@ -12,10 +12,10 @@ const c = config.chain(31337);
 
 describe('token amounts are exact integer base units', () => {
   it('formats the demo prices', () => {
-    expect(c.formatToken(20_000n)).toBe('0.02 MockUSDC');   // research agent
-    expect(c.formatToken(50_000n)).toBe('0.05 MockUSDC');   // execution agent
+    expect(c.formatToken(20_000n)).toBe('0.02 MockUSDC'); // research agent
+    expect(c.formatToken(50_000n)).toBe('0.05 MockUSDC'); // execution agent
     expect(c.formatToken(0n)).toBe('0 MockUSDC');
-    expect(c.formatToken(1n)).toBe('0.000001 MockUSDC');    // one base unit
+    expect(c.formatToken(1n)).toBe('0.000001 MockUSDC'); // one base unit
   });
 
   it('parses back exactly', () => {
@@ -50,11 +50,11 @@ describe('token amounts are exact integer base units', () => {
 
 describe('fee arithmetic matches invariant I4', () => {
   it('paid + fee === amount, remainder to the worker', () => {
-    const bps = BigInt(c.params.protocolFeeBps as number);
+    const bps = BigInt(c.params.protocolFeeBps);
     for (const amount of [20_000n, 50_000n, 1n, 7n, 999_999n, 12_345_679n]) {
-      const fee = (amount * bps) / 10_000n;   // rounds down
+      const fee = (amount * bps) / 10_000n; // rounds down
       const paid = amount - fee;
-      expect(paid + fee).toBe(amount);        // no value created or destroyed
+      expect(paid + fee).toBe(amount); // no value created or destroyed
       expect(fee * 10_000n).toBeLessThanOrEqual(amount * bps); // never over-charges
     }
   });

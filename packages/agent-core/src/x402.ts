@@ -62,10 +62,14 @@ export async function serveX402<T>(opts: X402ServerOptions<T>): Promise<X402Serv
   const capability = opts.worker.capability;
   // Set once the server is listening, before it can receive a request: the
   // resource URL depends on the port actually bound when none was named.
-  let requirements!: PaymentRequirements;
+  let requirements!: PaymentRequirements; // eslint-disable-line prefer-const -- assigned after listen()
   const confirmWaitMs = opts.confirmWaitMs ?? 15_000;
 
-  const quote = (error: string): PaymentRequired => ({x402Version: X402_VERSION, error, accepts: [requirements]});
+  const quote = (error: string): PaymentRequired => ({
+    x402Version: X402_VERSION,
+    error,
+    accepts: [requirements],
+  });
 
   const handle = async (req: IncomingMessage, res: ServerResponse) => {
     if (req.method !== 'POST' || new URL(req.url ?? '/', 'http://x').pathname !== `/${capability}`) {
@@ -168,7 +172,12 @@ export async function serveX402<T>(opts: X402ServerOptions<T>): Promise<X402Serv
   };
 }
 
-function send(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
+function send(
+  res: ServerResponse,
+  status: number,
+  body: unknown,
+  headers: Record<string, string> = {},
+): void {
   if (res.headersSent) return;
   res.writeHead(status, {'content-type': 'application/json', ...headers});
   res.end(JSON.stringify(body));

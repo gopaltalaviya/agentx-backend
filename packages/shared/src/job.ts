@@ -27,16 +27,10 @@ export type BaseUnits = z.infer<typeof BaseUnits>;
 export const AgentId = z.string().regex(/^\d+$/, 'agent id must be a numeric string');
 export type AgentId = z.infer<typeof AgentId>;
 
-export const ChainId = z.union([
-  z.literal(31337),
-  z.literal(10143),
-  z.literal(143),
-]);
+export const ChainId = z.union([z.literal(31337), z.literal(10143), z.literal(143)]);
 export type ChainId = z.infer<typeof ChainId>;
 
-export const Address = z
-  .string()
-  .regex(/^0x[a-fA-F0-9]{40}$/, 'must be a 20-byte hex address');
+export const Address = z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'must be a 20-byte hex address');
 
 export const Hash32 = z.string().regex(/^0x[a-fA-F0-9]{64}$/, 'must be a 32-byte hex hash');
 
@@ -86,14 +80,7 @@ export type JobResult = z.infer<typeof JobResult>;
 
 // ── lifecycle ────────────────────────────────────────────────────────────
 /** Mirrors ITaskEscrow.JobState exactly. Divergence here is a real bug. */
-export const JobState = z.enum([
-  'created',
-  'accepted',
-  'submitted',
-  'disputed',
-  'settled',
-  'refunded',
-]);
+export const JobState = z.enum(['created', 'accepted', 'submitted', 'disputed', 'settled', 'refunded']);
 export type JobState = z.infer<typeof JobState>;
 
 export const JobPath = z.enum(['escrow', 'direct']);

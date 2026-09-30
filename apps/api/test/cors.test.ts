@@ -33,7 +33,7 @@ beforeAll(async () => {
     chains: config.chains as Record<number, never>,
     defaultChainId: 31337,
     bus: new EventBus(),
-    submit: async () => ({txHash: '0x', chainJobId: null}),
+    submit: async () => ({txHash: '0x'}),
   };
   open = await buildApp(base);
   pinned = await buildApp({...base, corsOrigins: ['https://agentx.example']});
@@ -81,7 +81,11 @@ describe('a browser on another origin', () => {
   it('can be pinned to named origins', async () => {
     const other = await pinned.inject({method: 'GET', url: '/v1/network', headers: {origin: UI}});
     expect(other.headers['access-control-allow-origin']).toBeUndefined();
-    const ours = await pinned.inject({method: 'GET', url: '/v1/network', headers: {origin: 'https://agentx.example'}});
+    const ours = await pinned.inject({
+      method: 'GET',
+      url: '/v1/network',
+      headers: {origin: 'https://agentx.example'},
+    });
     expect(ours.headers['access-control-allow-origin']).toBe('https://agentx.example');
   });
 });

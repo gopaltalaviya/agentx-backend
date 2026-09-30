@@ -71,7 +71,13 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
     const body = HireRequest.parse(request.body);
     return reply
       .status(201)
-      .send(await hire({db, bus, submit}, {caller, chainId, chain, idempotencyKey: hireKey, traceId: request.id}, body));
+      .send(
+        await hire(
+          {db, bus, submit},
+          {caller, chainId, chain, idempotencyKey: hireKey, traceId: request.id},
+          body,
+        ),
+      );
   });
 
   /**
@@ -103,8 +109,9 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
       .select()
       .from(jobs)
       .where(
-        query.state ? and(side, eq(jobs.state, query.state), eq(jobs.chainId, caller.chainId))
-                    : and(side, eq(jobs.chainId, caller.chainId)),
+        query.state
+          ? and(side, eq(jobs.state, query.state), eq(jobs.chainId, caller.chainId))
+          : and(side, eq(jobs.chainId, caller.chainId)),
       )
       // Oldest first: a worker should take the job closest to its accept
       // deadline, not the one that just arrived.
@@ -218,7 +225,10 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
       }
       const parsed = JobResult.safeParse(body);
       if (!parsed.success) {
-        throw new AgentxError(ErrorCode.SCHEMA_MISMATCH, parsed.error.issues.map((i) => i.message).join('; '));
+        throw new AgentxError(
+          ErrorCode.SCHEMA_MISMATCH,
+          parsed.error.issues.map((i) => i.message).join('; '),
+        );
       }
 
       const spec = job.spec as JobSpec;
@@ -363,22 +373,22 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
     const result = offChainOnly
       ? {txHash: null as string | null}
       : await submit({
-      agentId: caller.agentId,
-      chainId: job.chainId,
-      kind,
-      job: {id: job.id, chainJobId: job.chainJobId},
-      // Only the hire moves money; the rest are state changes.
-      spend: 0n,
-      idempotencyKey,
+          agentId: caller.agentId,
+          chainId: job.chainId,
+          kind,
+          job: {id: job.id, chainJobId: job.chainJobId},
+          // Only the hire moves money; the rest are state changes.
+          spend: 0n,
+          idempotencyKey,
           traceId: request.id,
-      payload: {
-        ...((request.body ?? {}) as Record<string, unknown>),
-        // Without this the encoder falls back to the SPEC hash, so the chain
-        // would commit to what was ASKED FOR rather than to what was
-        // delivered — and T4's "the result hash is committed on-chain before
-        // release" would not be true.
-        ...(resultHash ? {resultHash} : {}),
-      },
+          payload: {
+            ...((request.body ?? {}) as Record<string, unknown>),
+            // Without this the encoder falls back to the SPEC hash, so the chain
+            // would commit to what was ASKED FOR rather than to what was
+            // delivered — and T4's "the result hash is committed on-chain before
+            // release" would not be true.
+            ...(resultHash ? {resultHash} : {}),
+          },
         });
 
     // Advance the state optimistically, once the transaction is accepted for

@@ -116,9 +116,7 @@ function logEvent(capability: string): (event: WorkerEvent) => void {
       case 'accepted':
         return log(`[${capability}] accepted ${event.jobId}`);
       case 'delivered':
-        return log(
-          `[${capability}] delivered ${event.jobId} via ${event.provider} in ${event.latencyMs}ms`,
-        );
+        return log(`[${capability}] delivered ${event.jobId} via ${event.provider} in ${event.latencyMs}ms`);
       case 'failed':
         return log(`[${capability}] FAILED ${event.jobId} at ${event.stage}: ${event.reason}`);
     }

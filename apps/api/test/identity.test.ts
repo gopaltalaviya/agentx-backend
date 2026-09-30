@@ -83,9 +83,11 @@ const register = (server: FastifyInstance, over: Record<string, unknown>) =>
   });
 
 const storedIds = async () =>
-  ((await db.execute(sql`SELECT chain_agent_id FROM agents ORDER BY id`)) as unknown as {chain_agent_id: string | null}[]).map(
-    (r) => r.chain_agent_id,
-  );
+  (
+    (await db.execute(sql`SELECT chain_agent_id FROM agents ORDER BY id`)) as unknown as {
+      chain_agent_id: string | null;
+    }[]
+  ).map((r) => r.chain_agent_id);
 
 describe('registering with an ERC-8004 id', () => {
   it('stores a verified id, and the agent can be hired straight away', async () => {

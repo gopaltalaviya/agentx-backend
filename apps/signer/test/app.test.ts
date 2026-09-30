@@ -19,7 +19,9 @@ const good = {
   idempotencyKey: 'hire-0001-abcdef',
 };
 
-function app(sign: (req: SignRequest) => Promise<unknown> = async () => ({txHash: '0xab', nonce: 1, replayed: false})) {
+function app(
+  sign: (req: SignRequest) => Promise<unknown> = async () => ({txHash: '0xab', nonce: 1, replayed: false}),
+) {
   const seen: SignRequest[] = [];
   const instance = buildSignerApp({
     service: {

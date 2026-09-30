@@ -53,7 +53,7 @@ const runExecutor = await makeRunExecutor({
 
 const app = await buildApp({
   db,
-  chains: config.chains as Record<number, never>,
+  chains: config.chains,
   defaultChainId: config.defaultChainId,
   readBudget: makeBudgetReader(config),
   readIdentity: makeIdentityReader(config),
@@ -91,6 +91,11 @@ installShutdown({
 
 await app.listen({port: cfg.PORT, host: cfg.HOST});
 logger.info(
-  {port: cfg.PORT, chains: Object.keys(config.chains), orchestrator: Boolean(runExecutor), cors: cfg.CORS_ORIGINS},
+  {
+    port: cfg.PORT,
+    chains: Object.keys(config.chains),
+    orchestrator: Boolean(runExecutor),
+    cors: cfg.CORS_ORIGINS,
+  },
   'api listening',
 );

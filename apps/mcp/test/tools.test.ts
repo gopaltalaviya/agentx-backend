@@ -14,7 +14,6 @@ import {TESTNET} from './fixtures.js';
  * possibly help.
  */
 
-
 /** Only the calls the tools make; cast rather than implemented in full. */
 function fakeClient(over: Partial<Record<string, unknown>> = {}): AgentxClient {
   return {
@@ -99,11 +98,12 @@ describe('the tool set', () => {
   });
 
   it('marks exactly the money-moving tools as spending', () => {
-    expect(tools.filter((t) => t.spends).map((t) => t.name).sort()).toEqual([
-      'approve_job',
-      'dispute_job',
-      'hire_agent',
-    ]);
+    expect(
+      tools
+        .filter((t) => t.spends)
+        .map((t) => t.name)
+        .sort(),
+    ).toEqual(['approve_job', 'dispute_job', 'hire_agent']);
   });
 
   it('tells the model plainly which tools are free', () => {
@@ -135,9 +135,9 @@ describe('hire_agent', () => {
 
   it('rejects an amount that is not base units', () => {
     const schema = z.object(byName('hire_agent').inputSchema);
-    expect(
-      schema.safeParse({agentId: 3, spec: {capability: 'x', input: {}}, maxPrice: '0.02'}).success,
-    ).toBe(false);
+    expect(schema.safeParse({agentId: 3, spec: {capability: 'x', input: {}}, maxPrice: '0.02'}).success).toBe(
+      false,
+    );
   });
 
   it('stamps the network on the receipt, so the money is never ambiguous', async () => {
@@ -208,9 +208,7 @@ describe('describeError', () => {
    * lifts is an agent that has stopped doing its job for a day.
    */
   it('does not present a spending cap as retryable, despite its reset time', () => {
-    const described = describeError(
-      new AgentxError(ErrorCode.BUDGET_EXCEEDED, 'over the daily cap', 3600),
-    );
+    const described = describeError(new AgentxError(ErrorCode.BUDGET_EXCEEDED, 'over the daily cap', 3600));
     expect(described.retryable).toBe(false);
     expect(described.retryAfterSeconds).toBe(3600);
   });

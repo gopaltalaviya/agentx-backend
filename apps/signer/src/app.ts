@@ -39,10 +39,19 @@ export interface SignerAppDeps {
 }
 
 export function buildSignerApp(deps: SignerAppDeps): FastifyInstance {
-  const app = Fastify({...serviceOptions({trustProxy: deps.trustProxy ?? false, bodyLimit: 64 * 1024}), logger: false});
+  const app = Fastify({
+    ...serviceOptions({trustProxy: deps.trustProxy ?? false, bodyLimit: 64 * 1024}),
+    logger: false,
+  });
 
-  const refusals = deps.metrics?.counter('signer_refusals_total', 'Sign requests refused, by error code', ['code']);
-  const signed = deps.metrics?.counter('signer_signed_total', 'Transactions signed and broadcast, by replay', ['replayed']);
+  const refusals = deps.metrics?.counter('signer_refusals_total', 'Sign requests refused, by error code', [
+    'code',
+  ]);
+  const signed = deps.metrics?.counter(
+    'signer_signed_total',
+    'Transactions signed and broadcast, by replay',
+    ['replayed'],
+  );
 
   registerHealth(app, {checks: deps.checks, info: () => ({chainId: deps.chainId, keys: deps.keysKind})});
   if (deps.metrics) registerMetrics(app, deps.metrics, deps.metricsToken ? {token: deps.metricsToken} : {});
@@ -53,7 +62,10 @@ export function buildSignerApp(deps: SignerAppDeps): FastifyInstance {
       refusals?.labels(error.code).inc();
       const problem = error.toProblem('Signing refused');
       if (problem.retryAfter) reply.header('retry-after', String(problem.retryAfter));
-      return reply.status(problem.status).type('application/problem+json').send({...problem, traceId});
+      return reply
+        .status(problem.status)
+        .type('application/problem+json')
+        .send({...problem, traceId});
     }
     if (error instanceof ZodError) {
       refusals?.labels(ErrorCode.SCHEMA_MISMATCH).inc();

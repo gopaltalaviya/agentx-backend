@@ -169,10 +169,11 @@ describe('the retry loop', () => {
     controller.abort();
     let ticks = 0;
 
-    await runIndexerLoop(
-      async () => void ticks++,
-      {pollMs: 1_000, signal: controller.signal, sleep: async () => undefined},
-    );
+    await runIndexerLoop(async () => void ticks++, {
+      pollMs: 1_000,
+      signal: controller.signal,
+      sleep: async () => undefined,
+    });
 
     expect(ticks).toBe(0);
   });

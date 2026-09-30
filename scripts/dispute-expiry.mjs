@@ -16,7 +16,14 @@
  * No API and no model: the client is DEPLOYER, the worker AGENT_B (a
  * different owner — v2 refuses a hire between agents of one owner).
  */
-import {createPublicClient, createWalletClient, encodeFunctionData, http, parseAbi, parseEventLogs} from 'viem';
+import {
+  createPublicClient,
+  createWalletClient,
+  encodeFunctionData,
+  http,
+  parseAbi,
+  parseEventLogs,
+} from 'viem';
 import {privateKeyToAccount} from 'viem/accounts';
 import {foundry} from 'viem/chains';
 import {loadConfig, loadAbis} from '@agentx/config';
@@ -56,36 +63,78 @@ if (phase === 'start') {
   await topUp(pub, c, worker.address, 300_000_000_000_000_000n);
   const idAbi = abis['MockIdentityRegistry'];
   const identity = chain.erc8004['identityRegistry'];
-  const clientId = await registerAgent(pub, c, {identity, abi: idAbi, uri: 'ipfs://dispute-client', wallet: client.address});
-  const workerId = await registerAgent(pub, w, {identity, abi: idAbi, uri: 'ipfs://dispute-worker', wallet: worker.address});
+  const clientId = await registerAgent(pub, c, {
+    identity,
+    abi: idAbi,
+    uri: 'ipfs://dispute-client',
+    wallet: client.address,
+  });
+  const workerId = await registerAgent(pub, w, {
+    identity,
+    abi: idAbi,
+    uri: 'ipfs://dispute-worker',
+    wallet: worker.address,
+  });
   await call(c, token, erc20, 'mint', [client.address, 100_000_000n]);
   await call(c, token, erc20, 'approve', [chain.contracts['StakeVault'], 100_000_000n]);
   await call(c, chain.contracts['StakeVault'], abis['StakeVault'], 'deposit', [workerId, 10_000_000n]);
   await call(c, token, erc20, 'approve', [escrow, 100_000_000n]);
   ok(`client ${clientId} (DEPLOYER), worker ${workerId} (AGENT_B, its own owner), worker bonded`);
 
-  const created = await call(c, escrow, escrowAbi, 'createJob', [clientId, workerId, 50_000n, unique('dispute-spec'), 300n, 1800n]);
+  const created = await call(c, escrow, escrowAbi, 'createJob', [
+    clientId,
+    workerId,
+    50_000n,
+    unique('dispute-spec'),
+    300n,
+    1800n,
+  ]);
   const [ev] = parseEventLogs({abi: escrowAbi, logs: created.logs, eventName: 'JobCreated'});
   const jobId = ev.args.jobId;
   await call(w, escrow, escrowAbi, 'acceptJob', [jobId]);
   await call(w, escrow, escrowAbi, 'submitResult', [jobId, unique('dispute-result'), '']);
   await call(c, escrow, escrowAbi, 'dispute', [jobId, unique('dispute-reason')]);
 
-  const job = await pub.readContract({address: escrow, abi: escrowAbi, functionName: 'getJob', args: [jobId]});
-  const balance = await pub.readContract({address: token, abi: erc20, functionName: 'balanceOf', args: [worker.address]});
-  ok(`chain job ${jobId} is DISPUTED (state ${job.state}); the arbiter has until ${new Date(Number(job.disputeDeadline) * 1000).toISOString()}`);
+  const job = await pub.readContract({
+    address: escrow,
+    abi: escrowAbi,
+    functionName: 'getJob',
+    args: [jobId],
+  });
+  const balance = await pub.readContract({
+    address: token,
+    abi: erc20,
+    functionName: 'balanceOf',
+    args: [worker.address],
+  });
+  ok(
+    `chain job ${jobId} is DISPUTED (state ${job.state}); the arbiter has until ${new Date(Number(job.disputeDeadline) * 1000).toISOString()}`,
+  );
   console.log(`\n  then:  node scripts/keeper-sweep.mjs ${jobId}`);
   console.log(`         node scripts/dispute-expiry.mjs verify ${jobId} ${balance}\n`);
 } else if (phase === 'verify') {
   const jobId = BigInt(arg1);
   const balanceBefore = BigInt(arg2);
-  const job = await pub.readContract({address: escrow, abi: escrowAbi, functionName: 'getJob', args: [jobId]});
-  job.state === 5 ? ok(`chain job ${jobId} is SETTLED`) : fail(`chain job ${jobId} is in state ${job.state}, not SETTLED`);
+  const job = await pub.readContract({
+    address: escrow,
+    abi: escrowAbi,
+    functionName: 'getJob',
+    args: [jobId],
+  });
+  job.state === 5
+    ? ok(`chain job ${jobId} is SETTLED`)
+    : fail(`chain job ${jobId} is in state ${job.state}, not SETTLED`);
 
   const head = await pub.getBlockNumber();
   const events = [];
   for (let to = head; to > head - 5_000n && events.length < 2; to -= 100n) {
-    const logs = await pub.getContractEvents({address: escrow, abi: escrowAbi, fromBlock: to - 99n, toBlock: to, args: {jobId}});
+    const logs = await pub.getContractEvents({
+      address: escrow,
+      abi: escrowAbi,
+      fromBlock: to - 99n,
+      toBlock: to,
+      args: {jobId},
+    });
     events.push(...logs.filter((l) => l.eventName === 'DisputeExpired' || l.eventName === 'JobSettled'));
   }
   const expired = events.find((e) => e.eventName === 'DisputeExpired');
@@ -96,7 +145,12 @@ if (phase === 'start') {
     : fail(`JobSettled outcome is ${settled?.args.outcome}, expected 3`);
 
   const worker = privateKeyToAccount(process.env.AGENT_B_PRIVATE_KEY);
-  const after = await pub.readContract({address: token, abi: erc20, functionName: 'balanceOf', args: [worker.address]});
+  const after = await pub.readContract({
+    address: token,
+    abi: erc20,
+    functionName: 'balanceOf',
+    args: [worker.address],
+  });
   const paid = after - balanceBefore;
   paid === job.amount - job.fee
     ? ok(`the worker was paid ${chain.formatToken(paid)} — it delivered`)
@@ -104,7 +158,9 @@ if (phase === 'start') {
 
   const receipt = expired && (await pub.getTransactionReceipt({hash: expired.transactionHash}));
   const feedback = receipt
-    ? receipt.logs.filter((l) => l.address.toLowerCase() === chain.erc8004['reputationRegistry'].toLowerCase())
+    ? receipt.logs.filter(
+        (l) => l.address.toLowerCase() === chain.erc8004['reputationRegistry'].toLowerCase(),
+      )
     : [];
   feedback.length === 0
     ? ok('no feedback was written: disputed work earns no reputation by default')

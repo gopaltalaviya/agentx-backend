@@ -37,7 +37,7 @@ beforeAll(async () => {
   db = createDb(DB_URL, {max: 3});
   app = await buildApp({
     db,
-    chains: config.chains as Record<number, never>,
+    chains: config.chains,
     defaultChainId: 31337,
     bus: new EventBus(),
     readBudget,
@@ -125,7 +125,7 @@ describe('GET /v1/network', () => {
     });
     const withPrivateRpc = await buildApp({
       db,
-      chains: configured.chains as Record<number, never>,
+      chains: configured.chains,
       defaultChainId: 31337,
       bus: new EventBus(),
       submit: async () => ({txHash: '0x', chainJobId: '1'}),

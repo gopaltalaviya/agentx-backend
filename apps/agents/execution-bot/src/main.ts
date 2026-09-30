@@ -25,16 +25,9 @@ const ExecutionPlan = z.object({
     )
     .min(1)
     .max(6),
-  preconditions: z
-    .array(z.string().min(5))
-    .min(1)
-    .max(5)
-    .describe('what must hold before step one runs'),
+  preconditions: z.array(z.string().min(5)).min(1).max(5).describe('what must hold before step one runs'),
   estimatedCost: z.string().optional().describe('base units as a decimal string'),
-  abortIf: z
-    .string()
-    .min(10)
-    .describe('the condition under which this plan should not be run at all'),
+  abortIf: z.string().min(10).describe('the condition under which this plan should not be run at all'),
 });
 
 await runWorker({

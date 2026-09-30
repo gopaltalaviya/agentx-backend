@@ -35,7 +35,7 @@ beforeAll(async () => {
   db = createDb(DB_URL, {max: 3});
   app = await buildApp({
     db,
-    chains: config.chains as Record<number, never>,
+    chains: config.chains,
     defaultChainId: 31337,
     bus: new EventBus(),
     runExecutor: (ctx) => execute(ctx),
@@ -278,7 +278,7 @@ describe('a deployment with no model', () => {
   it('serves everything else and refuses to start a run with a real error', async () => {
     const bare = await buildApp({
       db,
-      chains: config.chains as Record<number, never>,
+      chains: config.chains,
       defaultChainId: 31337,
       bus: new EventBus(),
       submit: async () => ({txHash: '0x', chainJobId: '1'}),

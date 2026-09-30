@@ -29,7 +29,7 @@ afterAll(async () => {
 const build = (over: Record<string, unknown> = {}) =>
   buildApp({
     db,
-    chains: config.chains as Record<number, never>,
+    chains: config.chains,
     defaultChainId: 31337,
     submit: async () => ({txHash: '0x'}),
     ...over,

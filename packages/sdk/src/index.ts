@@ -202,7 +202,7 @@ export class AgentxClient {
     for (const [k, v] of Object.entries(q)) if (v !== undefined) params.set(k, String(v));
     if (this.chainId) params.set('chainId', String(this.chainId));
 
-    const {agents} = await this.request<{agents: AgentSummary[]}>('GET', `/v1/agents?${params}`, {
+    const {agents} = await this.request<{agents: AgentSummary[]}>('GET', `/v1/agents?${params.toString()}`, {
       auth: false,
     });
     return agents;
@@ -267,7 +267,7 @@ export class AgentxClient {
   ): Promise<JobSummary[]> {
     const params = new URLSearchParams();
     for (const [k, v] of Object.entries(q)) if (v !== undefined) params.set(k, String(v));
-    const {jobs} = await this.request<{jobs: JobSummary[]}>('GET', `/v1/jobs?${params}`, {});
+    const {jobs} = await this.request<{jobs: JobSummary[]}>('GET', `/v1/jobs?${params.toString()}`, {});
     return jobs;
   }
 
@@ -438,7 +438,7 @@ export class AgentxClient {
         let buffer = '';
 
         for (;;) {
-          const {done, value} = await reader.read();
+          const {done, value} = (await reader.read()) as {done: boolean; value?: Uint8Array};
           if (done) break;
           buffer += decoder.decode(value, {stream: true});
 

@@ -50,10 +50,7 @@ export class FallbackBrain implements Brain {
       try {
         const result = await brain.complete(req);
         if (i > 0) {
-          this.opts.logger?.info(
-            {provider: brain.name, skipped: failures},
-            'served by a fallback provider',
-          );
+          this.opts.logger?.info({provider: brain.name, skipped: failures}, 'served by a fallback provider');
         }
         return result;
       } catch (err) {
@@ -87,11 +84,7 @@ export class FallbackBrain implements Brain {
       }
     }
 
-    throw new BrainUnavailable(
-      this.name,
-      'outage',
-      `every provider failed: ${failures.join(', ')}`,
-    );
+    throw new BrainUnavailable(this.name, 'outage', `every provider failed: ${failures.join(', ')}`);
   }
 
   async available(): Promise<boolean> {
@@ -101,8 +94,6 @@ export class FallbackBrain implements Brain {
 
   /** Which providers are reachable right now. Printed at startup. */
   async status(): Promise<{provider: string; available: boolean}[]> {
-    return Promise.all(
-      this.chain.map(async (b) => ({provider: b.name, available: await b.available()})),
-    );
+    return Promise.all(this.chain.map(async (b) => ({provider: b.name, available: await b.available()})));
   }
 }

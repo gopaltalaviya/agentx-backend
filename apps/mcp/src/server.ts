@@ -53,7 +53,11 @@ export async function buildServer(opts: ServerOptions): Promise<McpServer> {
  * money is real. That sentence should never have to be inferred from a field
  * the model may not have read.
  */
-function buildInstructions(network: {name: string; testnet: boolean; paymentToken: {symbol: string; decimals: number}}): string {
+function buildInstructions(network: {
+  name: string;
+  testnet: boolean;
+  paymentToken: {symbol: string; decimals: number};
+}): string {
   const money = network.testnet
     ? `You are on ${network.name}, a TESTNET. Funds here are test funds.`
     : `You are on ${network.name}. PAYMENTS ARE REAL MONEY and cannot be reversed.`;
@@ -105,5 +109,5 @@ function register(server: McpServer, tool: ToolDefinition, ctx: ToolContext): vo
 
 /** BigInt-safe: amounts travel as decimal strings, and JSON.stringify throws on bigint. */
 function stringify(value: unknown): string {
-  return JSON.stringify(value, (_k, v) => (typeof v === 'bigint' ? v.toString() : v), 2);
+  return JSON.stringify(value, (_k, v: unknown) => (typeof v === 'bigint' ? v.toString() : v), 2);
 }

@@ -41,8 +41,13 @@ const abis = loadAbis() as Record<string, never>;
 const db = createDb(cfg.DATABASE_URL, {max: cfg.DB_POOL_MAX});
 
 const metrics = createMetrics('indexer');
-const ticks = metrics.counter('indexer_ticks_total', 'Indexer ticks, by chain and outcome', ['chain', 'outcome']);
-const lastOk = metrics.gauge('indexer_last_success_seconds', 'Unix time of the last successful tick', ['chain']);
+const ticks = metrics.counter('indexer_ticks_total', 'Indexer ticks, by chain and outcome', [
+  'chain',
+  'outcome',
+]);
+const lastOk = metrics.gauge('indexer_last_success_seconds', 'Unix time of the last successful tick', [
+  'chain',
+]);
 const lastSuccess = new Map<number, number>();
 
 const health = cfg.INDEXER_HEALTH_PORT ? Fastify({...serviceOptions(), logger: false}) : null;
@@ -78,10 +83,17 @@ const workersDone = Promise.all(
           ticks.labels(String(chain.chainId), 'failed').inc();
           // Escalate with persistence. One failed tick is noise on any public
           // RPC; twenty in a row is an outage someone needs to see.
-          const line = {chainId: chain.chainId, err: (err as Error).message, failures, retryingInMs: nextDelayMs};
-          failures >= 5 ? logger.error(line, 'indexer is failing') : logger.warn(line, 'tick failed, retrying');
+          const line = {
+            chainId: chain.chainId,
+            err: (err as Error).message,
+            failures,
+            retryingInMs: nextDelayMs,
+          };
+          if (failures >= 5) logger.error(line, 'indexer is failing');
+          else logger.warn(line, 'tick failed, retrying');
         },
-        onRecovered: (afterFailures) => logger.info({chainId: chain.chainId, afterFailures}, 'indexer recovered'),
+        onRecovered: (afterFailures) =>
+          logger.info({chainId: chain.chainId, afterFailures}, 'indexer recovered'),
       },
     );
   }),
@@ -100,7 +112,11 @@ if (health) {
             const at = lastSuccess.get(chain.chainId);
             const limit = cfg.INDEXER_MAX_BACKOFF_MS + cfg.INDEXER_POLL_MS * 5;
             if (!at || Date.now() - at > limit) {
-              throw new Error(at ? `no successful tick for ${Math.round((Date.now() - at) / 1000)} s` : 'no successful tick yet');
+              throw new Error(
+                at
+                  ? `no successful tick for ${Math.round((Date.now() - at) / 1000)} s`
+                  : 'no successful tick yet',
+              );
             }
           },
         ]),

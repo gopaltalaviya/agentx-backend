@@ -4,6 +4,17 @@ import type {ChainConfig} from '@agentx/config';
 import {type Db, indexerCursor, jobEvents, jobs, agents, agentStats, payments} from '@agentx/db';
 
 /** Refund reasons the contract records as the worker's failure (TaskEscrow `_refund` callers). */
+/**
+ * A decoded event field as text. Fields arrive as `unknown`; `String()` on an
+ * object writes "[object Object]" into a column instead of failing, so only
+ * the shapes an event can carry are accepted.
+ */
+function text(v: unknown, fallback = ''): string {
+  if (typeof v === 'string') return v;
+  if (typeof v === 'bigint' || typeof v === 'number') return v.toString();
+  return fallback;
+}
+
 /** `ITaskEscrow.Outcome.SUCCESS`. Only this outcome earns reputation. */
 const OUTCOME_SUCCESS = 0;
 
@@ -37,7 +48,6 @@ function refundReason(raw: unknown): string {
  * It only ever writes what the chain said. It never invents state, which is
  * why the UI can never show a payment that did not happen.
  */
-
 
 /**
  * A handle that is either the pool or an open transaction.
@@ -93,8 +103,12 @@ export class Indexer {
       // Rewind past the reorg and replay. Safe because every write is keyed
       // by (chain, tx, logIndex).
       const back = this.reorgDepth * 2n; // rewind further than we trail
-      const rewindTo = BigInt(cursor.lastBlock) > back ? BigInt(cursor.lastBlock) - back : BigInt(chain.startBlock);
-      this.log.warn({chainId: chain.chainId, from: cursor.lastBlock, rewindTo: rewindTo.toString()}, 'reorg detected, rewinding');
+      const rewindTo =
+        BigInt(cursor.lastBlock) > back ? BigInt(cursor.lastBlock) - back : BigInt(chain.startBlock);
+      this.log.warn(
+        {chainId: chain.chainId, from: cursor.lastBlock, rewindTo: rewindTo.toString()},
+        'reorg detected, rewinding',
+      );
       // Throws — and so halts the indexer where it stands — if anything we
       // recorded in the window is no longer on the chain at all.
       await this.checkRewindWindow(rewindTo, BigInt(cursor.lastBlock));
@@ -119,7 +133,10 @@ export class Indexer {
     await this.writeCursor('TaskEscrow', to, toBlock.hash);
 
     if (logs.length > 0) {
-      this.log.info({chainId: chain.chainId, from: from.toString(), to: to.toString(), logs: logs.length}, 'indexed');
+      this.log.info(
+        {chainId: chain.chainId, from: from.toString(), to: to.toString(), logs: logs.length},
+        'indexed',
+      );
     }
     return to;
   }
@@ -215,7 +232,7 @@ export class Indexer {
       const candidate = await db.query.jobs.findFirst({
         where: and(
           eq(jobs.chainId, chain.chainId),
-          eq(jobs.specHash, String(payload['specHash'])),
+          eq(jobs.specHash, text(payload['specHash'])),
           isNull(jobs.chainJobId),
         ),
       });
@@ -311,7 +328,7 @@ export class Indexer {
       this.deps.db.query.agents.findFirst({where: eq(agents.id, job.clientAgentId)}),
       this.deps.db.query.agents.findFirst({where: eq(agents.id, job.workerAgentId)}),
     ]);
-    return String(c?.chainAgentId) === String(client) && String(w?.chainAgentId) === String(worker);
+    return text(c?.chainAgentId) === text(client) && text(w?.chainAgentId) === text(worker);
   }
 
   private async decode(
@@ -346,9 +363,11 @@ export class Indexer {
 
       return {
         kind,
-        chainJobId: String(jobId),
+        chainJobId: text(jobId),
         // bigints do not survive JSON, and these are money.
-        payload: JSON.parse(JSON.stringify(args, (_k, v) => (typeof v === 'bigint' ? v.toString() : v))),
+        payload: JSON.parse(
+          JSON.stringify(args, (_k, v: unknown) => (typeof v === 'bigint' ? v.toString() : v)),
+        ) as Record<string, unknown>,
       };
     } catch {
       return null;
@@ -364,7 +383,6 @@ export class Indexer {
     blockNumber: bigint,
     txHash: string,
   ): Promise<void> {
-
     const stateOf: Record<string, 'accepted' | 'submitted' | 'settled' | 'refunded' | 'disputed'> = {
       accepted: 'accepted',
       submitted: 'submitted',
@@ -378,8 +396,8 @@ export class Indexer {
         .update(jobs)
         .set({
           state: next,
-          ...(next === 'settled' ? {settledAt: new Date(), fee: String(payload['fee'] ?? '0')} : {}),
-          ...(kind === 'submitted' ? {resultHash: String(payload['resultHash'] ?? '')} : {}),
+          ...(next === 'settled' ? {settledAt: new Date(), fee: text(payload['fee'], '0')} : {}),
+          ...(kind === 'submitted' ? {resultHash: text(payload['resultHash'])} : {}),
         })
         .where(eq(jobs.id, jobId));
     }
@@ -401,7 +419,7 @@ export class Indexer {
           fromAgentId: job.clientAgentId,
           toAgentId: job.workerAgentId,
           amount: job.amount,
-          fee: String(payload['fee'] ?? '0'),
+          fee: text(payload['fee'], '0'),
           // From the log. No event carries a tx hash in its arguments, so
           // reading one from the payload stored '' on every payment row.
           txHash,
@@ -442,12 +460,7 @@ export class Indexer {
    * volume-damped, so a fresh agent is 50 (unknown) rather than 0 or 100, and
    * one lucky job cannot outrank a proven record.
    */
-  private async bumpReputation(
-    db: Tx,
-    agentId: number,
-    success: boolean,
-    amount: string,
-  ): Promise<void> {
+  private async bumpReputation(db: Tx, agentId: number, success: boolean, amount: string): Promise<void> {
     await db
       .insert(agentStats)
       .values({
@@ -513,7 +526,7 @@ export class Indexer {
     const from = head > this.reorgDepth ? head - this.reorgDepth : 0n;
     const block = await this.client.getBlock({blockNumber: from});
 
-    await this.writeCursor('TaskEscrow', from, block.hash as string);
+    await this.writeCursor('TaskEscrow', from, block.hash);
     this.log.info(
       {chainId: this.deps.chain.chainId, block: from.toString()},
       'seeded the cursor at the head; history before this block is not indexed',

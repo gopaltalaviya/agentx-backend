@@ -28,7 +28,7 @@ function fakeFetch(
       headers: {'content-type': 'application/json'},
     });
   };
-  return {calls, impl: impl as unknown as typeof fetch};
+  return {calls, impl: impl};
 }
 
 const problem = (code: ErrorCode, detail: string, retryAfter?: number) => ({
@@ -62,7 +62,10 @@ describe('what the client retries', () => {
    * and doing so is how an agent turns one refusal into a rate-limit ban.
    */
   it('never retries a spending cap', async () => {
-    const f = fakeFetch(() => ({status: 402, body: problem(ErrorCode.BUDGET_EXCEEDED, 'over the daily cap')}));
+    const f = fakeFetch(() => ({
+      status: 402,
+      body: problem(ErrorCode.BUDGET_EXCEEDED, 'over the daily cap'),
+    }));
     let error: unknown;
     try {
       await client(f.impl).hire({workerAgentId: 2, spec: SPEC, maxPrice: '50000'});
@@ -113,7 +116,7 @@ describe('what the client retries', () => {
         ? {status: 429, body: {code: 'RATE_LIMITED', detail: 'slow down', retryAfter: 0}}
         : {status: 200, body: {agents: []}},
     );
-    await client(f.impl).discover({capability: 'market-research' as never});
+    await client(f.impl).discover({capability: 'market-research'});
     expect(f.calls.length).toBe(2);
   });
 
@@ -136,7 +139,10 @@ describe('what the client retries', () => {
 
 describe('the error contract agents branch on', () => {
   it('turns an RFC 7807 problem into a typed code, not a status number', async () => {
-    const f = fakeFetch(() => ({status: 409, body: problem(ErrorCode.AGENT_NOT_HIREABLE, 'not on chain yet', 2)}));
+    const f = fakeFetch(() => ({
+      status: 409,
+      body: problem(ErrorCode.AGENT_NOT_HIREABLE, 'not on chain yet', 2),
+    }));
     let error: unknown;
     try {
       await client(f.impl).getJob('1');
@@ -234,7 +240,7 @@ describe('the idempotency key', () => {
 describe('credentials', () => {
   it('browses the marketplace without sending a key', async () => {
     const f = fakeFetch(() => ({status: 200, body: {agents: []}}));
-    await client(f.impl).discover({capability: 'market-research' as never});
+    await client(f.impl).discover({capability: 'market-research'});
     expect((f.calls[0]!.init!.headers as Record<string, string>)['authorization']).toBeUndefined();
   });
 
@@ -321,7 +327,7 @@ describe('query building', () => {
   it('passes discovery filters through and pins the chain', async () => {
     const f = fakeFetch(() => ({status: 200, body: {agents: []}}));
     await client(f.impl).discover({
-      capability: 'market-research' as never,
+      capability: 'market-research',
       maxPrice: '50000',
       minScore: 70,
       rank: 'cheapest',
@@ -329,7 +335,14 @@ describe('query building', () => {
     });
 
     const url = f.calls[0]!.url;
-    for (const part of ['capability=market-research', 'maxPrice=50000', 'minScore=70', 'rank=cheapest', 'limit=5', 'chainId=10143']) {
+    for (const part of [
+      'capability=market-research',
+      'maxPrice=50000',
+      'minScore=70',
+      'rank=cheapest',
+      'limit=5',
+      'chainId=10143',
+    ]) {
       expect(url).toContain(part);
     }
   });

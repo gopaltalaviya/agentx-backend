@@ -57,8 +57,7 @@ export function buildBrain(opts: BuildBrainOptions): Brain {
   if (mode === 'cached') return new CachedBrain(cachePath);
 
   const chain = resolveChain(opts.role, env).map((name) => makeBrain(name, opts.role, env));
-  const live: Brain =
-    chain.length === 1 ? chain[0]! : new FallbackBrain(chain, opts);
+  const live: Brain = chain.length === 1 ? chain[0]! : new FallbackBrain(chain, opts);
 
   // Cached is always the last resort, even in live mode: if every provider is
   // unreachable, a recorded answer beats a dead demo.
@@ -69,7 +68,11 @@ export function buildBrain(opts: BuildBrainOptions): Brain {
 
 function resolveChain(role: Role, env: NodeJS.ProcessEnv): string[] {
   const configured = env[role === 'orchestrator' ? 'BRAIN_CHAIN_ORCHESTRATOR' : 'BRAIN_CHAIN'];
-  if (configured) return configured.split(',').map((s) => s.trim()).filter(Boolean);
+  if (configured)
+    return configured
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
 
   // Defaults: judgement on Claude, extraction on whatever is free.
   return role === 'orchestrator'

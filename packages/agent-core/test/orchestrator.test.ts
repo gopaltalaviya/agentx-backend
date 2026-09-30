@@ -19,11 +19,18 @@ import {
  */
 
 const PLAN_ONE = {
-  subtasks: [{capability: 'market-research', input: {question: 'ETH/USDC depth?'}, requiredFields: ['summary']}],
+  subtasks: [
+    {capability: 'market-research', input: {question: 'ETH/USDC depth?'}, requiredFields: ['summary']},
+  ],
   reasoning: 'one question, one capability',
 };
 
-const GOOD_VERDICT = {accept: true, reason: 'specific and sourced', rating: 'excellent', injectionAttempted: false};
+const GOOD_VERDICT = {
+  accept: true,
+  reason: 'specific and sourced',
+  rating: 'excellent',
+  injectionAttempted: false,
+};
 
 class ScriptedBrain implements Brain {
   readonly name = 'scripted';
@@ -32,7 +39,7 @@ class ScriptedBrain implements Brain {
   constructor(private readonly replies: Record<string, unknown> = {}) {}
 
   async complete<T>(req: CompletionRequest<T>): Promise<CompletionResult<T>> {
-    this.seen.push(req as CompletionRequest<unknown>);
+    this.seen.push(req);
     const name = req.schemaName ?? '';
     const reply = this.replies[name] ?? DEFAULTS[name];
     if (reply === 'throw') throw new Error(`${name} unavailable`);
@@ -66,9 +73,7 @@ const CANDIDATE = {
   capabilities: ['market-research'],
 };
 
-function fakeClient(
-  over: Record<string, unknown> = {},
-): {client: AgentxClient; calls: Calls} {
+function fakeClient(over: Record<string, unknown> = {}): {client: AgentxClient; calls: Calls} {
   const calls: Calls = {hired: 0, approved: [], disputed: []};
   const client = {
     budget: async () => ({dailyRemaining: '500000', maxSingleSpend: '50000'}),
@@ -219,8 +224,14 @@ describe('the branches a live demo actually hits', () => {
       hire: async (args: {spec: {outputSchema?: unknown}}) => {
         specs.push(args.spec);
         return {
-          jobId: '9', chainJobId: '9', state: 'created', path: 'escrow',
-          amount: '20000', amountDisplay: '0.02 USDC', txHash: '0x', explorerUrl: 'u',
+          jobId: '9',
+          chainJobId: '9',
+          state: 'created',
+          path: 'escrow',
+          amount: '20000',
+          amountDisplay: '0.02 USDC',
+          txHash: '0x',
+          explorerUrl: 'u',
         };
       },
     });
@@ -230,9 +241,17 @@ describe('the branches a live demo actually hits', () => {
   });
 
   it('disputes work the judge rejects, and never approves it', async () => {
-    const {orchestrator, calls} = build({}, {
-      Verdict: {accept: false, reason: 'the summary is empty filler', rating: 'poor', injectionAttempted: false},
-    });
+    const {orchestrator, calls} = build(
+      {},
+      {
+        Verdict: {
+          accept: false,
+          reason: 'the summary is empty filler',
+          rating: 'poor',
+          injectionAttempted: false,
+        },
+      },
+    );
 
     const report = await orchestrator.run('goal');
     expect(report.steps[0]).toMatchObject({status: 'disputed'});
@@ -392,8 +411,14 @@ describe('what the worker is told', () => {
         hire: async (args: {spec: {input: Record<string, unknown>}}) => {
           specs.push(args.spec);
           return {
-            jobId: '9', chainJobId: '9', state: 'created', path: 'escrow',
-            amount: '20000', amountDisplay: '0.02 USDC', txHash: '0x', explorerUrl: 'u',
+            jobId: '9',
+            chainJobId: '9',
+            state: 'created',
+            path: 'escrow',
+            amount: '20000',
+            amountDisplay: '0.02 USDC',
+            txHash: '0x',
+            explorerUrl: 'u',
           };
         },
       },
@@ -412,8 +437,13 @@ describe('what the worker is told', () => {
         hire: async (args: {spec: {input: Record<string, unknown>}}) => {
           specs.push(args.spec);
           return {
-            jobId: String(specs.length), state: 'created', path: 'escrow',
-            amount: '20000', amountDisplay: '0.02 USDC', txHash: '0x', explorerUrl: 'u',
+            jobId: String(specs.length),
+            state: 'created',
+            path: 'escrow',
+            amount: '20000',
+            amountDisplay: '0.02 USDC',
+            txHash: '0x',
+            explorerUrl: 'u',
           };
         },
       },
@@ -441,8 +471,13 @@ describe('what the worker is told', () => {
         hire: async (args: {spec: {input: Record<string, unknown>}}) => {
           specs.push(args.spec);
           return {
-            jobId: '9', state: 'created', path: 'escrow',
-            amount: '20000', amountDisplay: '0.02 USDC', txHash: '0x', explorerUrl: 'u',
+            jobId: '9',
+            state: 'created',
+            path: 'escrow',
+            amount: '20000',
+            amountDisplay: '0.02 USDC',
+            txHash: '0x',
+            explorerUrl: 'u',
           };
         },
       },
@@ -477,18 +512,20 @@ describe('dependent subtasks', () => {
   it('passes an upstream result into the dependent step', async () => {
     const specs: unknown[] = [];
     const {orchestrator} = build(
-      {hire: async (args: {spec: unknown}) => {
-        specs.push(args.spec);
-        return {
-          jobId: String(specs.length),
-          state: 'created',
-          path: 'escrow',
-          amount: '20000',
-          amountDisplay: '0.02 USDC',
-          txHash: '0x',
-          explorerUrl: 'u',
-        };
-      }},
+      {
+        hire: async (args: {spec: unknown}) => {
+          specs.push(args.spec);
+          return {
+            jobId: String(specs.length),
+            state: 'created',
+            path: 'escrow',
+            amount: '20000',
+            amountDisplay: '0.02 USDC',
+            txHash: '0x',
+            explorerUrl: 'u',
+          };
+        },
+      },
       {Plan: TWO_STEP},
     );
 
@@ -531,9 +568,12 @@ describe('what reaches a model', () => {
   });
 
   it('surfaces an attempted injection in the report rather than hiding it', async () => {
-    const {orchestrator} = build({}, {
-      Verdict: {accept: false, reason: 'tried to instruct me', rating: 'poor', injectionAttempted: true},
-    });
+    const {orchestrator} = build(
+      {},
+      {
+        Verdict: {accept: false, reason: 'tried to instruct me', rating: 'poor', injectionAttempted: true},
+      },
+    );
 
     const report = await orchestrator.run('goal');
     expect(report.steps[0]!.verdict?.injectionAttempted).toBe(true);
@@ -576,7 +616,12 @@ describe('rejecting work that was already paid for', () => {
   };
 
   const rejecting = {
-    Verdict: {accept: false, reason: 'the summary is empty filler', rating: 'weak', injectionAttempted: false},
+    Verdict: {
+      accept: false,
+      reason: 'the summary is empty filler',
+      rating: 'weak',
+      injectionAttempted: false,
+    },
   };
 
   it('does not attempt a dispute the chain cannot honour', async () => {
@@ -633,7 +678,7 @@ describe('a worker that goes silent', () => {
   class FirstOfferedBrain extends ScriptedBrain {
     override async complete<T>(req: CompletionRequest<T>): Promise<CompletionResult<T>> {
       if (req.schemaName === 'Selection') {
-        this.seen.push(req as CompletionRequest<unknown>);
+        this.seen.push(req);
         const list = JSON.parse(req.prompt.slice(req.prompt.indexOf('['), req.prompt.lastIndexOf(']') + 1));
         const value = req.schema.parse({agentId: list[0].agentId, reason: 'first offered'});
         return {value, provider: 'scripted', model: 'scripted', cached: false};
@@ -658,7 +703,16 @@ describe('a worker that goes silent', () => {
         const jobId = String(100 + hires.length);
         byJob.set(jobId, args.workerAgentId);
         const price = opts.candidates.find((c) => c.agentId === args.workerAgentId)!.pricePerTask;
-        return {jobId, chainJobId: jobId, state: 'created', path: 'escrow', amount: price, amountDisplay: price, txHash: '0x', explorerUrl: 'x'};
+        return {
+          jobId,
+          chainJobId: jobId,
+          state: 'created',
+          path: 'escrow',
+          amount: price,
+          amountDisplay: price,
+          txHash: '0x',
+          explorerUrl: 'x',
+        };
       },
       awaitResult: async (jobId: string, o: {timeoutMs: number; acceptWithinMs?: number}) => {
         const behaviour = opts.silent(byJob.get(jobId)!);
@@ -666,7 +720,12 @@ describe('a worker that goes silent', () => {
         if (behaviour === 'accepts-then-silent') {
           throw new AgentxError(ErrorCode.DEADLINE_PASSED, `job ${jobId} was still "accepted"`);
         }
-        return {jobId, state: 'submitted', path: 'escrow', result: {summary: 'ETH/USDC depth is healthy at 0.3% slippage.'}};
+        return {
+          jobId,
+          state: 'submitted',
+          path: 'escrow',
+          result: {summary: 'ETH/USDC depth is healthy at 0.3% slippage.'},
+        };
       },
       cancel: async (jobId: string) => {
         if (opts.cancelFails) throw new AgentxError(ErrorCode.INVALID_STATE, 'job is "accepted"');
@@ -675,7 +734,11 @@ describe('a worker that goes silent', () => {
       },
     });
     const events: OrchestratorEvent[] = [];
-    const orchestrator = new Orchestrator({client, brain: new FirstOfferedBrain(), log: (e) => events.push(e)});
+    const orchestrator = new Orchestrator({
+      client,
+      brain: new FirstOfferedBrain(),
+      log: (e) => events.push(e),
+    });
     return {orchestrator, calls, hires, cancelled, events};
   }
 
@@ -720,7 +783,10 @@ describe('a worker that goes silent', () => {
   });
 
   it('stops after a second silent worker rather than walking the whole market', async () => {
-    const {orchestrator, hires} = scenario({candidates: [CANDIDATE, OTHER, THIRD], silent: () => 'never-accepts'});
+    const {orchestrator, hires} = scenario({
+      candidates: [CANDIDATE, OTHER, THIRD],
+      silent: () => 'never-accepts',
+    });
 
     const report = await orchestrator.run('how deep is ETH/USDC?');
 

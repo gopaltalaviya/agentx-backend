@@ -44,7 +44,8 @@ if (!chain.testnet) {
 const STATE = ['NONE', 'CREATED', 'ACCEPTED', 'SUBMITTED', 'DISPUTED', 'SETTLED', 'REFUNDED'];
 const escrow = chain.contracts['TaskEscrow'];
 const pub = createPublicClient({transport: http(chain.rpcUrl)});
-const readJob = (id) => pub.readContract({address: escrow, abi: abis['TaskEscrow'], functionName: 'getJob', args: [id]});
+const readJob = (id) =>
+  pub.readContract({address: escrow, abi: abis['TaskEscrow'], functionName: 'getJob', args: [id]});
 
 const db = createDb(process.env.DATABASE_URL ?? 'postgres://agentx:agentx@127.0.0.1:5442/agentx');
 const ids = process.argv.slice(2).map((a) => BigInt(a));
@@ -65,7 +66,11 @@ if (ids.length > 0) {
     const waitFor = [0n, job.acceptDeadline, job.workDeadline, job.reviewDeadline][job.state] ?? 0n;
     console.log(
       `  job ${id}: ${STATE[job.state]}` +
-        (exit ? ` — ${exit} is due` : waitFor > now ? ` — nothing due for ${waitFor - now}s` : ' — nothing to do'),
+        (exit
+          ? ` — ${exit} is due`
+          : waitFor > now
+            ? ` — nothing due for ${waitFor - now}s`
+            : ' — nothing to do'),
     );
   }
 }
@@ -85,7 +90,8 @@ for (const s of result.sent) {
   }
 }
 for (const f of result.failed) console.log(`  ✗ job ${f.chainJobId}: ${f.exit} not sent — ${f.reason}`);
-if (result.sent.length === 0 && result.failed.length === 0) console.log(`  checked ${result.checked}, nothing was due`);
+if (result.sent.length === 0 && result.failed.length === 0)
+  console.log(`  checked ${result.checked}, nothing was due`);
 
 await closeDb(db);
 process.exit(failures ? 1 : 0);

@@ -280,16 +280,20 @@ export class SignerService {
         // anywhere recorded what the node had actually said.
         const e = err as {shortMessage?: string; details?: string; message?: string};
         this.log.warn(
-          {agentId: req.agentId, to, signer: signer.address, short: e.shortMessage, details: e.details, message: e.message?.slice(0, 2000)},
+          {
+            agentId: req.agentId,
+            to,
+            signer: signer.address,
+            short: e.shortMessage,
+            details: e.details,
+            message: e.message?.slice(0, 2000),
+          },
           'broadcast failed',
         );
         throw asActionableError(err, chain.network.nativeCurrency.symbol, signer.address, this.deps.abis);
       }
 
-      await db
-        .update(signerTxs)
-        .set({txHash, status: 'broadcast'})
-        .where(eq(signerTxs.id, slot.id));
+      await db.update(signerTxs).set({txHash, status: 'broadcast'}).where(eq(signerTxs.id, slot.id));
 
       this.log.info({agentId: req.agentId, nonce: slot.nonce, txHash}, 'signed and broadcast');
       return {txHash, nonce: slot.nonce, replayed: false};
@@ -397,7 +401,12 @@ export class SignerService {
     let ownerKey: Account | null = null;
     for (const key of held) {
       const [expiry] = await this.pub
-        .readContract({address: wallet, abi: ACCOUNT_KEYS_ABI, functionName: 'sessionKeys', args: [key.address]})
+        .readContract({
+          address: wallet,
+          abi: ACCOUNT_KEYS_ABI,
+          functionName: 'sessionKeys',
+          args: [key.address],
+        })
         .catch(() => [0n, 0n, 0n] as const);
       // A minute of margin: a key that expires while its transaction is in
       // the mempool reverts, and costs gas doing it.
@@ -513,7 +522,13 @@ const EXECUTE_ABI = [
 
 /** Who an AgentAccount will take a call from. */
 const ACCOUNT_KEYS_ABI = [
-  {type: 'function', name: 'owner', stateMutability: 'view', inputs: [], outputs: [{name: '', type: 'address'}]},
+  {
+    type: 'function',
+    name: 'owner',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{name: '', type: 'address'}],
+  },
   {
     type: 'function',
     name: 'sessionKeys',
@@ -583,7 +598,11 @@ function asActionableError(
 function contractRefusal(err: unknown, abis: Record<string, Abi>): string | null {
   const data = revertData(err);
   if (!data) return null;
-  const abi = [...(abis['TaskEscrow'] ?? []), ...(abis['AgentAccount'] ?? []), ...(abis['StakeVault'] ?? [])] as Abi;
+  const abi = [
+    ...(abis['TaskEscrow'] ?? []),
+    ...(abis['AgentAccount'] ?? []),
+    ...(abis['StakeVault'] ?? []),
+  ] as Abi;
   const decode = (hex: Hex): string | null => {
     try {
       const {errorName, args} = decodeErrorResult({abi, data: hex});

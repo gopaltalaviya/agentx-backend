@@ -65,7 +65,9 @@ function print(event: OrchestratorEvent): void {
     case 'selected':
       return console.log(`  select    agent ${event.agentId} at ${event.price} — ${event.reason}`);
     case 'hired':
-      return console.log(`  hire      job ${event.jobId} for ${event.amount}\n            ${event.explorerUrl}`);
+      return console.log(
+        `  hire      job ${event.jobId} for ${event.amount}\n            ${event.explorerUrl}`,
+      );
     case 'judged':
       return console.log(
         `  judge     job ${event.jobId}: ${event.accept ? 'accept' : 'reject'} (quality ${event.quality})` +

@@ -23,7 +23,10 @@ describe('loadEnv', () => {
   });
 
   it('applies defaults and coerces', () => {
-    const e = loadEnv(schema, {DATABASE_URL: 'postgres://u:p@h:5432/d', CORS_ORIGINS: 'https://a, https://b'});
+    const e = loadEnv(schema, {
+      DATABASE_URL: 'postgres://u:p@h:5432/d',
+      CORS_ORIGINS: 'https://a, https://b',
+    });
     expect(e).toEqual({
       DATABASE_URL: 'postgres://u:p@h:5432/d',
       PORT: 8080,
@@ -154,9 +157,12 @@ describe('shutdown', () => {
       process: proc,
       exit: (c) => exits.push(c),
       closers: [
-        ['http', async () => {
-          throw new Error('boom');
-        }],
+        [
+          'http',
+          async () => {
+            throw new Error('boom');
+          },
+        ],
         ['db', async () => order.push('db')],
       ],
     });

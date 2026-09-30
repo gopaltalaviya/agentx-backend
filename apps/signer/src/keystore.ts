@@ -1,6 +1,6 @@
 import {createDecipheriv, pbkdf2Sync, scryptSync} from 'node:crypto';
 import {privateKeyToAccount} from 'viem/accounts';
-import {keccak256, type Account, type Hex} from 'viem';
+import {keccak256, type Account} from 'viem';
 
 /**
  * Key loading, behind an interface so the storage choice is replaceable.
@@ -52,7 +52,7 @@ interface KeystoreV3 {
 
 export function decryptKeystore(keystore: KeystoreV3, passphrase: string): `0x${string}` {
   const {crypto: c} = keystore;
-  if (keystore.version !== 3) throw new Error(`unsupported keystore version ${keystore.version}`);
+  if (keystore.version !== 3) throw new Error(`unsupported keystore version ${String(keystore.version)}`);
 
   const pass = Buffer.from(passphrase, 'utf8');
   let derived: Buffer;
@@ -80,9 +80,9 @@ export function decryptKeystore(keystore: KeystoreV3, passphrase: string): `0x${
   // Keccak-256, NOT node's 'sha3-256'. They are different functions on the
   // same sponge and produce different digests; using the latter rejects every
   // valid keystore.
-  const mac = keccak256(
-    `0x${Buffer.concat([derived.subarray(16, 32), ciphertext]).toString('hex')}` as Hex,
-  ).slice(2);
+  const mac = keccak256(`0x${Buffer.concat([derived.subarray(16, 32), ciphertext]).toString('hex')}`).slice(
+    2,
+  );
 
   if (mac !== c.mac.toLowerCase()) throw new Error('keystore MAC mismatch — wrong passphrase');
 
@@ -92,7 +92,7 @@ export function decryptKeystore(keystore: KeystoreV3, passphrase: string): `0x${
     Buffer.from(c.cipherparams.iv, 'hex'),
   );
   const key = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-  return `0x${key.toString('hex')}` as `0x${string}`;
+  return `0x${key.toString('hex')}`;
 }
 
 /**
@@ -180,7 +180,10 @@ export class RawKeySource implements KeySource {
       );
     }
 
-    for (const key of (many ?? '').split(',').map((k) => k.trim()).filter(Boolean)) {
+    for (const key of (many ?? '')
+      .split(',')
+      .map((k) => k.trim())
+      .filter(Boolean)) {
       const account = privateKeyToAccount(key as `0x${string}`);
       this.byAddress.set(account.address.toLowerCase(), account);
     }

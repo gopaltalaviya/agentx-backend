@@ -45,7 +45,10 @@ async function refuses(statement: ReturnType<typeof sql>, because: RegExp): Prom
     error = err;
   }
   expect(error, 'the database accepted a row it should have refused').toBeDefined();
-  expect(String((error as Error).message)).toMatch(because);
+  // drizzle wraps the driver's error (DrizzleQueryError, since 0.45); the
+  // constraint that fired is named on the Postgres error it carries.
+  const pg = ((error as {cause?: unknown}).cause ?? error) as Error;
+  expect(`${(error as Error).message} ${pg.message}`).toMatch(because);
 }
 
 async function agent(chainId: number, wallet: string, over: {price?: string} = {}): Promise<number> {
@@ -100,10 +103,7 @@ describe('a job can never span two chains', () => {
 
 describe('money cannot be created or faked', () => {
   async function pair(): Promise<[number, number]> {
-    return [
-      await agent(10143, '0x' + '77'.repeat(20)),
-      await agent(10143, '0x' + '88'.repeat(20)),
-    ];
+    return [await agent(10143, '0x' + '77'.repeat(20)), await agent(10143, '0x' + '88'.repeat(20))];
   }
 
   it('refuses a self-dealt job', async () => {
@@ -163,18 +163,12 @@ describe('money cannot be created or faked', () => {
 describe('a score cannot leave its range', () => {
   it('refuses a score above 100', async () => {
     const a = await agent(10143, '0x' + 'aa'.repeat(20));
-    await refuses(
-      sql`INSERT INTO agent_stats (agent_id, score) VALUES (${a}, 101)`,
-      /score_in_range/i,
-    );
+    await refuses(sql`INSERT INTO agent_stats (agent_id, score) VALUES (${a}, 101)`, /score_in_range/i);
   });
 
   it('refuses a negative score', async () => {
     const a = await agent(10143, '0x' + 'bb'.repeat(20));
-    await refuses(
-      sql`INSERT INTO agent_stats (agent_id, score) VALUES (${a}, -1)`,
-      /score_in_range/i,
-    );
+    await refuses(sql`INSERT INTO agent_stats (agent_id, score) VALUES (${a}, -1)`, /score_in_range/i);
   });
 });
 
@@ -185,7 +179,13 @@ describe('capabilities stay matchable', () => {
    */
   it('refuses a capability that is not kebab-case', async () => {
     const a = await agent(10143, '0x' + 'cc'.repeat(20));
-    for (const bad of ['Market Research', 'market_research', 'Market-Research', 'market--research', '-market']) {
+    for (const bad of [
+      'Market Research',
+      'market_research',
+      'Market-Research',
+      'market--research',
+      '-market',
+    ]) {
       await refuses(
         sql`INSERT INTO agent_capabilities (agent_id, capability) VALUES (${a}, ${bad})`,
         /capability_is_kebab_case/i,
@@ -198,9 +198,9 @@ describe('capabilities stay matchable', () => {
     await db.execute(
       sql`INSERT INTO agent_capabilities (agent_id, capability) VALUES (${a}, 'market-research'), (${a}, 'trade-analysis'), (${a}, 'x2')`,
     );
-    const rows = (await db.execute(
-      sql`SELECT count(*)::int AS n FROM agent_capabilities`,
-    )) as unknown as {n: number}[];
+    const rows = (await db.execute(sql`SELECT count(*)::int AS n FROM agent_capabilities`)) as unknown as {
+      n: number;
+    }[];
     expect(rows[0]!.n).toBe(3);
   });
 });
@@ -240,9 +240,9 @@ describe('job_events is append-only, enforced rather than documented', () => {
       sql`INSERT INTO job_events (chain_id, job_id, kind, payload, tx_hash, log_index)
           VALUES (10143, ${jobId}, 'accepted', '{}'::jsonb, '0xtx2', 1)`,
     );
-    const rows = (await db.execute(
-      sql`SELECT count(*)::int AS n FROM job_events`,
-    )) as unknown as {n: number}[];
+    const rows = (await db.execute(sql`SELECT count(*)::int AS n FROM job_events`)) as unknown as {
+      n: number;
+    }[];
     expect(rows[0]!.n).toBe(2);
   });
 });
@@ -279,9 +279,7 @@ describe('uniqueness that makes replay safe', () => {
   it('allows the same wallet on a different chain', async () => {
     await agent(10143, '0x' + '16'.repeat(20));
     await agent(143, '0x' + '16'.repeat(20));
-    const rows = (await db.execute(
-      sql`SELECT count(*)::int AS n FROM agents`,
-    )) as unknown as {n: number}[];
+    const rows = (await db.execute(sql`SELECT count(*)::int AS n FROM agents`)) as unknown as {n: number}[];
     expect(rows[0]!.n).toBe(2);
   });
 

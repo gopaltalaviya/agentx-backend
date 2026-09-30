@@ -11,12 +11,12 @@
   "dependencies": {
     "@agentx/config": "workspace:*",
     "@agentx/db": "workspace:*",
+    "@agentx/service": "workspace:*",
     "@agentx/shared": "workspace:*",
-    "drizzle-orm": "^0.36.0",
-    "viem": "^2.21.0",
+    "drizzle-orm": "^0.45.3",
     "fastify": "^5.1.0",
     "pino": "^9.5.0",
-    "@agentx/service": "workspace:*",
+    "viem": "^2.21.0",
     "zod": "^3.23.8"
   }
 }

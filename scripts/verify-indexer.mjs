@@ -48,7 +48,6 @@ const addr = (n) => {
 };
 
 const identity = chain.erc8004['identityRegistry'];
-const reputation = chain.erc8004['reputationRegistry'];
 const token = addr('PaymentToken');
 const vault = addr('StakeVault');
 const escrow = addr('TaskEscrow');
@@ -80,15 +79,30 @@ const WORKER = privateKeyToAccount(
 );
 const workerClient = createWalletClient({account: WORKER, chain: viemChain, transport: http(RPC)});
 await topUp(pub, wallet, WORKER.address, 100_000_000_000_000_000n);
-const clientAgentId = await registerAgent(pub, wallet, {identity, abi: idAbi, uri: 'ipfs://client', wallet: DEPLOYER.address});
-const workerAgentId = await registerAgent(pub, workerClient, {identity, abi: idAbi, uri: 'ipfs://worker', wallet: WORKER.address});
+const clientAgentId = await registerAgent(pub, wallet, {
+  identity,
+  abi: idAbi,
+  uri: 'ipfs://client',
+  wallet: DEPLOYER.address,
+});
+const workerAgentId = await registerAgent(pub, workerClient, {
+  identity,
+  abi: idAbi,
+  uri: 'ipfs://worker',
+  wallet: WORKER.address,
+});
 ok(`registered agents ${clientAgentId} and ${workerAgentId} in ERC-8004`);
 
 await write(token, erc20, 'mint', [DEPLOYER.address, 1_000_000_000n]);
 await write(token, erc20, 'approve', [vault, 1_000_000_000n]);
 await write(vault, vaultAbi, 'deposit', [workerAgentId, 10_000_000n]);
 
-const hireable = await pub.readContract({address: vault, abi: vaultAbi, functionName: 'isHireable', args: [workerAgentId]});
+const hireable = await pub.readContract({
+  address: vault,
+  abi: vaultAbi,
+  functionName: 'isHireable',
+  args: [workerAgentId],
+});
 hireable ? ok('worker is bonded and hireable') : fail('worker should be hireable');
 
 // ── 2. settle a job on-chain ─────────────────────────────────────────────
@@ -104,7 +118,6 @@ await write(token, erc20, 'approve', [escrow, 1_000_000_000n]);
 // This is the same defect the API already fixed by scoping its specHash to a
 // job id; the script had kept the old shape.
 const specHash = keccak256(toHex(`verify-indexer-spec:${Date.now()}:${Math.random()}`));
-const before = await pub.readContract({address: token, abi: erc20, functionName: 'balanceOf', args: [DEPLOYER.address]});
 
 // The escrow's job counter persists across runs of this script, so the id
 // must be read, never assumed. Assuming it silently indexes nothing.
@@ -114,7 +127,12 @@ const expectedJobId = await pub.readContract({
   functionName: 'nextJobId',
 });
 
-const receipt = await write(escrow, escrowAbi, 'directPay', [clientAgentId, workerAgentId, 20_000n, specHash]);
+const receipt = await write(escrow, escrowAbi, 'directPay', [
+  clientAgentId,
+  workerAgentId,
+  20_000n,
+  specHash,
+]);
 ok(`directPay settled as job ${expectedJobId} in block ${receipt.blockNumber}`);
 
 // The indexer deliberately trails the head by `confirmations`, so the block
@@ -192,13 +210,17 @@ reached
 
 // ── 5. assert on the rows ────────────────────────────────────────────────
 const events = await sql`SELECT kind, tx_hash, log_index FROM job_events ORDER BY id`;
-events.length > 0 ? ok(`job_events written: ${events.map((e) => e.kind).join(', ')}`) : fail('no job_events written');
+events.length > 0
+  ? ok(`job_events written: ${events.map((e) => e.kind).join(', ')}`)
+  : fail('no job_events written');
 
 const [job] = await sql`SELECT state, chain_job_id FROM jobs WHERE spec_hash = ${specHash}`;
 job?.chain_job_id === String(expectedJobId)
   ? ok(`indexer linked the job to on-chain id ${expectedJobId} via specHash`)
   : fail(`chain_job_id is ${job?.chain_job_id}, expected ${expectedJobId} — the linkage is broken`);
-job?.state === 'settled' ? ok(`job projected to state "${job.state}"`) : fail(`job state is "${job?.state}", expected settled`);
+job?.state === 'settled'
+  ? ok(`job projected to state "${job.state}"`)
+  : fail(`job state is "${job?.state}", expected settled`);
 
 const [stats] = await sql`SELECT completed, failed, score FROM agent_stats WHERE agent_id = ${workerRow.id}`;
 if (stats) {

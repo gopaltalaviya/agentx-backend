@@ -114,7 +114,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       }),
     );
     const ok = results.every(([, r]) => r.ok);
-    return reply.status(ok ? 200 : 503).send({ok, checks: Object.fromEntries(results)});
+    const detail: Record<string, {ok: boolean; error?: string}> = {};
+    for (const [name, result] of results) detail[name] = result;
+    return reply.status(ok ? 200 : 503).send({ok, checks: detail});
   });
 
   // SSE streams never end by themselves; end them so close() does not wait.

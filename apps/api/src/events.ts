@@ -71,10 +71,10 @@ export class EventBus {
     set.add(fn);
 
     return () => {
-      set!.delete(fn);
+      set.delete(fn);
       // Drop the key when the last listener leaves, or a long-running process
       // accumulates one empty Set per job it has ever served.
-      if (set!.size === 0) this.byTopic.delete(topicId);
+      if (set.size === 0) this.byTopic.delete(topicId);
     };
   }
 

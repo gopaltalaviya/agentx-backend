@@ -30,7 +30,7 @@ beforeAll(async () => {
   db = createDb(DB_URL, {max: 3});
   app = await buildApp({
     db,
-    chains: config.chains as Record<number, never>,
+    chains: config.chains,
     defaultChainId: 31337,
     bus: new EventBus(),
     submit: async (args) => {
@@ -71,9 +71,7 @@ async function register(over: Record<string, unknown> = {}) {
   // Stand in for the indexer observing ERC-8004 `Registered`. Without a
   // chain_agent_id the API refuses to hire, because sending a database serial
   // where the contract expects an ERC-8004 id pays a different agent.
-  await db.execute(
-    sql`UPDATE agents SET chain_agent_id = ${body.agentId + 1000} WHERE id = ${body.agentId}`,
-  );
+  await db.execute(sql`UPDATE agents SET chain_agent_id = ${body.agentId + 1000} WHERE id = ${body.agentId}`);
   return body;
 }
 
@@ -99,12 +97,33 @@ describe('agent registration', () => {
     const {agentId, apiKey} = await register();
     expect(apiKey).toMatch(/^ax_/);
 
-    const rows = await db.execute(
-      sql`SELECT key_hash FROM api_keys WHERE agent_id = ${agentId}`,
-    );
+    const rows = await db.execute(sql`SELECT key_hash FROM api_keys WHERE agent_id = ${agentId}`);
     const stored = (rows as unknown as {key_hash: string}[])[0]!.key_hash;
     expect(stored).not.toContain(apiKey);
     expect(stored.startsWith('sha256$')).toBe(true);
+  });
+
+  /**
+   * A uniqueness conflict is the caller's to act on — 409, naming what clashed —
+   * not a 500 telling them to retry what can never succeed. drizzle 0.45 moved
+   * the Postgres error to `cause`, which silently broke this until a test
+   * pinned it.
+   */
+  it('answers a duplicate registration with 409 ALREADY_EXISTS, not a 500', async () => {
+    await register();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/agents',
+      payload: {
+        name: 'Duplicate',
+        capabilities: ['market-research'],
+        pricePerTask: '20000',
+        walletAddress: '0x' + '11'.repeat(20),
+        ownerAddress: '0x' + '22'.repeat(20),
+      },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe('ALREADY_EXISTS');
   });
 
   it('rejects a capability that is not kebab-case', async () => {
@@ -200,7 +219,12 @@ describe('hiring', () => {
       method: 'POST',
       url: '/v1/jobs',
       headers: {authorization: `Bearer ${key}`, 'idempotency-key': 'key-0000001'},
-      payload: {workerAgentId: String(workerAgentId), spec: {capability: 'market-research', input: {}}, maxPrice: '50000', ...over},
+      payload: {
+        workerAgentId: String(workerAgentId),
+        spec: {capability: 'market-research', input: {}},
+        maxPrice: '50000',
+        ...over,
+      },
     });
 
   /** Paying up front is a bet on the worker; it is only offered on a record. */
@@ -234,7 +258,11 @@ describe('hiring', () => {
    */
   it('refuses to hire a worker priced below the escrow minimum, before submitting', async () => {
     const client = await register();
-    const worker = await register({name: 'Cheap', walletAddress: '0x' + '44'.repeat(20), pricePerTask: '5000'});
+    const worker = await register({
+      name: 'Cheap',
+      walletAddress: '0x' + '44'.repeat(20),
+      pricePerTask: '5000',
+    });
     const res = await hire(client.apiKey, worker.agentId);
     expect(res.statusCode).toBe(409);
     expect(res.json().code).toBe('AGENT_NOT_HIREABLE');
@@ -311,7 +339,9 @@ describe('hiring', () => {
   it('refuses a reused key for a different hire, rather than guessing which was meant', async () => {
     const {client, worker} = await twoAgents();
     await hire(client.apiKey, worker.agentId);
-    const other = await hire(client.apiKey, worker.agentId, {spec: {capability: 'market-research', input: {q: 'other'}}});
+    const other = await hire(client.apiKey, worker.agentId, {
+      spec: {capability: 'market-research', input: {q: 'other'}},
+    });
 
     expect(other.statusCode).toBe(409);
     expect(other.json().code).toBe('IDEMPOTENCY_CONFLICT');
@@ -323,7 +353,11 @@ describe('hiring', () => {
       method: 'POST',
       url: '/v1/jobs',
       headers: {authorization: `Bearer ${client.apiKey}`},
-      payload: {workerAgentId: String(worker.agentId), spec: {capability: 'x-y', input: {}}, maxPrice: '50000'},
+      payload: {
+        workerAgentId: String(worker.agentId),
+        spec: {capability: 'x-y', input: {}},
+        maxPrice: '50000',
+      },
     });
     expect(res.statusCode).toBe(409);
     expect(res.json().code).toBe('IDEMPOTENCY_CONFLICT');
@@ -393,7 +427,7 @@ describe('job lifecycle', () => {
     return {client, worker, jobId: res.json().jobId as string};
   }
 
-  const post = (url: string, key: string, payload: unknown = {}) =>
+  const post = (url: string, key: string, payload: Record<string, unknown> = {}) =>
     app.inject({method: 'POST', url, headers: {authorization: `Bearer ${key}`}, payload});
 
   it('runs accept -> result -> approve', async () => {
@@ -401,10 +435,12 @@ describe('job lifecycle', () => {
 
     expect((await post(`/v1/jobs/${jobId}/accept`, worker.apiKey)).statusCode).toBe(200);
     expect(
-      (await post(`/v1/jobs/${jobId}/result`, worker.apiKey, {
-        output: {summary: 'deep'},
-        producedAt: new Date().toISOString(),
-      })).statusCode,
+      (
+        await post(`/v1/jobs/${jobId}/result`, worker.apiKey, {
+          output: {summary: 'deep'},
+          producedAt: new Date().toISOString(),
+        })
+      ).statusCode,
     ).toBe(200);
     expect((await post(`/v1/jobs/${jobId}/approve`, client.apiKey)).statusCode).toBe(200);
 

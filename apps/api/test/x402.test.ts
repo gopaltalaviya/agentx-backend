@@ -4,7 +4,12 @@ import type {FastifyInstance} from 'fastify';
 import {loadConfig} from '@agentx/config';
 import {sql} from 'drizzle-orm';
 import {createDb, closeDb, type Db} from '@agentx/db';
-import {X402_SCHEME, decodePaymentHeader, encodePaymentHeader, type PaymentRequirements} from '@agentx/shared';
+import {
+  X402_SCHEME,
+  decodePaymentHeader,
+  encodePaymentHeader,
+  type PaymentRequirements,
+} from '@agentx/shared';
 import {buildApp, EventBus} from '../src/app.js';
 import type {PaymentReading} from '../src/chain-reads.js';
 
@@ -38,12 +43,15 @@ beforeAll(async () => {
   db = createDb(DB_URL, {max: 3});
   app = await buildApp({
     db,
-    chains: config.chains as Record<number, never>,
+    chains: config.chains,
     defaultChainId: 31337,
     bus: new EventBus(),
     submit: async (args) => {
       submitted.push({kind: args.kind, spend: args.spend, idempotencyKey: args.idempotencyKey});
-      return {txHash: `0x${submitted.length.toString(16).padStart(64, '0')}`, chainJobId: String(submitted.length)};
+      return {
+        txHash: `0x${submitted.length.toString(16).padStart(64, '0')}`,
+        chainJobId: String(submitted.length),
+      };
     },
     readPayment: async () => {
       if (reading === 'throw') throw new Error('RPC unreachable');
@@ -69,7 +77,13 @@ async function register(name: string, wallet: string, price = '20000') {
   const res = await app.inject({
     method: 'POST',
     url: '/v1/agents',
-    payload: {name, capabilities: ['market-research'], pricePerTask: price, walletAddress: wallet, ownerAddress: '0x' + '22'.repeat(20)},
+    payload: {
+      name,
+      capabilities: ['market-research'],
+      pricePerTask: price,
+      walletAddress: wallet,
+      ownerAddress: '0x' + '22'.repeat(20),
+    },
   });
   expect(res.statusCode).toBe(201);
   const body = res.json() as {agentId: number; apiKey: string};
@@ -115,7 +129,10 @@ async function settle(clientKey: string, req: PaymentRequirements, key = 'x402-p
 }
 
 /** Make the fake chain report exactly the DirectPaid the escrow would emit for this job. */
-async function chainConfirms(jobId: string, over: {workerChainId?: bigint; specHash?: string; amount?: bigint} = {}) {
+async function chainConfirms(
+  jobId: string,
+  over: {workerChainId?: bigint; specHash?: string; amount?: bigint} = {},
+) {
   const [row] = (await db.execute(
     sql`SELECT j.spec_hash, j.amount, a.chain_agent_id FROM jobs j JOIN agents a ON a.id = j.worker_agent_id WHERE j.public_id = ${jobId}`,
   )) as unknown as {spec_hash: string; amount: string; chain_agent_id: string}[];
@@ -155,7 +172,9 @@ describe('POST /v1/x402/settle — the client pays', () => {
     const header = decodePaymentHeader(body.paymentHeader);
     expect(header.payload).toEqual({jobId: body.jobId, txHash: body.transaction});
 
-    const [job] = (await db.execute(sql`SELECT path, state, spec FROM jobs WHERE public_id = ${body.jobId}`)) as unknown as {
+    const [job] = (await db.execute(
+      sql`SELECT path, state, spec FROM jobs WHERE public_id = ${body.jobId}`,
+    )) as unknown as {
       path: string;
       state: string;
       spec: {input: {x402: {resource: string}}};
@@ -172,8 +191,8 @@ describe('POST /v1/x402/settle — the client pays', () => {
 
     expect(again.jobId).toBe(first.jobId);
     expect(again.transaction).toBe(first.transaction);
-    const [{n}] = (await db.execute(sql`SELECT count(*)::int AS n FROM jobs`)) as unknown as {n: number}[];
-    expect(n).toBe(1);
+    const [rows] = (await db.execute(sql`SELECT count(*)::int AS n FROM jobs`)) as unknown as {n: number}[];
+    expect(rows?.n).toBe(1);
   });
 
   it('refuses a quote whose payTo is not the named agent’s wallet, and pays nothing', async () => {
@@ -245,7 +264,9 @@ describe('POST /v1/x402/redeem — the worker checks, once', () => {
     expect(second.invalidReason).toBe('already_redeemed');
 
     // verify reports it too, and changes nothing.
-    expect((await redeem(worker.apiKey, req, header, 'verify')).json().invalidReason).toBe('already_redeemed');
+    expect((await redeem(worker.apiKey, req, header, 'verify')).json().invalidReason).toBe(
+      'already_redeemed',
+    );
   });
 
   it('lets exactly one of several concurrent redemptions win', async () => {
@@ -337,7 +358,9 @@ describe('POST /v1/x402/redeem — the worker checks, once', () => {
     const {worker, req, header} = await paid();
     const ghost = decodePaymentHeader(header);
     ghost.payload.jobId = '00000000-0000-4000-8000-000000000000';
-    expect((await redeem(worker.apiKey, req, encodePaymentHeader(ghost))).json().invalidReason).toBe('unknown_payment');
+    expect((await redeem(worker.apiKey, req, encodePaymentHeader(ghost))).json().invalidReason).toBe(
+      'unknown_payment',
+    );
   });
 
   it('refuses an escrow job presented as an x402 payment', async () => {
@@ -346,10 +369,20 @@ describe('POST /v1/x402/redeem — the worker checks, once', () => {
       method: 'POST',
       url: '/v1/jobs',
       headers: auth(client.apiKey, 'escrow-hire-0001'),
-      payload: {workerAgentId: String(worker.agentId), spec: {capability: 'market-research', input: {}}, maxPrice: '20000', path: 'escrow'},
+      payload: {
+        workerAgentId: String(worker.agentId),
+        spec: {capability: 'market-research', input: {}},
+        maxPrice: '20000',
+        path: 'escrow',
+      },
     });
     const {jobId, txHash} = hired.json();
-    const header = encodePaymentHeader({x402Version: 1, scheme: X402_SCHEME, network: 'eip155:31337', payload: {jobId, txHash}});
+    const header = encodePaymentHeader({
+      x402Version: 1,
+      scheme: X402_SCHEME,
+      network: 'eip155:31337',
+      payload: {jobId, txHash},
+    });
     expect((await redeem(worker.apiKey, req, header)).json().invalidReason).toBe('not_direct_payment');
   });
 
@@ -365,13 +398,19 @@ describe('POST /v1/x402/redeem — the worker checks, once', () => {
     const res = await redeem(worker.apiKey, req, header);
     expect(res.statusCode).toBe(500);
     // …and nothing was marked used.
-    const [{n}] = (await db.execute(sql`SELECT count(*)::int AS n FROM x402_redemptions`)) as unknown as {n: number}[];
-    expect(n).toBe(0);
+    const [rows] = (await db.execute(sql`SELECT count(*)::int AS n FROM x402_redemptions`)) as unknown as {
+      n: number;
+    }[];
+    expect(rows?.n).toBe(0);
   });
 
   it('requires credentials', async () => {
     const {req, header} = await paid();
-    const res = await app.inject({method: 'POST', url: '/v1/x402/redeem', payload: {paymentRequirements: req, paymentHeader: header}});
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/x402/redeem',
+      payload: {paymentRequirements: req, paymentHeader: header},
+    });
     expect(res.statusCode).toBe(401);
   });
 });

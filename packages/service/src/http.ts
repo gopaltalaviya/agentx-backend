@@ -52,7 +52,11 @@ export function serviceLogger(service: string, level = 'info') {
  */
 export function registerHealth(
   app: FastifyInstance,
-  opts: {checks: Record<string, () => Promise<unknown>>; timeoutMs?: number; info?: () => Record<string, unknown>},
+  opts: {
+    checks: Record<string, () => Promise<unknown>>;
+    timeoutMs?: number;
+    info?: () => Record<string, unknown>;
+  },
 ): void {
   app.get('/health', async () => ({ok: true, ...(opts.info?.() ?? {})}));
 
@@ -68,7 +72,8 @@ export function registerHealth(
         }
       }),
     );
-    const checks = Object.fromEntries(results);
+    const checks: Record<string, {ok: boolean; error?: string}> = {};
+    for (const [name, result] of results) checks[name] = result;
     const ok = results.every(([, r]) => r.ok);
     return reply.status(ok ? 200 : 503).send({ok, checks});
   });

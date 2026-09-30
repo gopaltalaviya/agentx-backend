@@ -50,7 +50,7 @@ export class CachedBrain implements Brain {
     private readonly path: string,
     private readonly opts: {replayTiming?: boolean} = {},
   ) {
-    this.cache = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {};
+    this.cache = existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as typeof this.cache) : {};
   }
 
   async complete<T>(req: CompletionRequest<T>): Promise<CompletionResult<T>> {
@@ -127,7 +127,7 @@ export class RecordingBrain implements Brain {
     // with no await between them, so within one process nothing can land in
     // the gap.
     const cache: Record<string, CacheEntry> = existsSync(this.path)
-      ? JSON.parse(readFileSync(this.path, 'utf8'))
+      ? (JSON.parse(readFileSync(this.path, 'utf8')) as Record<string, CacheEntry>)
       : {};
 
     cache[key] = {

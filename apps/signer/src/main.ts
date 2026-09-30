@@ -105,4 +105,7 @@ installShutdown({
 
 const host = bindHost(process.env);
 await app.listen({port: cfg.SIGNER_PORT, host});
-logger.info({port: cfg.SIGNER_PORT, host, chainId: chain.chainId, token: Boolean(cfg.SIGNER_TOKEN)}, 'signer listening');
+logger.info(
+  {port: cfg.SIGNER_PORT, host, chainId: chain.chainId, token: Boolean(cfg.SIGNER_TOKEN)},
+  'signer listening',
+);

@@ -1,4 +1,3 @@
-import type {Brain} from './brain.js';
 import {CachedBrain, RecordingBrain} from './cached.js';
 import {FallbackBrain} from './fallback.js';
 

@@ -32,10 +32,17 @@ class SpyBrain implements Brain {
   readonly name = 'spy';
   lastRequest?: CompletionRequest<unknown>;
 
-  constructor(private readonly reply: unknown = {accept: true, reason: 'fine', rating: 'good', injectionAttempted: false}) {}
+  constructor(
+    private readonly reply: unknown = {
+      accept: true,
+      reason: 'fine',
+      rating: 'good',
+      injectionAttempted: false,
+    },
+  ) {}
 
   async complete<T>(req: CompletionRequest<T>): Promise<CompletionResult<T>> {
-    this.lastRequest = req as CompletionRequest<unknown>;
+    this.lastRequest = req;
     return {
       value: req.schema.parse(this.reply),
       provider: 'spy',
@@ -126,26 +133,45 @@ describe('Judge', () => {
    * wins.
    */
   it('refuses to accept on a self-contradictory verdict', async () => {
-    const spy = new SpyBrain({accept: true, reason: 'empty output', rating: 'poor', injectionAttempted: false});
+    const spy = new SpyBrain({
+      accept: true,
+      reason: 'empty output',
+      rating: 'poor',
+      injectionAttempted: false,
+    });
     const verdict = await new Judge(spy).evaluate({capability: 'x-y', task: {}, result: {}});
     expect(verdict.accept).toBe(false);
   });
 
   it('accepts work that is genuinely good', async () => {
-    const spy = new SpyBrain({accept: true, reason: 'specific and sourced', rating: 'excellent', injectionAttempted: false});
+    const spy = new SpyBrain({
+      accept: true,
+      reason: 'specific and sourced',
+      rating: 'excellent',
+      injectionAttempted: false,
+    });
     expect((await new Judge(spy).evaluate({capability: 'x-y', task: {}, result: {}})).accept).toBe(true);
   });
 
   it('surfaces an injection attempt rather than hiding it', async () => {
-    const spy = new SpyBrain({accept: false, reason: 'tried to instruct me', rating: 'poor', injectionAttempted: true});
+    const spy = new SpyBrain({
+      accept: false,
+      reason: 'tried to instruct me',
+      rating: 'poor',
+      injectionAttempted: true,
+    });
     const verdict = await new Judge(spy).evaluate({capability: 'x-y', task: {}, result: {}});
     expect(verdict.injectionAttempted).toBe(true);
     expect(verdict.accept).toBe(false);
   });
 
   it('constrains the verdict shape so a malformed judgement cannot pass', () => {
-    expect(Verdict.safeParse({accept: true, reason: 'ok', quality: 500, injectionAttempted: false}).success).toBe(false);
-    expect(Verdict.safeParse({accept: true, reason: '', rating: 'good', injectionAttempted: false}).success).toBe(false);
+    expect(
+      Verdict.safeParse({accept: true, reason: 'ok', quality: 500, injectionAttempted: false}).success,
+    ).toBe(false);
+    expect(
+      Verdict.safeParse({accept: true, reason: '', rating: 'good', injectionAttempted: false}).success,
+    ).toBe(false);
   });
 });
 

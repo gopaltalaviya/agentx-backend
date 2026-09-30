@@ -152,9 +152,9 @@ describe('cached replay', () => {
     await new RecordingBrain(new StubBrain('live', 'ok'), path).complete(req);
 
     const Widened = {...req, schema: z.object({summary: z.string(), extra: z.string()})};
-    await expect(
-      new CachedBrain(path, {replayTiming: false}).complete(Widened),
-    ).rejects.toThrow(/no recording|re-record/);
+    await expect(new CachedBrain(path, {replayTiming: false}).complete(Widened)).rejects.toThrow(
+      /no recording|re-record/,
+    );
   });
 
   it('backs the live chain, so a total outage still answers', async () => {

@@ -1,4 +1,4 @@
-import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, it} from 'vitest';
+import {afterAll, beforeAll, beforeEach, describe, expect, it} from 'vitest';
 import {createServer, type Server} from 'node:http';
 import {fileURLToPath} from 'node:url';
 import {
@@ -126,7 +126,8 @@ function rpc(method: string, params: unknown[]): unknown {
       const data = String((params[0] as {data?: string}).data ?? '');
       if (data.startsWith(SELECTORS.dailyRemaining)) return uint(state.dailyRemaining);
       if (data.startsWith(SELECTORS.dayStart)) return uint(state.dayStart);
-      if (data.startsWith(SELECTORS.owner)) return encodeAbiParameters([{type: 'address'}], [state.owner as Hex]);
+      if (data.startsWith(SELECTORS.owner))
+        return encodeAbiParameters([{type: 'address'}], [state.owner as Hex]);
       if (data.startsWith(SELECTORS.sessionKeys)) {
         const key = `0x${data.slice(-40)}`.toLowerCase();
         return encodeAbiParameters(
@@ -167,7 +168,9 @@ beforeAll(async () => {
       const parsed = JSON.parse(body) as {id: number; method: string; params: unknown[]};
       res.setHeader('content-type', 'application/json');
       try {
-        res.end(JSON.stringify({jsonrpc: '2.0', id: parsed.id, result: rpc(parsed.method, parsed.params ?? [])}));
+        res.end(
+          JSON.stringify({jsonrpc: '2.0', id: parsed.id, result: rpc(parsed.method, parsed.params ?? [])}),
+        );
       } catch (err) {
         res.end(
           JSON.stringify({
@@ -207,9 +210,7 @@ const baseConfig = loadConfig({
   env: {ENABLED_CHAIN_IDS: '31337', DEFAULT_CHAIN_ID: '31337'},
 });
 
-function makeSigner(
-  over: {gasFloorWei?: bigint; withKey?: boolean; keys?: unknown} = {},
-): SignerService {
+function makeSigner(over: {gasFloorWei?: bigint; withKey?: boolean; keys?: unknown} = {}): SignerService {
   const chain = {...baseConfig.chain(31337), rpcUrl} as ReturnType<typeof baseConfig.chain>;
   return new SignerService({
     db,
@@ -233,7 +234,10 @@ async function anAgent(): Promise<number> {
   return rows[0]!.id;
 }
 
-const request = (agentId: number, over: Partial<{spend: bigint; idempotencyKey: string; chainId: number}> = {}) => ({
+const request = (
+  agentId: number,
+  over: Partial<{spend: bigint; idempotencyKey: string; chainId: number}> = {},
+) => ({
   agentId,
   chainId: over.chainId ?? 31337,
   target: ('0x' + '22'.repeat(20)) as Hex,
@@ -263,10 +267,7 @@ describe('what the signer refuses', () => {
 
   it('refuses when there is no signing key for the agent', async () => {
     const id = await anAgent();
-    await expectRefusal(
-      makeSigner({withKey: false}).sign(request(id)),
-      ErrorCode.AGENT_NOT_HIREABLE,
-    );
+    await expectRefusal(makeSigner({withKey: false}).sign(request(id)), ErrorCode.AGENT_NOT_HIREABLE);
     expect(state.broadcasts).toBe(0);
   });
 
@@ -379,10 +380,7 @@ describe('a failed broadcast', () => {
     const id = await anAgent();
     state.broadcastError = 'insufficient funds for gas * price + value';
 
-    const err = await expectRefusal(
-      makeSigner().sign(request(id)),
-      ErrorCode.INSUFFICIENT_FUNDS,
-    );
+    const err = await expectRefusal(makeSigner().sign(request(id)), ErrorCode.INSUFFICIENT_FUNDS);
     expect(err.message).toMatch(ACCOUNT.address);
     expect(err.message).toMatch(/top it up/i);
   });
@@ -397,7 +395,10 @@ describe('a failed broadcast', () => {
     const signer = makeSigner();
     state.broadcastError = 'insufficient funds for gas';
 
-    await expectRefusal(signer.sign(request(id, {idempotencyKey: 'recover-1'})), ErrorCode.INSUFFICIENT_FUNDS);
+    await expectRefusal(
+      signer.sign(request(id, {idempotencyKey: 'recover-1'})),
+      ErrorCode.INSUFFICIENT_FUNDS,
+    );
 
     // The wallet is topped up; the chain has moved on to a higher nonce.
     state.broadcastError = undefined as unknown as string;
@@ -440,7 +441,7 @@ describe('signing as the right agent', () => {
   it('refuses rather than signing with a key that is not the agent\u2019s', async () => {
     const id = await anAgent();
     // A key the keystore holds, for somebody else entirely.
-    const stranger = privateKeyToAccount(`0x${'11'.repeat(32)}` as Hex);
+    const stranger = privateKeyToAccount(`0x${'11'.repeat(32)}`);
 
     const signer = makeSigner({keys: {accountFor: async () => stranger}});
 
@@ -495,7 +496,11 @@ describe('signing as the right agent', () => {
  * a contract account nobody uses.
  */
 describe('an EOA agent, which is every agent today', () => {
-  async function withPolicy(perTaskCap: bigint, dailyCap: bigint, over: {spentToday?: bigint; hoursAgo?: number} = {}) {
+  async function withPolicy(
+    perTaskCap: bigint,
+    dailyCap: bigint,
+    over: {spentToday?: bigint; hoursAgo?: number} = {},
+  ) {
     const agentId = await anAgent();
     await db.execute(
       sql`INSERT INTO spend_policies (agent_id, per_task_cap, daily_cap, spent_today, day_start)
@@ -507,9 +512,13 @@ describe('an EOA agent, which is every agent today', () => {
 
   const spentToday = async (agentId: number) =>
     BigInt(
-      ((await db.execute(sql`SELECT spent_today FROM spend_policies WHERE agent_id = ${agentId}`)) as unknown as {
-        spent_today: string;
-      }[])[0]!.spent_today,
+      (
+        (await db.execute(
+          sql`SELECT spent_today FROM spend_policies WHERE agent_id = ${agentId}`,
+        )) as unknown as {
+          spent_today: string;
+        }[]
+      )[0]!.spent_today,
     );
 
   beforeEach(() => {
@@ -529,7 +538,10 @@ describe('an EOA agent, which is every agent today', () => {
     await signer.sign(request(agentId, {spend: 40_000n}));
     expect(await spentToday(agentId)).toBe(40_000n);
 
-    const refused = await expectRefusal(signer.sign(request(agentId, {spend: 40_000n})), ErrorCode.BUDGET_EXCEEDED);
+    const refused = await expectRefusal(
+      signer.sign(request(agentId, {spend: 40_000n})),
+      ErrorCode.BUDGET_EXCEEDED,
+    );
     expect(refused.retryAfter).toBeGreaterThan(0);
     expect(state.broadcasts).toBe(1);
     expect(await spentToday(agentId)).toBe(40_000n);
@@ -538,7 +550,9 @@ describe('an EOA agent, which is every agent today', () => {
   it('does not charge the budget for a broadcast that failed', async () => {
     const agentId = await withPolicy(50_000n, 60_000n);
     state.broadcastError = 'insufficient funds for gas';
-    await makeSigner().sign(request(agentId, {spend: 40_000n})).catch(() => undefined);
+    await makeSigner()
+      .sign(request(agentId, {spend: 40_000n}))
+      .catch(() => undefined);
     expect(await spentToday(agentId)).toBe(0n);
   });
 
@@ -699,7 +713,7 @@ describe('after a broadcast that failed', () => {
     state.broadcastError = 'insufficient funds for gas';
     await signer.sign(request(agentId)).catch(() => undefined);
 
-    state.broadcastError = undefined;
+    delete state.broadcastError;
     const next = await signer.sign(request(agentId));
     expect(next.replayed).toBe(false);
     expect(state.broadcasts).toBe(1);
@@ -713,7 +727,7 @@ describe('after a broadcast that failed', () => {
     state.broadcastError = 'insufficient funds for gas';
     await signer.sign(req).catch(() => undefined);
     await signer.sign(request(agentId)).catch(() => undefined); // a different request fails too
-    state.broadcastError = undefined;
+    delete state.broadcastError;
 
     expect((await signer.sign(req)).replayed).toBe(false);
   });
@@ -747,7 +761,7 @@ describe('what a failed broadcast is reported as', () => {
  * forever. Found by the Session 26 audit; this reproduces it.
  */
 describe('the per-agent lock', () => {
-  const KEYS = [1, 2, 3, 4, 5].map((i) => privateKeyToAccount(`0x${String(i).padStart(2, '0').repeat(32)}` as Hex));
+  const KEYS = [1, 2, 3, 4, 5].map((i) => privateKeyToAccount(`0x${String(i).padStart(2, '0').repeat(32)}`));
 
   async function agentFor(key: (typeof KEYS)[number]): Promise<number> {
     const rows = (await db.execute(
@@ -759,9 +773,11 @@ describe('the per-agent lock', () => {
 
   const heldAdvisoryLocks = async () =>
     Number(
-      ((await db.execute(
-        sql`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND granted`,
-      )) as unknown as {n: number}[])[0]!.n,
+      (
+        (await db.execute(
+          sql`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND granted`,
+        )) as unknown as {n: number}[]
+      )[0]!.n,
     );
 
   it('holds no lock once concurrent signs across agents have finished', async () => {
@@ -784,7 +800,9 @@ describe('the per-agent lock', () => {
 
     // And every agent can still be signed for, promptly.
     const again = Promise.all(agents.map((id) => signer.sign(request(id, {spend: 0n}))));
-    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('a sign waited on a stuck lock')), 5_000));
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('a sign waited on a stuck lock')), 5_000),
+    );
     await Promise.race([again, timeout]);
   });
 
@@ -819,7 +837,10 @@ describe('what a contract refusal is reported as', () => {
     state.eoa = true;
     state.estimateRevert = errorData('SameOwner()');
     const agentId = await anAgent();
-    const err = await expectRefusal(makeSigner().sign(request(agentId, {spend: 0n})), ErrorCode.INVALID_STATE);
+    const err = await expectRefusal(
+      makeSigner().sign(request(agentId, {spend: 0n})),
+      ErrorCode.INVALID_STATE,
+    );
     expect(err.detail).toMatch(/SameOwner/);
     expect(err.detail).not.toMatch(/0x02f8|0xf8/);
     expect(state.broadcasts).toBe(0);
@@ -829,7 +850,10 @@ describe('what a contract refusal is reported as', () => {
     state.eoa = true;
     state.estimateRevert = errorData('AmountBelowMinimum(uint128,uint128)', [1n, 10_000n]);
     const agentId = await anAgent();
-    const err = await expectRefusal(makeSigner().sign(request(agentId, {spend: 0n})), ErrorCode.INVALID_STATE);
+    const err = await expectRefusal(
+      makeSigner().sign(request(agentId, {spend: 0n})),
+      ErrorCode.INVALID_STATE,
+    );
     expect(err.detail).toMatch(/AmountBelowMinimum\(1, 10000\)/);
   });
 });

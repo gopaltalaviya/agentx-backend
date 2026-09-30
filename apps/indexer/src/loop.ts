@@ -33,10 +33,7 @@ export interface LoopOptions {
   random?: () => number;
 }
 
-export async function runIndexerLoop(
-  tick: () => Promise<unknown>,
-  opts: LoopOptions,
-): Promise<void> {
+export async function runIndexerLoop(tick: () => Promise<unknown>, opts: LoopOptions): Promise<void> {
   const maxBackoff = opts.maxBackoffMs ?? 60_000;
   const sleep = opts.sleep ?? ((ms) => new Promise<void>((r) => setTimeout(r, ms)));
   const random = opts.random ?? Math.random;

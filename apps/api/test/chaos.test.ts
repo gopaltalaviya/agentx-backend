@@ -38,7 +38,7 @@ beforeAll(async () => {
   db = createDb(DB_URL, {max: 3});
   app = await buildApp({
     db,
-    chains: config.chains as Record<number, never>,
+    chains: config.chains,
     defaultChainId: 31337,
     bus: new EventBus(),
     submit: async (args) => {
@@ -327,11 +327,13 @@ describe('a worker can find the work it was hired for', () => {
     expect(hire.statusCode, hire.body).toBe(201);
     expect(hire.json().path).toBe('direct');
 
-    const listed = (await app.inject({
-      method: 'GET',
-      url: '/v1/jobs?role=worker&limit=25',
-      headers: auth(worker.apiKey),
-    })).json();
+    const listed = (
+      await app.inject({
+        method: 'GET',
+        url: '/v1/jobs?role=worker&limit=25',
+        headers: auth(worker.apiKey),
+      })
+    ).json();
 
     expect(listed.count, 'the worker must see the job it was hired for').toBe(1);
     expect(listed.jobs[0].hasResult).toBe(false);
@@ -363,11 +365,13 @@ describe('a worker can find the work it was hired for', () => {
     expect(hire.json().path, 'above fastPathMax must use escrow').toBe('escrow');
     expect(hire.json().state).toBe('created');
 
-    const listed = (await app.inject({
-      method: 'GET',
-      url: '/v1/jobs?role=worker&limit=25',
-      headers: auth(worker.apiKey),
-    })).json();
+    const listed = (
+      await app.inject({
+        method: 'GET',
+        url: '/v1/jobs?role=worker&limit=25',
+        headers: auth(worker.apiKey),
+      })
+    ).json();
     expect(listed.jobs[0].state).toBe('created');
     expect(listed.jobs[0].hasResult).toBe(false);
   });
@@ -381,11 +385,13 @@ describe('a worker can find the work it was hired for', () => {
       payload: {output: {summary: 'done'}, producedAt: new Date().toISOString()},
     });
 
-    const listed = (await app.inject({
-      method: 'GET',
-      url: '/v1/jobs?role=worker&limit=25',
-      headers: auth(worker.apiKey),
-    })).json();
+    const listed = (
+      await app.inject({
+        method: 'GET',
+        url: '/v1/jobs?role=worker&limit=25',
+        headers: auth(worker.apiKey),
+      })
+    ).json();
     expect(listed.jobs[0].hasResult).toBe(true);
   });
 });
@@ -467,14 +473,14 @@ describe('the daily cap', () => {
       },
     });
 
-    const rows = (await db.execute(
-      sql`SELECT state FROM jobs`,
-    )) as unknown as {state: string}[];
+    const rows = (await db.execute(sql`SELECT state FROM jobs`)) as unknown as {state: string}[];
 
     // The row may exist — the id is needed to compute specHash — but it must
     // never claim to have been created on-chain.
     for (const row of rows) expect(row.state).toBe('created');
-    const events = (await db.execute(sql`SELECT count(*)::int AS n FROM job_events`)) as unknown as {n: number}[];
+    const events = (await db.execute(sql`SELECT count(*)::int AS n FROM job_events`)) as unknown as {
+      n: number;
+    }[];
     expect(events[0]!.n).toBe(0);
   });
 });
@@ -588,9 +594,9 @@ describe('the direct-pay path, after the money has moved', () => {
   it('records the job as settled, matching what it told the caller', async () => {
     const {jobId} = await directJob();
 
-    const rows = (await db.execute(
-      sql`SELECT state FROM jobs WHERE public_id = ${jobId}`,
-    )) as unknown as {state: string}[];
+    const rows = (await db.execute(sql`SELECT state FROM jobs WHERE public_id = ${jobId}`)) as unknown as {
+      state: string;
+    }[];
     expect(rows[0]!.state).toBe('settled');
   });
 
@@ -601,7 +607,10 @@ describe('the direct-pay path, after the money has moved', () => {
       method: 'POST',
       url: `/v1/jobs/${jobId}/result`,
       headers: auth(worker.apiKey),
-      payload: {output: {summary: 'liquidity is thin', confidence: 0.6}, producedAt: new Date().toISOString()},
+      payload: {
+        output: {summary: 'liquidity is thin', confidence: 0.6},
+        producedAt: new Date().toISOString(),
+      },
     });
 
     expect(res.statusCode, res.body).toBe(200);

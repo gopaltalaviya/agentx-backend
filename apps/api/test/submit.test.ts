@@ -75,7 +75,9 @@ describe('when the signer misbehaves', () => {
 
   it('gives up after its timeout, as a retryable outage', async () => {
     const hangs = ((_u: string, init: RequestInit) =>
-      new Promise((_, reject) => init.signal?.addEventListener('abort', () => reject(init.signal!.reason)))) as unknown as typeof fetch;
+      new Promise((_, reject) =>
+        init.signal?.addEventListener('abort', () => reject(init.signal!.reason)),
+      )) as unknown as typeof fetch;
     expect(await codeOf(call(hangs))).toBe('UPSTREAM_UNAVAILABLE');
   });
 
@@ -89,7 +91,9 @@ describe('when the signer misbehaves', () => {
 
   it('passes a real refusal through with its code', async () => {
     const capped = (async () =>
-      new Response(JSON.stringify({code: 'BUDGET_EXCEEDED', detail: 'cap', retryAfter: 60}), {status: 402})) as unknown as typeof fetch;
+      new Response(JSON.stringify({code: 'BUDGET_EXCEEDED', detail: 'cap', retryAfter: 60}), {
+        status: 402,
+      })) as unknown as typeof fetch;
     expect(await codeOf(call(capped))).toBe('BUDGET_EXCEEDED');
   });
 

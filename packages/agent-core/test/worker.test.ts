@@ -104,7 +104,7 @@ function offer(over: Partial<JobSpec> = {}, jobId = '1'): JobSummary {
       input: {question: 'how deep is ETH/USDC?'},
       deadlineSeconds: 120,
       ...over,
-    } as JobSpec,
+    },
     specHash: '0x',
     role: 'worker',
     hasResult: false,
@@ -170,10 +170,7 @@ describe('declining, which is the reputation strategy', () => {
     const brain = new FakeBrain({
       result: {summary: 'depth is healthy', confidence: 0.8, sources: ['binance']},
     });
-    const {worker, calls} = build(
-      [offer({outputSchema: {type: 'object', required: ['sources']}})],
-      brain,
-    );
+    const {worker, calls} = build([offer({outputSchema: {type: 'object', required: ['sources']}})], brain);
 
     expect(await worker.tick()).toEqual([{status: 'delivered', jobId: '1'}]);
     expect(calls.submitted).toHaveLength(1);
@@ -330,7 +327,10 @@ describe('the fast path', () => {
     });
 
     await worker.tick();
-    expect(events.some((e) => e.kind === 'failed'), 'the failure must be logged').toBe(true);
+    expect(
+      events.some((e) => e.kind === 'failed'),
+      'the failure must be logged',
+    ).toBe(true);
 
     // A second poll must not re-offer it.
     const second = await worker.tick();
@@ -445,7 +445,11 @@ describe('an accept the API says to retry', () => {
    * later, and the step failed with nobody at fault but the worker's reading
    * of an error that said, in words, to retry.
    */
-  const notYet = new AgentxError(ErrorCode.INVALID_STATE, 'the job is not confirmed on-chain yet — retry in a moment', 2);
+  const notYet = new AgentxError(
+    ErrorCode.INVALID_STATE,
+    'the job is not confirmed on-chain yet — retry in a moment',
+    2,
+  );
 
   it('tries again on the next poll, and delivers', async () => {
     const {worker, calls} = build([offer({})], new FakeBrain(), {acceptThrowsOnce: notYet});

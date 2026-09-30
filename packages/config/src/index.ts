@@ -133,11 +133,7 @@ export interface LoadOptions {
 
 class ConfigError extends Error {
   constructor(problems: string[]) {
-    super(
-      ['', '✗ AGENTX config invalid', '', ...problems.map((p) => `  • ${p}`), ''].join(
-        '\n',
-      ),
-    );
+    super(['', '✗ AGENTX config invalid', '', ...problems.map((p) => `  • ${p}`), ''].join('\n'));
     this.name = 'ConfigError';
   }
 }
@@ -151,12 +147,10 @@ class ConfigError extends Error {
 export function loadConfig(opts: LoadOptions = {}): AgentxConfig {
   const env = opts.env ?? process.env;
   const root =
-    opts.contractsRoot ??
-    env['AGENTX_CONTRACTS_ROOT'] ??
-    join(process.cwd(), '..', 'agentx-contracts');
+    opts.contractsRoot ?? env['AGENTX_CONTRACTS_ROOT'] ?? join(process.cwd(), '..', 'agentx-contracts');
 
   const problems: string[] = [];
-  const readJson = (rel: string): unknown | undefined => {
+  const readJson = (rel: string): unknown => {
     const path = join(root, rel);
     if (!existsSync(path)) return undefined;
     try {
@@ -187,9 +181,7 @@ export function loadConfig(opts: LoadOptions = {}): AgentxConfig {
 
   const defaultChainId = Number(env['DEFAULT_CHAIN_ID'] ?? enabled[0]);
   if (!enabled.includes(defaultChainId)) {
-    problems.push(
-      `DEFAULT_CHAIN_ID=${defaultChainId} is not in ENABLED_CHAIN_IDS=${enabled.join(',')}`,
-    );
+    problems.push(`DEFAULT_CHAIN_ID=${defaultChainId} is not in ENABLED_CHAIN_IDS=${enabled.join(',')}`);
   }
 
   const chains: Record<number, ChainConfig> = {};
@@ -321,9 +313,7 @@ export function loadConfig(opts: LoadOptions = {}): AgentxConfig {
       const id = chainId ?? defaultChainId;
       const c = chains[id];
       if (!c) {
-        throw new Error(
-          `chain ${id} not enabled (ENABLED_CHAIN_IDS=${Object.keys(chains).join(',')})`,
-        );
+        throw new Error(`chain ${id} not enabled (ENABLED_CHAIN_IDS=${Object.keys(chains).join(',')})`);
       }
       return c;
     },
@@ -340,22 +330,19 @@ export function loadConfig(opts: LoadOptions = {}): AgentxConfig {
  */
 export function loadAbis(contractsRoot?: string): Record<string, unknown[]> {
   const root =
-    contractsRoot ??
-    process.env['AGENTX_CONTRACTS_ROOT'] ??
-    join(process.cwd(), '..', 'agentx-contracts');
+    contractsRoot ?? process.env['AGENTX_CONTRACTS_ROOT'] ?? join(process.cwd(), '..', 'agentx-contracts');
   const dir = join(root, 'export', 'abis');
 
   if (!existsSync(dir)) {
     throw new Error(
       `ABIs not found at ${dir}
-` +
-        '  → run `make export` in agentx-contracts, or set AGENTX_CONTRACTS_ROOT',
+` + '  → run `make export` in agentx-contracts, or set AGENTX_CONTRACTS_ROOT',
     );
   }
 
   const abis: Record<string, unknown[]> = {};
   for (const file of readdirSync(dir).filter((f) => f.endsWith('.json'))) {
-    abis[file.replace('.json', '')] = JSON.parse(readFileSync(join(dir, file), 'utf8'));
+    abis[file.replace('.json', '')] = JSON.parse(readFileSync(join(dir, file), 'utf8')) as unknown[];
   }
   return abis;
 }

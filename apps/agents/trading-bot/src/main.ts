@@ -15,17 +15,15 @@ const TradeAnalysis = z.object({
   recommendation: z
     .enum(['buy', 'sell', 'hold'])
     .describe('hold is a real answer and is often the right one'),
-  rationale: z
-    .string()
-    .min(40)
-    .max(1_000)
-    .describe('why, in terms of the data you were given'),
+  rationale: z.string().min(40).max(1_000).describe('why, in terms of the data you were given'),
   confidence: confidence().describe('0 to 1; a percentage is read as one'),
   risks: z
     .array(z.string().min(10))
     .min(1)
     .max(4)
-    .describe('what would make this wrong — required, because a recommendation without a downside is not analysis'),
+    .describe(
+      'what would make this wrong — required, because a recommendation without a downside is not analysis',
+    ),
   suggestedSize: z
     .string()
     .optional()

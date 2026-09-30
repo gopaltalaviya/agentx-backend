@@ -45,10 +45,7 @@ export class ClaudeBrain implements Brain {
     }
 
     try {
-      const jsonSchema = zodToJsonSchema(req.schema, {target: 'jsonSchema7'}) as Record<
-        string,
-        unknown
-      >;
+      const jsonSchema = zodToJsonSchema(req.schema, {target: 'jsonSchema7'}) as Record<string, unknown>;
 
       const response = await this.client.messages.create({
         model: this.model,

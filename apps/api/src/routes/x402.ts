@@ -139,7 +139,9 @@ export async function registerX402Routes(app: FastifyInstance, deps: X402RouteDe
     const used = await db.query.x402Redemptions.findFirst({
       where: eq(x402Redemptions.jobId, jobRowId!),
     });
-    return used ? invalid('already_redeemed', 'this payment has already been redeemed', verdict.payer) : verdict;
+    return used
+      ? invalid('already_redeemed', 'this payment has already been redeemed', verdict.payer)
+      : verdict;
   });
 
   app.post('/v1/x402/redeem', async (request) => {
@@ -168,7 +170,10 @@ function parseVerify(raw: unknown): {req: PaymentRequirements; payment: PaymentP
   try {
     payment = body.paymentPayload ?? decodePaymentHeader(body.paymentHeader!);
   } catch {
-    throw new AgentxError(ErrorCode.SCHEMA_MISMATCH, 'X-PAYMENT is not a base64-encoded x402 payment payload');
+    throw new AgentxError(
+      ErrorCode.SCHEMA_MISMATCH,
+      'X-PAYMENT is not a base64-encoded x402 payment payload',
+    );
   }
   return {req: body.paymentRequirements, payment};
 }
@@ -192,7 +197,10 @@ async function checkQuote(db: Db, chain: ChainConfig, req: PaymentRequirements):
     where: and(eq(agents.id, req.extra.agentId), eq(agents.chainId, chain.chainId)),
   });
   if (!worker) {
-    throw new AgentxError(ErrorCode.AGENT_NOT_HIREABLE, `no agent ${req.extra.agentId} on chain ${chain.chainId}`);
+    throw new AgentxError(
+      ErrorCode.AGENT_NOT_HIREABLE,
+      `no agent ${req.extra.agentId} on chain ${chain.chainId}`,
+    );
   }
   if (worker.walletAddress.toLowerCase() !== req.payTo.toLowerCase()) {
     throw new AgentxError(
@@ -200,7 +208,7 @@ async function checkQuote(db: Db, chain: ChainConfig, req: PaymentRequirements):
       `payTo ${req.payTo} is not agent ${worker.id}'s registered wallet — refusing to pay a quote that redirects the money`,
     );
   }
-  const token = (chain.contracts['PaymentToken'] as string | undefined)?.toLowerCase();
+  const token = chain.contracts['PaymentToken']?.toLowerCase();
   if (req.asset.toLowerCase() !== token) {
     throw new AgentxError(ErrorCode.INVALID_STATE, `asset ${req.asset} is not this chain's payment token`);
   }
@@ -231,7 +239,8 @@ async function check(
   if (job.workerAgentId !== caller.agentId || req.extra.agentId !== caller.agentId) {
     return {verdict: invalid('wrong_payee', 'this payment was not made to the calling agent', payer)};
   }
-  if (job.path !== 'direct') return {verdict: invalid('not_direct_payment', 'an escrow job is not an x402 payment', payer)};
+  if (job.path !== 'direct')
+    return {verdict: invalid('not_direct_payment', 'an escrow job is not an x402 payment', payer)};
 
   const bound = (job.spec as {input?: {x402?: {resource?: string}}}).input?.x402?.resource;
   if (bound !== req.resource) {
@@ -239,7 +248,9 @@ async function check(
   }
   const required = BigInt(req.maxAmountRequired);
   if (BigInt(job.amount) < required) {
-    return {verdict: invalid('insufficient_amount', `paid ${job.amount}, the resource costs ${required}`, payer)};
+    return {
+      verdict: invalid('insufficient_amount', `paid ${job.amount}, the resource costs ${required}`, payer),
+    };
   }
 
   const created = await db.query.jobEvents.findFirst({
@@ -247,17 +258,31 @@ async function check(
   });
   const recordedTx = (created?.payload as {txHash?: string} | undefined)?.txHash;
   if (!recordedTx || recordedTx.toLowerCase() !== payment.payload.txHash.toLowerCase()) {
-    return {verdict: invalid('transaction_mismatch', 'the transaction named is not the one that paid for this job', payer)};
+    return {
+      verdict: invalid(
+        'transaction_mismatch',
+        'the transaction named is not the one that paid for this job',
+        payer,
+      ),
+    };
   }
 
   // The chain, last and decisively.
   if (!deps.readPayment) {
-    return {verdict: invalid('payment_pending', 'this facilitator cannot read the chain, so it cannot confirm anything', payer)};
+    return {
+      verdict: invalid(
+        'payment_pending',
+        'this facilitator cannot read the chain, so it cannot confirm anything',
+        payer,
+      ),
+    };
   }
   const worker = await db.query.agents.findFirst({where: eq(agents.id, job.workerAgentId)});
   const reading = await deps.readPayment({chainId, txHash: payment.payload.txHash as Hex});
-  if (reading.status === 'pending') return {verdict: invalid('payment_pending', 'not yet confirmed on chain — retry shortly', payer)};
-  if (reading.status === 'reverted') return {verdict: invalid('payment_reverted', 'the payment transaction reverted', payer)};
+  if (reading.status === 'pending')
+    return {verdict: invalid('payment_pending', 'not yet confirmed on chain — retry shortly', payer)};
+  if (reading.status === 'reverted')
+    return {verdict: invalid('payment_reverted', 'the payment transaction reverted', payer)};
 
   const paid = reading.directPaid.some(
     (e) =>
@@ -268,11 +293,21 @@ async function check(
       e.amount >= required,
   );
   if (!paid) {
-    return {verdict: invalid('transaction_mismatch', 'the escrow emitted no DirectPaid to this worker for this job', payer)};
+    return {
+      verdict: invalid(
+        'transaction_mismatch',
+        'the escrow emitted no DirectPaid to this worker for this job',
+        payer,
+      ),
+    };
   }
   return {verdict: {isValid: true, payer}, jobRowId: job.id};
 }
 
-function invalid(reason: NonNullable<VerifyResponse['invalidReason']>, detail: string, payer?: number): VerifyResponse {
+function invalid(
+  reason: NonNullable<VerifyResponse['invalidReason']>,
+  detail: string,
+  payer?: number,
+): VerifyResponse {
   return {isValid: false, invalidReason: reason, detail, ...(payer !== undefined ? {payer} : {})};
 }

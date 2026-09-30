@@ -1,0 +1,9 @@
+dist/
+node_modules/
+coverage/
+pnpm-lock.yaml
+packages/db/migrations/
+docs/
+.agent-cache/
+artifacts/
+*.md

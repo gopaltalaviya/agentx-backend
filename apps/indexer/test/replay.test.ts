@@ -174,9 +174,9 @@ describe('replaying a settled event', () => {
     await seedJob();
     await feed(settledLog({blockNumber: 987n}), 'settled', {fee: '200', txHash: '0x01'});
 
-    const rows = (await db.execute(
-      sql`SELECT block_number FROM payments`,
-    )) as unknown as {block_number: string}[];
+    const rows = (await db.execute(sql`SELECT block_number FROM payments`)) as unknown as {
+      block_number: string;
+    }[];
     expect(Number(rows[0]!.block_number)).toBe(987);
   });
 });
@@ -300,7 +300,7 @@ describe('real refund and settlement logs', () => {
 
   function realLog(eventName: string, args: Record<string, unknown>, logIndex: number) {
     const event = (escrowAbi as AbiEvent[]).find((e) => e.type === 'event' && e.name === eventName)!;
-    const topics = encodeEventTopics({abi: [event], eventName, args} as never);
+    const topics = encodeEventTopics({abi: [event], eventName, args});
     const data = encodeAbiParameters(
       event.inputs.filter((i) => !i.indexed),
       event.inputs.filter((i) => !i.indexed).map((i) => args[i.name!]),
@@ -310,7 +310,11 @@ describe('real refund and settlement logs', () => {
 
   async function refund(reason: string, logIndex: number) {
     const {workerId} = await seedJob();
-    const log = realLog('JobRefunded', {jobId: 7n, amount: 20_000n, reason: stringToHex(reason, {size: 32})}, logIndex);
+    const log = realLog(
+      'JobRefunded',
+      {jobId: 7n, amount: 20_000n, reason: stringToHex(reason, {size: 32})},
+      logIndex,
+    );
     await (indexer as unknown as {handleLog: (e: unknown) => Promise<void>}).handleLog(log);
     return statsOf(workerId);
   }
@@ -380,7 +384,7 @@ describe('the confidence floor', () => {
     const {workerId} = await seedJob();
     const strict = new Indexer({
       db,
-      chain: {...chain, params: {...chain.params, confidenceFloor: floor}} as typeof chain,
+      chain: {...chain, params: {...chain.params, confidenceFloor: floor}},
       abis: loadAbis() as never,
     });
     const inner = strict as unknown as {decode: unknown; handleLog: (e: unknown) => Promise<void>};
@@ -421,14 +425,23 @@ describe('linking by spec hash', () => {
 
   async function unlinkedJob() {
     const {jobId, workerId} = await seedJob();
-    await db.execute(sql`UPDATE jobs SET chain_job_id = NULL, spec_hash = ${'0x' + 'aa'.repeat(32)} WHERE id = ${jobId}`);
+    await db.execute(
+      sql`UPDATE jobs SET chain_job_id = NULL, spec_hash = ${'0x' + 'aa'.repeat(32)} WHERE id = ${jobId}`,
+    );
     return {jobId, workerId};
   }
 
   function directPaid(clientAgentId: bigint, workerAgentId: bigint, logIndex: number) {
     const event = (escrowAbi as AbiEvent[]).find((e) => e.type === 'event' && e.name === 'DirectPaid')!;
-    const args = {jobId: 55n, clientAgentId, workerAgentId, amount: 20_000n, fee: 200n, specHash: `0x${'aa'.repeat(32)}`};
-    const topics = encodeEventTopics({abi: [event], eventName: 'DirectPaid', args} as never);
+    const args = {
+      jobId: 55n,
+      clientAgentId,
+      workerAgentId,
+      amount: 20_000n,
+      fee: 200n,
+      specHash: `0x${'aa'.repeat(32)}`,
+    };
+    const topics = encodeEventTopics({abi: [event], eventName: 'DirectPaid', args});
     const data = encodeAbiParameters(
       event.inputs.filter((i) => !i.indexed),
       event.inputs.filter((i) => !i.indexed).map((i) => (args as Record<string, unknown>)[i.name!]),
@@ -436,10 +449,14 @@ describe('linking by spec hash', () => {
     return {...settledLog({logIndex}), topics, data};
   }
 
-  const handle = (log: unknown) => (indexer as unknown as {handleLog: (e: unknown) => Promise<void>}).handleLog(log);
+  const handle = (log: unknown) =>
+    (indexer as unknown as {handleLog: (e: unknown) => Promise<void>}).handleLog(log);
   const chainJobIdOf = async (jobId: number) =>
-    ((await db.execute(sql`SELECT chain_job_id FROM jobs WHERE id = ${jobId}`)) as unknown as {chain_job_id: string | null}[])[0]!
-      .chain_job_id;
+    (
+      (await db.execute(sql`SELECT chain_job_id FROM jobs WHERE id = ${jobId}`)) as unknown as {
+        chain_job_id: string | null;
+      }[]
+    )[0]!.chain_job_id;
 
   it('links when the parties match', async () => {
     const {jobId} = await unlinkedJob();
@@ -487,7 +504,9 @@ describe('after a reorg', () => {
       checkRewindWindow: (from: bigint, to: bigint) => Promise<void>;
     };
     const real = inner.client;
-    inner.client = {getTransactionReceipt: async () => Promise.reject(new Error('Transaction receipt not found'))};
+    inner.client = {
+      getTransactionReceipt: async () => Promise.reject(new Error('Transaction receipt not found')),
+    };
     try {
       await expect(inner.checkRewindWindow.call(indexer, 990n, 1010n)).rejects.toThrow(/0xabab/);
     } finally {

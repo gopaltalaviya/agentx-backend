@@ -176,9 +176,7 @@ function resetsIn(
   if (onChainDayStart === undefined && spentToday === 0n) return 0;
 
   const startMs =
-    onChainDayStart !== undefined
-      ? Number(onChainDayStart) * 1000
-      : (cachedDayStart?.getTime() ?? 0);
+    onChainDayStart !== undefined ? Number(onChainDayStart) * 1000 : (cachedDayStart?.getTime() ?? 0);
 
   // A window that never opened (no spend yet) is already full.
   if (startMs === 0) return 0;
