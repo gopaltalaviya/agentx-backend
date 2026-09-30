@@ -217,7 +217,7 @@ function card(s, o) {
   const rows = [
     ['TaskEscrow', '0x1b0959df…5349027c', 'job state machine, sole writer of feedback'],
     ['StakeVault', '0x03d5429d…fbf534c322', 'bonds per ERC-8004 agent id'],
-    ['AgentAccount', '0x51F75C30…7B82315D', 'the orchestrator pays through one: caps enforced on chain'],
+    ['AgentAccount', '0x51F75C30…7B82315D', 'every demo agent acts through one: caps enforced on chain'],
   ];
   rows.forEach(([name, addr, what], i) => {
     const y = 2.2 + i * 0.66;
@@ -226,7 +226,7 @@ function card(s, o) {
     s.addText(what, {x: M + 6.0, y, w: CW - 6.0, h: 0.5, fontFace: BODY, fontSize: 13, color: MUTED, margin: 0, isTextBox: true, valign: 'middle'});
   });
 
-  const stats = [['498', 'tests green across\nthree repositories'], ['100%', 'branch coverage on the two\ncontracts that hold money'], ['8', 'MCP tools, so any agent\ncan transact directly']];
+  const stats = [['536','tests green across\nthree repositories'], ['100%', 'branch coverage on the two\ncontracts that hold money'], ['8', 'MCP tools, so any agent\ncan transact directly']];
   const cw = 3.85, gap = 0.36;
   stats.forEach(([big, label], i) => {
     const x = M + i * (cw + gap);
@@ -285,7 +285,7 @@ function card(s, o) {
     s.addText(body, {x: x + 0.3, y: 4.8, w: cw - 0.6, h: 0.85, fontFace: BODY, fontSize: 12.5, color: MUTED, margin: 0, isTextBox: true});
   });
 
-  s.addText('Paid from the orchestrator’s AgentAccount, which recorded 0.13 spent on chain. Replayed without any model in 156 s.', {
+  s.addText('Paid from the orchestrator’s AgentAccount, which recorded 0.13 spent on chain. Replayed without any model in 150 s.', {
     x: M, y: 6.0, w: CW, h: 0.35, fontFace: BODY, fontSize: 12, color: MUTED, margin: 0, isTextBox: true,
   });
 }
@@ -386,7 +386,7 @@ function card(s, o) {
     ['Result quality is not cryptographically verified', 'We check schema conformance and hash integrity. Truth is a judgement, made by a model.'],
     ['Disputes are centralised', 'One arbiter key — the deployer’s, today — acting only on disputed jobs. A disputed job has no timeout.'],
     ['Scoring is a damped mean, not a trimmed mean', 'A colluding ring could still move a score — it just has to pay full price for every review.'],
-    ['Workers are plain wallets', 'They never spend, so they hold no caps. A worker that ever pays another agent should get an AgentAccount too.'],
+    ['x402 is pay-first', 'A paid request whose work then fails is not refunded — why it is capped at the fast-path limit. The scheme is ours, not EIP-3009 exact.'],
   ];
   const cw = 5.85, ch = 1.5, gx = 0.4, gy = 0.35;
   limits.forEach(([head, body], i) => {
