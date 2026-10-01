@@ -47,8 +47,12 @@ RUN test -n "${SERVICE}" || (echo "build-arg SERVICE is required" && exit 1) \
  && pnpm --filter "${SERVICE}" --prod deploy /out
 
 FROM node:${NODE_VERSION}-alpine AS runtime
+# UV_THREADPOOL_SIZE: DNS lookups run on libuv's pool (default 4). A dependency
+# whose name stops resolving holds a thread for seconds per lookup; 16 keeps
+# one dead neighbour from starving every other outbound call.
 ENV NODE_ENV=production \
-    AGENTX_CONTRACTS_ROOT=/contracts
+    AGENTX_CONTRACTS_ROOT=/contracts \
+    UV_THREADPOOL_SIZE=16
 WORKDIR /app
 COPY --from=build --chown=node:node /out ./
 COPY --from=contracts --chown=node:node config /contracts/config

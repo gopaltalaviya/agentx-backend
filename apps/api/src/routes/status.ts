@@ -32,6 +32,12 @@ export interface StatusDeps {
   headBlock?: (chainId: number) => Promise<bigint>;
   /** Blocks the indexer may trail the head before it is 'degraded'. Default 150. */
   maxIndexerLagBlocks?: number;
+  /**
+   * Seconds without progress, while there ARE blocks to index, before the
+   * indexer is 'down' (stopped) rather than 'degraded' (catching up). Default
+   * 120: past the indexer's own worst-case RPC backoff (60 s) plus polls.
+   */
+  maxIndexerSilenceSeconds?: number;
   /** How long one result is reused. Default 5000 ms; 0 disables. */
   cacheMs?: number;
   /** Per-check bound. Default 2000 ms. */
@@ -79,6 +85,7 @@ export function registerStatusRoutes(
   const cacheMs = opts.cacheMs ?? 5_000;
   const timeoutMs = opts.timeoutMs ?? 2_000;
   const maxLag = opts.maxIndexerLagBlocks ?? 150;
+  const maxSilence = opts.maxIndexerSilenceSeconds ?? 120;
 
   /** Run one check; log why it failed, report only that it did. */
   const probe = async <T>(
@@ -123,9 +130,21 @@ export function registerStatusRoutes(
       const lagBlocks =
         indexedBlock !== null && headBlock !== null ? Math.max(0, headBlock - indexedBlock) : null;
       const updated = cursor ? new Date(cursor.updatedAt) : null;
+      const silentFor = updated ? Math.max(0, Math.round((now - updated.getTime()) / 1000)) : null;
 
+      // Behind AND not moving is stopped; behind and moving is catching up. A
+      // caught-up indexer on a quiet chain has nothing to write, so silence
+      // alone is not a fault.
+      const stalled =
+        lagBlocks !== null && lagBlocks > chain.confirmations && silentFor !== null && silentFor > maxSilence;
       const indexer: ComponentStatus =
-        lagBlocks === null ? 'unknown' : lagBlocks > maxLag + chain.confirmations ? 'degraded' : 'up';
+        lagBlocks === null
+          ? 'unknown'
+          : stalled
+            ? 'down'
+            : lagBlocks > maxLag + chain.confirmations
+              ? 'degraded'
+              : 'up';
 
       return {
         chainId,
@@ -138,7 +157,7 @@ export function registerStatusRoutes(
           indexedBlock,
           lagBlocks,
           lastIndexedAt: updated ? updated.toISOString() : null,
-          secondsSinceIndexed: updated ? Math.max(0, Math.round((now - updated.getTime()) / 1000)) : null,
+          secondsSinceIndexed: silentFor,
         },
       };
     });

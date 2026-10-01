@@ -8,6 +8,7 @@ import {buildApp} from './app.js';
 import {makeSignerSubmit} from './submit.js';
 import {makeBudgetReader, makeIdentityReader, makePaymentReader} from './chain-reads.js';
 import {makeRunExecutor} from './run-executor.js';
+import {coalesce} from './coalesce.js';
 
 const Env = z
   .object({
@@ -53,10 +54,13 @@ const heads = new Map(
     createPublicClient({transport: http(c.rpcUrl, {timeout: 2_000, retryCount: 0})}),
   ]),
 );
-const signerHealth = async () => {
+// Coalesced: one probe in flight, its answer reused for 5 s. Uncoalesced, a
+// stopped signer's DNS lookups filled libuv's thread pool and starved the RPC
+// lookup, so /v1/status reported the chain down too (see coalesce.ts).
+const signerHealth = coalesce(async () => {
   const res = await fetch(`${cfg.SIGNER_URL}/health`, {signal: AbortSignal.timeout(2_000)});
   if (!res.ok) throw new Error(`signer /health answered ${res.status}`);
-};
+}, 5_000);
 
 // Resolved before the server starts: a deployment with no model key still
 // serves the marketplace, and `/health` says plainly whether it can run.

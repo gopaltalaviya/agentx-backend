@@ -14,6 +14,11 @@ export type Db = ReturnType<typeof createDb>;
 export function createDb(url: string, opts: {max?: number} = {}) {
   const client = postgres(url, {
     max: opts.max ?? 5,
+    // Seconds. The driver's default is 30: with the database unreachable (not
+    // refusing — gone), every request hung half a minute before failing.
+    // Ten is plenty for a cold Railway Postgres, and a request answers 503 well
+    // before a browser or an agent gives up on it.
+    connect_timeout: 10,
     // Money columns are NUMERIC; return them as strings so nothing is ever
     // parsed through a float on the way out.
     types: {numeric: {to: 0, from: [1700], serialize: String, parse: String}},

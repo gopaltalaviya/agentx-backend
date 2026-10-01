@@ -172,3 +172,23 @@ describe('the rate limit', () => {
     await app.close();
   });
 });
+
+describe('a database outage', () => {
+  // A dependency being down is not a bug in the API: 500 told every client
+  // "do not retry, this is ours", and the site showed a bare failure. It is a
+  // 503 with retry-after, and the body names no host.
+  it('is a 503 UPSTREAM_UNAVAILABLE with retry-after, never a 500, and leaks no address', async () => {
+    const dead = createDb('postgres://agentx:agentx@127.0.0.1:1/agentx', {max: 1});
+    try {
+      const app = await build({db: dead});
+      const res = await app.inject({url: '/v1/agents'});
+      expect(res.statusCode).toBe(503);
+      expect(res.headers['retry-after']).toBeDefined();
+      expect(res.json()).toMatchObject({code: 'UPSTREAM_UNAVAILABLE', status: 503});
+      expect(res.body).not.toMatch(/127\.0\.0\.1|ECONNREFUSED|postgres:\/\//);
+      await app.close();
+    } finally {
+      await closeDb(dead);
+    }
+  }, 20_000);
+});

@@ -108,6 +108,28 @@ describe('GET /v1/status', () => {
     await app.close();
   });
 
+  // A stopped indexer and one catching up both trail the head, and both read
+  // "degraded" — an operator could not tell "wait" from "go and restart it".
+  // Stopped means: there are blocks to index, and nothing has been indexed for
+  // longer than the indexer's own worst-case backoff.
+  it('is down when the indexer has blocks to index and has not progressed for over two minutes', async () => {
+    await cursorAt(1_000, 300);
+    const app = await build({headBlock: async () => 1_500n});
+    const body = (await app.inject({url: '/v1/status'})).json();
+    expect(body.components.indexer).toBe('down');
+    expect(body.chains[0].indexer.status).toBe('down');
+    expect(body.status).toBe('degraded'); // the marketplace still serves
+    await app.close();
+  });
+
+  it('is not down when a caught-up indexer is idle on a quiet chain', async () => {
+    await cursorAt(1_000, 300);
+    const app = await build({headBlock: async () => 1_000n});
+    const body = (await app.inject({url: '/v1/status'})).json();
+    expect(body.components.indexer).toBe('up');
+    await app.close();
+  });
+
   it('says the indexer is unknown when it has never indexed anything', async () => {
     const app = await build();
     const body = (await app.inject({url: '/v1/status'})).json();

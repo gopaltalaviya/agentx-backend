@@ -87,6 +87,22 @@ export function registerErrorHandler(app: FastifyInstance): void {
       });
     }
 
+    // The database (or another dependency) is unreachable. Not our bug and
+    // not the caller's: 503 + retry-after, so clients back off and retry
+    // instead of reading a 500 as "broken, give up". The driver's message
+    // names the host it could not reach, so only the trace id goes out.
+    if (isConnectionFailure(err)) {
+      request.log.error({err, traceId}, 'dependency unavailable');
+      return reply.status(503).header('retry-after', '5').type('application/problem+json').send({
+        type: 'https://agentx.dev/errors/upstream-unavailable',
+        title: 'Temporarily unavailable',
+        status: 503,
+        code: ErrorCode.UPSTREAM_UNAVAILABLE,
+        detail: 'a service this request needs is unavailable; retry shortly',
+        traceId,
+      });
+    }
+
     if ((err as {statusCode?: number}).statusCode === 429) {
       return reply.status(429).type('application/problem+json').send({
         type: 'https://agentx.dev/errors/rate-limited',
@@ -185,3 +201,39 @@ const CONFLICT_DETAIL: Record<string, string> = {
   signer_idempotency_uk: 'that Idempotency-Key has already been used',
   api_keys_hash_uk: 'that API key already exists',
 };
+
+/** Socket-level codes (Node, postgres.js) that mean "could not reach it", not "it said no". */
+const CONNECTION_CODES = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'ETIMEDOUT',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'EPIPE',
+  'CONNECT_TIMEOUT',
+  'CONNECTION_CLOSED',
+  'CONNECTION_ENDED',
+  'CONNECTION_DESTROYED',
+]);
+
+/**
+ * True when the error (or what it wraps — drizzle puts the driver's error on
+ * `cause`) is a failure to reach a dependency: a socket code, or a Postgres
+ * SQLSTATE in class 08 (connection exception), 57P01–57P03 (shutting down,
+ * cannot connect now) or 53300 (too many connections).
+ */
+export function isConnectionFailure(error: unknown): boolean {
+  for (let e = error, depth = 0; e && depth < 4; e = (e as {cause?: unknown}).cause, depth++) {
+    const code = (e as {code?: unknown}).code;
+    if (typeof code !== 'string') continue;
+    if (CONNECTION_CODES.has(code)) return true;
+    if (/^08...$/.test(code) || /^57P0[123]$/.test(code) || code === '53300') return true;
+  }
+  // AggregateError (Node's happy-eyeballs: one per address tried) carries the codes on `errors`.
+  const errors =
+    (error as {cause?: {errors?: unknown[]}; errors?: unknown[]}).errors ??
+    (error as {cause?: {errors?: unknown[]}}).cause?.errors;
+  return Array.isArray(errors) && errors.some((e) => isConnectionFailure(e));
+}
