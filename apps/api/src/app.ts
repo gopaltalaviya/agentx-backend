@@ -36,6 +36,8 @@ export interface AppDeps {
   trustProxy?: boolean;
   /** Requests per client IP per minute. */
   rateLimitPerMinute?: number;
+  /** Open SSE streams this instance holds, per stream kind (jobs, runs); past it, 503 + retry-after. */
+  maxStreams?: number;
   /** Refuse non-public, non-https agent endpoint URLs (production). */
   requirePublicHttpsEndpoints?: boolean;
   logger?: boolean;
@@ -55,6 +57,9 @@ export interface AppDeps {
   /** Called for every route as it is registered — the docs test lists them. */
   onRoute?: (route: {method: string | string[]; url: string}) => void;
 }
+
+/** Liveness and readiness: what a load balancer reads. Exempt from the rate limit. */
+const PROBE_PATHS = new Set(['/health', '/ready']);
 
 /**
  * Built as a factory so tests can construct the whole API with an injected
@@ -76,10 +81,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     app.addHook('onRoute', (route) => onRoute({method: route.method, url: route.url}));
   }
 
-  const bus = deps.bus ?? new EventBus();
+  const bus = deps.bus ?? new EventBus(deps.maxStreams);
   // A second bus, not a shared namespace: job 7 and run 7 are unrelated, and
   // one map keyed by number would deliver each other's events.
-  const runBus = new EventBus();
+  const runBus = new EventBus(deps.maxStreams);
 
   // The interface lives on another origin (Vercel vs Railway; two ports
   // locally), and with no CORS headers every browser request was refused —
@@ -103,6 +108,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     // garbage key, which made the per-request auth cost unbounded. With
     // TRUST_PROXY set, `req.ip` is the client, not Railway's proxy.
     keyGenerator: (req) => req.ip,
+    // Never the probes. A client that spends its budget must not make the
+    // instance look dead to the load balancer reading /health and /ready —
+    // behind one shared egress IP that took a healthy instance out of rotation.
+    allowList: (req) => PROBE_PATHS.has(req.url.split('?')[0] ?? ''),
   });
 
   registerErrorHandler(app);

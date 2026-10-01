@@ -155,3 +155,20 @@ describe('server-sent event streams', () => {
     await res.body?.cancel().catch(() => undefined);
   });
 });
+
+describe('the rate limit', () => {
+  // A client that exhausts its budget must not make the instance look dead:
+  // health and readiness are what a load balancer reads, and on a single
+  // shared egress IP a 429 there takes a healthy instance out of rotation.
+  it('limits the API but never the health and readiness probes', async () => {
+    const app = await build({rateLimitPerMinute: 2, readiness: {}});
+    for (let i = 0; i < 2; i++) expect((await app.inject({url: '/v1/rank-modes'})).statusCode).toBe(200);
+    const limited = await app.inject({url: '/v1/rank-modes'});
+    expect(limited.statusCode).toBe(429);
+    expect(limited.json()).toMatchObject({code: 'RATE_LIMITED'});
+    for (const url of ['/health', '/ready', '/health', '/ready']) {
+      expect((await app.inject({url})).statusCode, url).toBe(200);
+    }
+    await app.close();
+  });
+});

@@ -311,6 +311,7 @@ HOST=0.0.0.0                       # bind address (Railway: ::)
 CORS_ORIGINS=                      # comma-separated browser origins; unset → any (dev only)
 TRUST_PROXY=0                      # 1 behind Railway's proxy, so rate limits see the client IP
 RATE_LIMIT_PER_MINUTE=600          # per client IP, per process
+SSE_MAX_STREAMS=1000               # open SSE streams per kind, per process; then 503 + retry-after
 SIGNER_TIMEOUT_MS=30000            # how long the api waits for the signer
 STATUS_MAX_INDEXER_LAG_BLOCKS=150  # /v1/status: indexer "degraded" beyond this (+ confirmations)
 

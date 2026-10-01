@@ -22,6 +22,8 @@ const Env = z
     CORS_ORIGINS: env.csv(),
     TRUST_PROXY: env.flag(),
     RATE_LIMIT_PER_MINUTE: env.positiveInt(600),
+    /** Open SSE streams per kind before new ones get 503 + retry-after. Each holds a socket. */
+    SSE_MAX_STREAMS: env.positiveInt(1_000),
     METRICS_TOKEN: z.string().optional(),
     LOG_LEVEL: env.logLevel(),
     DB_POOL_MAX: env.positiveInt(5),
@@ -78,6 +80,7 @@ const app = await buildApp({
   corsOrigins: cfg.CORS_ORIGINS,
   trustProxy: cfg.TRUST_PROXY,
   rateLimitPerMinute: cfg.RATE_LIMIT_PER_MINUTE,
+  maxStreams: cfg.SSE_MAX_STREAMS,
   requirePublicHttpsEndpoints: cfg.NODE_ENV === 'production',
   ...(runExecutor ? {runExecutor} : {}),
   submit: makeSignerSubmit({
