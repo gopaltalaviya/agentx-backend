@@ -3,7 +3,7 @@
 > **START HERE every session.** This file is the memory that survives a closed
 > terminal. Read it top to bottom before doing anything else.
 
-- Last updated: **2026-10-01** (Session 28 — recheck; ERC-8004 agent cards verified on chain; PLAN in sync; every open task is yours except the final docs pass)
+- Last updated: **2026-10-01** (Session 29 — docs search, video guides, hostile-HTTP probe, one-dependency-down matrix on the production images; 14 defects found and fixed)
 - Days to deadline: **12** — verified: **2026-10-13, 11:59 PM ET**
 - Target track: **4 — Trust, Identity & AI Infrastructure** ($30,000)
 - Current state: **v2 live on Monad testnet, end to end, re-verified.** The
@@ -12,8 +12,8 @@
   chain, including a real dispute expired by the keeper after its 1 h
   timeout. Backend and interface have lint, formatting, coverage floors, CI,
   containers, metrics, graceful shutdown and a browser smoke test.
-- Overall: `██████████████████░░` 92% — **107 / 116 tasks** (4 cut, recorded in PLAN), **730 tests green**
-  (184 contracts · 497 backend · 49 interface) + 30 browser tests (14 smoke, 16 accessibility)
+- Overall: `██████████████████░░` 92% — **107 / 116 tasks** (4 cut, recorded in PLAN), **763 tests green**
+  (184 contracts · 505 backend · 74 interface) + 61 browser tests (14 smoke, 17 accessibility, 9 search, 2 guides, 19 edge)
 
 ---
 
@@ -146,7 +146,7 @@ cd ../agentx-backend && npx tsc -b && npx vitest run   # expect 497 passed
 cd ../agentx-interface && npx tsc --noEmit && npx vitest run && NEXT_PUBLIC_API_URL=http://127.0.0.1:8080 npx next build   # expect 40 passed
 ```
 
-Expected totals as of 2026-09-30: **184 contracts + 497 backend + 49 interface = 730** (Session 28), plus 30 Playwright tests (14 smoke, 16 axe accessibility).
+Expected totals as of 2026-09-30: **184 contracts + 505 backend + 74 interface = 763** (Session 29), plus 61 Playwright tests (14 smoke, 17 axe accessibility, 9 search, 2 guides, 19 edge).
 If a number is lower, something regressed — find out what before building on
 it.
 
@@ -263,7 +263,8 @@ v2 one — any prompt or schema change still invalidates it.
 
 ### In-flight work right now
 
-**None.** All three repos are clean **and pushed** as of 2026-10-01 (Session 28).
+**None in progress.** Session 29's commits are **local, not pushed** — push
+when the owner says so. Nothing is half-finished.
 There is no half-finished edit, no stashed change, no branch to
 reconcile. A fresh session can start from the Next actions list at the top of
 this file.
@@ -496,10 +497,10 @@ and metrics ports; every service validates its environment at boot.
 | Suite | Count | State |
 |---|---|---|
 | Contracts — unit, fuzz, invariant (3 suites), adversarial, v2 findings | **184** | ✅ 100% branch on StakeVault/AgentAccount/Factory, 96.5% TaskEscrow |
-| Backend — 31 files | **497** | ✅ lint, format, typecheck of tests, coverage floors 75/78/74/75 |
-| Interface — unit | **49** | ✅ plus lint, `next build`, audit |
-| Interface — Playwright smoke + axe | **30** | ✅ every page, production build, mocked API; status page, 375 px layout + mobile menu, reduced motion |
-| **Total** | **730** + 30 | |
+| Backend — 33 files | **505** | ✅ lint, format, typecheck of tests, coverage floors 75/78/74/75 |
+| Interface — unit | **74** | ✅ plus lint, `next build`, audit |
+| Interface — Playwright | **61** | ✅ smoke + axe on every page, docs search, video guides, 19 edge and worst cases; production build, mocked API |
+| **Total** | **763** + 61 | |
 
 Every test that guards a Session 26 fix was run against the old code first
 and seen to fail.
@@ -653,6 +654,36 @@ Append-only. Never rewrite a decision — supersede it with a new row.
 ---
 
 ## 📓 Session log
+
+### Session 29 — 2026-10-01 (search · guides · edge, critical and worst cases)
+
+- **Docs search** (interface): Ctrl/⌘+K anywhere, `/` on docs. Indexed from
+  the real prerendered pages (no hand-kept index); typo, stem, synonym and
+  camelCase-aware; pages, actions and live agents in one ARIA combobox.
+- **Video guides**: six captioned clips at `/docs/guides`, recorded live on
+  testnet with `scripts/video/guides.mjs`; embedded in three docs pages.
+- **Edge suite** (`e2e/edge.spec.ts`, 19): found 5 bugs — unreadable errors
+  when the API is unreachable or answers garbage; register not mirroring the
+  API's limits; a dropped live stream looked like a run that never ends;
+  long names and the 320 px header overflowed.
+- **Hostile HTTP** (`scripts/probe-api.mjs`, 416 requests): zero 500s, no
+  leaks; `/health` and `/ready` were rate limited (fixed).
+- **Worst cases** on `docker-compose.full.yml`, one dependency down at a
+  time ([docs/17 §17](docs/17-production-readiness.md)): signer down
+  reported the RPC down too (DNS thread starvation — coalesced probe); a
+  database outage was a 500 (now 503 + retry-after); a stopped indexer read
+  as catching up (now "down" after 120 s).
+- **Found while recording**: a finished run could show no answer (the API
+  published `finished` before writing it); a leftover signer hijacked the
+  next demo; the demo rate-limited its own agents; a drained FUNDER read as
+  "reverted". All fixed ([docs/17 §19](docs/17-production-readiness.md)).
+- **Live**: `verify-indexer` on testnet 13/13; `check-deployment` green on
+  the production images; three live runs 4/4 settled for the guides; chaos
+  at 20 % + 30 % broadcasts **3/4, the fourth safely refunded**.
+- ⚠️ **FUNDER is nearly empty** (0.0066 MON): demos ran with
+  `FUNDER_PRIVATE_KEY` unset so the deployer paid gas, which also turns the
+  keeper off. Top FUNDER up before relying on the keeper.
+- Final: 184 + 505 + 74 = **763** tests + **61** browser; all green.
 
 Newest first. One entry per working session, however short.
 

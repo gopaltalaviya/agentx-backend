@@ -302,3 +302,71 @@ describe('a deployment with no model', () => {
     }
   });
 });
+
+describe('when the live stream says "finished"', () => {
+  // The demo page reads the run the moment `finished` arrives, once. The
+  // event used to be published BEFORE the answer and steps were written, so a
+  // page that won the race rendered no answer and no "what each step cost" —
+  // seen live while recording the guides. The database here is slowed (every
+  // UPDATE waits 300 ms) so that race is lost every time, not one run in four.
+  it('the record already has the answer and the steps', async () => {
+    const slowDb = new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop !== 'update') return Reflect.get(target, prop, receiver);
+        return (table: Parameters<Db['update']>[0]) => {
+          const builder = target.update(table);
+          return {
+            set: (values: Record<string, unknown>) => ({
+              where: (cond: unknown) =>
+                new Promise((r) => setTimeout(r, 300)).then(() =>
+                  builder.set(values as never).where(cond as never),
+                ),
+            }),
+          };
+        };
+      },
+    }) as Db;
+
+    const steps = [{capability: 'market-research', status: 'settled', detail: 'ok'}];
+    const slow = await buildApp({
+      db: slowDb,
+      chains: config.chains,
+      defaultChainId: 31337,
+      runExecutor: async () => {
+        await new Promise((r) => setTimeout(r, 300)); // let the subscriber connect first
+        return {...DELIVERED, answer: 'the answer', steps} as unknown as RunResult;
+      },
+      submit: async () => ({txHash: `0x${'ef'.repeat(32)}`, chainJobId: '1'}),
+    });
+    await slow.listen({port: 0, host: '127.0.0.1'});
+    const base = `http://127.0.0.1:${(slow.server.address() as {port: number}).port}`;
+    try {
+      const {apiKey} = await register();
+      const started = await fetch(`${base}/v1/runs`, {
+        method: 'POST',
+        headers: {...auth(apiKey), 'content-type': 'application/json'},
+        body: JSON.stringify({goal: 'a goal'}),
+      });
+      const {runId} = (await started.json()) as {runId: string};
+
+      const ac = new AbortController();
+      const stream = await fetch(`${base}/v1/runs/${runId}/events`, {signal: ac.signal});
+      const reader = stream.body!.getReader();
+      let seen = '';
+      while (!/event: finished/.test(seen)) {
+        const {value, done} = await reader.read();
+        if (done) break;
+        seen += new TextDecoder().decode(value);
+      }
+      expect(seen).toMatch(/event: finished/);
+
+      // Exactly what the page does next.
+      const record = (await (await fetch(`${base}/v1/runs/${runId}`)).json()) as Record<string, unknown>;
+      ac.abort();
+      expect(record.answer).toBe('the answer');
+      expect(record.steps).toEqual(steps);
+    } finally {
+      await slow.close();
+    }
+  }, 20_000);
+});

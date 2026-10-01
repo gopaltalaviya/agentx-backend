@@ -12,11 +12,12 @@
  *      holding fresh agents — the recorded run must be their first.
  * Playwright is resolved from the sibling agentx-interface checkout.
  */
-/* global window, document, requestAnimationFrame -- page.evaluate callbacks run in the browser */
+/* global window, document -- page.evaluate callbacks run in the browser */
 import {readFileSync, writeFileSync, mkdirSync, readdirSync, renameSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
+import {director, overlayScript, sleep} from './overlay.mjs';
 
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 const BACKEND = resolve(SCRIPTS, '..', '..');
@@ -38,44 +39,13 @@ mkdirSync(`${HERE}/cards`, {recursive: true});
 // Static cards are served from scripts/video/cards; the receipt card is generated per run.
 const card = (name) =>
   pathToFileURL(name === 'receipt' ? `${HERE}/cards/receipt.html` : `${CARDS}/${name}.html`).href;
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-// Cursor + caption overlay, injected into every document (site, explorer, cards).
-const OVERLAY = `
-(() => {
-  const mount = () => {
-    if (document.getElementById('__cur')) return;
-    const c = document.createElement('div');
-    c.id = '__cur';
-    c.innerHTML = '<svg width="26" height="26" viewBox="0 0 24 24"><path d="M4 2l7 19 2.6-7.6L21 11z" fill="#fff" stroke="#07090d" stroke-width="1.4" stroke-linejoin="round"/></svg>';
-    Object.assign(c.style, {position:'fixed', left:'0', top:'0', zIndex:2147483647, pointerEvents:'none',
-      transform:'translate(' + (window.__cx ?? ${W / 2}) + 'px,' + (window.__cy ?? ${H * 0.7}) + 'px)',
-      transition:'transform .7s cubic-bezier(.22,1,.36,1)', filter:'drop-shadow(0 2px 6px rgba(0,0,0,.6))'});
-    document.documentElement.appendChild(c);
-    const cap = document.createElement('div');
-    cap.id = '__cap';
-    Object.assign(cap.style, {position:'fixed', left:'50%', bottom:'34px', transform:'translateX(-50%)', zIndex:2147483646,
-      pointerEvents:'none', maxWidth:'1240px', padding:'14px 26px', borderRadius:'14px', fontSize:'25px', lineHeight:'1.35',
-      fontFamily:'"Segoe UI Variable Display","Segoe UI",system-ui,sans-serif', fontWeight:'500', color:'#fff', textAlign:'center',
-      background:'rgba(7,9,13,.86)', border:'1px solid rgba(110,168,255,.35)', boxShadow:'0 12px 40px rgba(0,0,0,.5)',
-      opacity:'0', transition:'opacity .35s'});
-    document.documentElement.appendChild(cap);
-  };
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount); else mount();
-  window.__caption = (t) => { mount(); const e = document.getElementById('__cap'); if (!t) { e.style.opacity = '0'; return; }
-    e.style.opacity = '0'; setTimeout(() => { e.textContent = t; e.style.opacity = '1'; }, 180); };
-  window.__move = (x, y) => { mount(); window.__cx = x; window.__cy = y;
-    document.getElementById('__cur').style.transform = 'translate(' + x + 'px,' + y + 'px)'; };
-  window.__hideCursor = () => { mount(); document.getElementById('__cur').style.opacity = '0'; };
-})();`;
-
 const browser = await chromium.launch();
 const ctx = await browser.newContext({
   viewport: {width: W, height: H},
   recordVideo: {dir: `${HERE}/rec`, size: {width: W, height: H}},
 });
 await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], {origin: SITE});
-await ctx.addInitScript(OVERLAY);
+await ctx.addInitScript(overlayScript({width: W, height: H}));
 const page = await ctx.newPage();
 const t0 = Date.now();
 const marks = [];
@@ -83,42 +53,7 @@ const mark = (name) => {
   marks.push({name, t: (Date.now() - t0) / 1000});
   console.log(`  ${((Date.now() - t0) / 1000).toFixed(1)}s  ${name}`);
 };
-const caption = (t) => page.evaluate((x) => window.__caption?.(x), t).catch(() => {});
-const hideCursor = () => page.evaluate(() => window.__hideCursor?.()).catch(() => {});
-async function moveTo(locator) {
-  await locator.scrollIntoViewIfNeeded();
-  const b = await locator.boundingBox();
-  if (!b) return;
-  await page.evaluate(([x, y]) => window.__move?.(x, y), [b.x + b.width / 2, b.y + b.height / 2]);
-  await sleep(800);
-}
-async function click(locator) {
-  await moveTo(locator);
-  await locator.click();
-  await sleep(300);
-}
-/** Smooth scroll by `dy` pixels over `ms`. */
-async function glide(dy, ms = 1800) {
-  await page.evaluate(
-    ([dy, ms]) =>
-      new Promise((r) => {
-        const y0 = window.scrollY;
-        const s = performance.now();
-        const step = (n) => {
-          const k = Math.min(1, (n - s) / ms);
-          const e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
-          window.scrollTo(0, y0 + dy * e);
-          k < 1 ? requestAnimationFrame(step) : r();
-        };
-        requestAnimationFrame(step);
-      }),
-    [dy, ms],
-  );
-}
-async function glideTo(locator, offset = 120, ms = 1800) {
-  const b = await locator.boundingBox();
-  if (b) await glide(b.y - offset, ms);
-}
+const {caption, hideCursor, moveTo, click, glideTo} = director(page, t0);
 
 // ── 1. Title ─────────────────────────────────────────────────────────────
 mark('title');

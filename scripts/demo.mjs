@@ -31,6 +31,7 @@ import {spawn} from 'node:child_process';
 import {agentCardUri, registerAgent, send as sendTx, topUp} from './lib/chain.mjs';
 import {randomBytes} from 'node:crypto';
 import {createWriteStream, mkdirSync} from 'node:fs';
+import {createServer} from 'node:net';
 import {
   createPublicClient,
   createWalletClient,
@@ -80,8 +81,14 @@ const DEPLOYER = privateKeyToAccount(
   process.env.DEPLOYER_PRIVATE_KEY ?? '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
 );
 const viemChain = {...foundry, id: CHAIN_ID};
-const pub = createPublicClient({chain: viemChain, transport: http(chain.rpcUrl)});
-const wallet = createWalletClient({account: DEPLOYER, chain: viemChain, transport: http(chain.rpcUrl)});
+// The harness's own RPC: six retries, not viem's three. Under slow-rpc.mjs
+// (20% of reads and 30% of broadcasts answered 503) a few hundred setup calls
+// at three retries aborted the demo before a service had started — testing
+// the harness, not the system. A retried broadcast resends the same signed
+// transaction, so it cannot double-send.
+const rpc = () => http(chain.rpcUrl, {retryCount: 6});
+const pub = createPublicClient({chain: viemChain, transport: rpc()});
+const wallet = createWalletClient({account: DEPLOYER, chain: viemChain, transport: rpc()});
 
 const children = [];
 const stopped = new AbortController();
@@ -92,6 +99,34 @@ const cleanup = async () => {
   await closeDb(db).catch(() => {});
 };
 process.on('exit', () => children.forEach((c) => c.kill()));
+
+// Both ports must be free BEFORE anything is spent. A signer left over from an
+// earlier demo (a stopped terminal does not always take its children with it)
+// kept :7098; the new signer died with EADDRINUSE, the old one answered the
+// health check, and every hire failed "the signer answered 401" — the two had
+// different tokens. Found only after the run had been paid for.
+const portFree = (port) =>
+  new Promise((done) => {
+    const probe = createServer()
+      .once('error', () => done(false))
+      .once('listening', () => probe.close(() => done(true)))
+      .listen(port, '0.0.0.0');
+  });
+for (const [name, port] of [
+  ['signer', SIGNER_PORT],
+  ['api', API_PORT],
+]) {
+  if (!(await portFree(port))) {
+    console.error(
+      `
+  ✗ port ${port} (the demo's ${name}) is already in use — an earlier demo still running?
+` +
+        `    Stop it first (or set DEMO_${name.toUpperCase()}_PORT). Nothing was spent.
+`,
+    );
+    process.exit(1);
+  }
+}
 
 // ── the workers, as schemas ─────────────────────────────────────────────
 // Deliberately duplicated from apps/agents/*: the demo runs them in-process so
@@ -284,9 +319,28 @@ try {
     ? createWalletClient({
         account: privateKeyToAccount(process.env.FUNDER_PRIVATE_KEY),
         chain: viemChain,
-        transport: http(chain.rpcUrl),
+        transport: rpc(),
       })
     : wallet;
+  // Say so BEFORE sending if the payer cannot cover it. A drained FUNDER used
+  // to surface as a bare "transaction 0x… reverted" from the first top-up.
+  {
+    let needed = 0n;
+    for (const account of [...workerAccounts, hot]) {
+      const balance = await pub.getBalance({address: account.address});
+      if (balance < GAS_TOPUP) needed += GAS_TOPUP - balance;
+    }
+    const has = await pub.getBalance({address: gasPayer.account.address});
+    const margin = 50_000_000_000_000_000n; // the top-ups' own gas
+    if (needed > 0n && has < needed + margin) {
+      const mon = (wei) => (Number(wei / 10n ** 12n) / 1e6).toFixed(4);
+      throw new Error(
+        `the gas payer (${process.env.FUNDER_PRIVATE_KEY ? 'FUNDER' : 'DEPLOYER'} ${gasPayer.account.address}) ` +
+          `has ${mon(has)} MON; topping up the agents' wallets needs ~${mon(needed + margin)}. ` +
+          `Fund it${process.env.FUNDER_PRIVATE_KEY ? ', or unset FUNDER_PRIVATE_KEY so the deployer pays' : ''}. No top-up was sent.`,
+      );
+    }
+  }
   for (const account of [...workerAccounts, hot]) {
     await topUp(pub, gasPayer, account.address, GAS_TOPUP);
   }
@@ -327,7 +381,7 @@ try {
     const workerClient = createWalletClient({
       account: workerAccounts[i],
       chain: viemChain,
-      transport: http(chain.rpcUrl),
+      transport: rpc(),
     });
     const id = await registerAgent(pub, workerClient, {
       identity,
@@ -373,6 +427,12 @@ try {
       : {}),
     PORT: String(API_PORT),
     LOG_LEVEL: 'warn',
+    // Every agent in this demo — three workers, a silent one, the orchestrator
+    // and the browser — calls from 127.0.0.1, so they share ONE per-IP bucket.
+    // At the production 600/min, workers polling every 700 ms were refused
+    // (RATE_LIMITED) as soon as a run added its own traffic. Real agents each
+    // have their own address; this is the demo's crowd, not a weaker default.
+    RATE_LIMIT_PER_MINUTE: process.env.RATE_LIMIT_PER_MINUTE ?? '20000',
   };
 
   // Every service's output, kept.
@@ -391,6 +451,14 @@ try {
     child.stderr.on('data', (d) => {
       const s = String(d);
       if (/error|Error|"level":50/.test(s)) process.stderr.write(`    [${name}] ${s}`);
+    });
+    // A service that dies on its own is fatal, and said: a demo that carries
+    // on without its signer fails every hire later, far from the cause.
+    child.once('exit', (code, signal) => {
+      if (stopped.signal.aborted) return;
+      console.error(`
+  ✗ the ${name} exited (${signal ?? `code ${code}`}) — see ${logDir}/${name}.log`);
+      void cleanup().then(() => process.exit(1));
     });
     children.push(child);
   };

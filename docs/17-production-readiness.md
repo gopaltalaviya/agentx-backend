@@ -210,3 +210,132 @@ work at all (Gemini 503s in Session 26). Testnet MON runs out silently.
   it reported the commit and build time; runs as uid 1000.
 - `pnpm audit --prod --audit-level high`: no known vulnerabilities.
 - Not verified: anything on Railway or Vercel; runbooks R2, R4–R7, R9–R11.
+
+## Hostile input and worst-case testing (2026-10-01)
+
+### 16. Hostile HTTP — `scripts/probe-api.mjs`
+416 hostile requests against a running API; every write is one the API must
+refuse, so it never spends. Run it with the optional knobs to cover the
+stream cap and the rate limit:
+
+```bash
+PROBE_RUN_ID=<an open run> PROBE_MAX_STREAMS=5 PROBE_RATE_LIMIT=400 \
+  node scripts/probe-api.mjs http://127.0.0.1:18098   # API started with SSE_MAX_STREAMS=5 RATE_LIMIT_PER_MINUTE=400
+```
+
+| Area | What was sent | Result |
+|---|---|---|
+| Bodies | malformed / empty / `null` / array / bare-string JSON, `text/plain`, form-encoded, 2 MB, 5 000-deep nesting, `__proto__` | 400 / 413 / 415 / 422, all RFC 7807 |
+| Field values | negative, decimal, hex, exponent, 40-digit, Arabic-digit and blank prices; SQL injection, NUL, lone surrogate, RTL override, `<script>`, 100 emoji in names; 65-char name; 17 capabilities; `javascript:` endpoint | 422 `SCHEMA_MISMATCH`; nothing stored (row counts unchanged) |
+| Query strings | SQL in `capability`, `limit=abc/-1/1e309`, `minScore=999`, `rank=../../etc`, repeated params, `%FF`, emoji, 10 KB | 422, or 400 `CHAIN_NOT_ENABLED` for a disabled chain |
+| Ids and paths | non-numeric, negative, 23-digit, `%00`, `..%2F..`, `1'--`, serial and all-zero UUIDs, RTL mark; `DELETE` / `PUT` | 404 `NOT_FOUND` |
+| Auth | no key, empty Bearer, garbage, right shape wrong key, Basic, SQL, CRLF, 8 KB key; x402 junk | 401 `UNAUTHORIZED`, same shape every time |
+| CORS | preflight from `https://evil.example`; from the site | evil: no allow-origin; site: allowed; credentials never |
+| Headers | any JSON response | CSP `default-src 'none'`, `nosniff`, frame options, no `x-powered-by` |
+| Streams | `SSE_MAX_STREAMS` + 1 | 503 `UPSTREAM_UNAVAILABLE` + `retry-after: 5`; the API keeps serving; a closed stream frees its slot |
+| Rate limit | 400/min + 20 | 429 `RATE_LIMITED` + `retry-after`; **`/health` and `/ready` exempt** (fixed — see below) |
+| Leaks | every response body | no stack frame, filesystem path, connection string or internal address |
+
+**Zero 500s.** One real bug: `/health` and `/ready` were rate limited, so a
+client that spent its budget made a healthy instance look dead to a load
+balancer sharing its egress IP. Fixed; `hardening.test.ts` fails on the old
+code. `SSE_MAX_STREAMS` is new (default 1000).
+
+### 17. Worst cases — one dependency down at a time
+On `docker-compose.full.yml` (the production images, own Postgres on :5443,
+API on :18180) with the site pointed at it. Each row was observed live on
+Monad testnet, then the dependency was brought back.
+
+| Broken | `/ready` | `/v1/status` | What the site shows | Recovers by itself |
+|---|---|---|---|---|
+| Signer stopped | 503 | degraded — **signer down only** | Status: "Signer — Down. New hires and payments cannot be signed; browsing and records still work." | Yes |
+| Database stopped | 503 | **down** | Status: "Major outage — funds in escrow are safe on chain". Marketplace / profile: "AGENTX is temporarily unavailable…" + Retry | Yes, no API restart |
+| Indexer stopped | 200 | degraded; indexer **down** after 120 s | Status: "Indexer — Down. Stopped — no progress for 3 min, with blocks waiting to be indexed." Marketplace keeps serving | Yes ("Catching up" again) |
+| API stopped | — | — | Header badge "API unreachable"; status: "The API cannot be reached… escrow is safe and has a permissionless way out"; marketplace: "Cannot reach the AGENTX API" + Retry | Yes |
+| RPC black-holed (`10.255.255.1`) | 200 | degraded — rpc **down**, answered in **2.0 s** | Status: "Chain connection — Down. The chain is not answering us…" Marketplace serves in 7 ms | Yes |
+
+No uncaught browser errors in any row. Three bugs found and fixed, each with
+a test that fails on the old code:
+
+1. **Signer down reported the chain down too.** Every `/ready` and
+   `/v1/status` probed the stopped signer; each DNS lookup held one of
+   libuv's four threads for ~4 s and the RPC lookup queued behind them —
+   measured 7 665 ms vs 5 ms. Fix: the signer probe is coalesced (one in
+   flight, answer reused 5 s; `coalesce.test.ts`) and the image sets
+   `UV_THREADPOOL_SIZE=16`. Re-checked live: five reads in a row, RPC up.
+2. **Database down answered 500 `INTERNAL`** — "our bug, don't retry". Now
+   503 `UPSTREAM_UNAVAILABLE` + `retry-after: 5`, naming no host
+   (`hardening.test.ts`). postgres.js `connect_timeout` 30 s → 10 s, so a
+   vanished (not refusing) database fails a request in seconds, not half a
+   minute.
+3. **A stopped indexer read "degraded"**, the same as one catching up.
+   Behind *and* silent for over 120 s is now "down"; an idle, caught-up
+   indexer on a quiet chain stays "up" (`status.test.ts`, both cases).
+
+The site's wording changed with them: a 503 reads "temporarily
+unavailable", any other 5xx "The API had a problem (N)", never a raw path or
+an operator's detail, and the shared messages no longer promise "nothing was
+spent" — they are used for writes too, where the site cannot know that.
+
+Also observed: `docker compose … up --build` of four images in parallel
+twice lost Docker Desktop's BuildKit connection (`EOF`) and once took the
+dev Postgres container down with it (exit 255, no shutdown in its log).
+Building with `COMPOSE_PARALLEL_LIMIT=1` was reliable. Not a code issue; a
+note for anyone building the full stack on a laptop.
+
+After the matrix: `check-deployment.mjs` against the isolated stack — all
+checks passed; `verify-indexer.mjs` on Monad testnet — all 13 passed.
+
+### 18. Browser edge cases — `agentx-interface/e2e/edge.spec.ts`
+18 tests, deterministic (the API is made to misbehave with `page.route`):
+double-click and Ctrl+Enter spam on Run send exactly one `POST /v1/runs`;
+the key is trimmed and sent only in `Authorization`; a 500 on marketplace,
+profile and run record shows a readable error and Retry recovers; a hanging
+API shows loading; malformed JSON and an unreachable API read as sentences;
+XSS strings stay inert; null fields render; 100 agents and a 500-event trace
+render; every step status is named in words; register refuses what the API
+would (64 / 1 000 / 16 / uint128); a dropped live stream says so and links
+to the run record; a 300-character name, RTL and emoji do not scroll a
+phone sideways; the header fits 320 px; a stopped indexer is told apart
+from one catching up. Five of these found real bugs, fixed in the same
+change.
+
+### 19. Found while recording the guides, and the chaos re-run
+Recording the video guides against a held demo on Monad testnet found four
+more defects, all fixed:
+
+1. **A finished run could show no answer.** The API published `finished`
+   before writing the answer and step outcomes; the page read the record
+   once, at that instant. One take showed a finished run with no answer.
+   Now the result is written first, then the event, then the state
+   (`runs.test.ts` slows every UPDATE by 300 ms so the race is lost every
+   time on the old order), and the page re-reads while the record still
+   says `running` (`edge.spec.ts`).
+2. **A leftover signer hijacked the next demo.** A stopped terminal left the
+   previous demo's signer holding :7098; the new one died with
+   `EADDRINUSE`, the old one answered the health check with a different
+   token, and every hire failed "the signer answered 401". `demo.mjs` now
+   refuses to start if either port is taken (before anything is spent) and
+   treats any service exiting on its own as fatal.
+3. **The demo rate-limited itself.** Every simulated agent calls from
+   127.0.0.1, so they shared one 600/min bucket and the workers were
+   refused as a run added traffic (also present before this session: 81
+   `RATE_LIMITED` lines in an earlier held demo). The demo's own API now runs
+   at 20 000/min; production is unchanged.
+4. **A drained FUNDER read as "transaction reverted".** The demo now checks
+   the gas payer covers the agents' top-ups before sending, and says which
+   account to fund (or to unset `FUNDER_PRIVATE_KEY` so the deployer pays).
+
+**Chaos re-run** — `slow-rpc.mjs` at 20 % failures and 30 % on broadcasts,
+every service and the demo's own setup behind it (the harness now retries
+six times, not three, so it tests the system rather than the setup script):
+1 000 RPC requests, 211 failed, 49 of 121 broadcasts refused, 1.2 s average
+delay; **3/4 settled in 729 s, the fourth refunded**. Its worker's accept,
+slowed by the refused broadcasts, arrived after the orchestrator's
+acceptance window: the job had already been cancelled and refunded, and the
+contract refused the late accept (`InvalidState`). That is the designed
+outcome. Every safety assertion passed: nothing hung, workers paid 0.099,
+spend inside the on-chain daily cap, stolen-key calls refused, `SameOwner`
+and `AmountBelowMinimum` refused, earnings swept, reputation written from
+settlement. Session 27's run at the same setting settled 4/4; at this loss
+rate the count depends on which broadcasts fail.

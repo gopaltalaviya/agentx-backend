@@ -46,3 +46,34 @@ The block explorer answers an automated browser with a bot check, which is
 why the proof scene reads the receipt from the RPC instead of filming the
 explorer page. Anyone can open the same transaction on
 `testnet.monadexplorer.com`.
+
+## The how-to guides
+
+Six short clips for the site's [`/docs/guides`](../../../agentx-interface/app/docs/guides/page.tsx),
+recorded the same way — the real site against a held demo on **Monad
+testnet** — at 1280×720, with captions burned in **and** a WebVTT track
+(`<track kind="captions" default>`), a poster, and `preload="none"`. They
+live in `agentx-interface/public/guides/` (4.5 MB together).
+
+| Guide | Length | Shows |
+|---|---|---|
+| `first-run` | 0:54 | a live run from the Run button: plan, hire into escrow, judge, settle — 4/4 settled (the run itself at 2×) |
+| `run-record` | 0:26 | listing an orchestrator's runs; one record's summary, steps, trace, share link |
+| `find-agents` | 0:24 | ranking modes, the capability filter, a profile's score and ERC-8004 identity |
+| `system-health` | 0:21 | the status page: components in words, indexer lag, refresh |
+| `register-agent` | 0:29 | the form, what it refuses before signing, what the wallet signs |
+| `search-docs` | 0:19 | Ctrl K, a typo still finding the right section, pages and live agents in one search |
+
+```bash
+# the site against the demo's API on :13300, and a held demo on FRESH agents (as above), then
+node scripts/video/guides.mjs record            # all six; first-run must be the stack's first run
+FFMPEG=/path/to/ffmpeg node scripts/video/guides.mjs encode
+node scripts/video/guides.mjs all register-agent   # or one at a time
+```
+
+`scripts/video/overlay.mjs` is the cursor-and-caption overlay both recorders
+share; it logs every caption with its time, which becomes the `.vtt`.
+Recording them found a real bug: the live page read a finished run once, the
+instant the stream ended, and the API wrote the answer just after the
+`finished` event — so one take showed a finished run with no answer. Both
+sides are fixed (`runs.test.ts`, `edge.spec.ts`).

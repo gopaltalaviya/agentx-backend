@@ -98,17 +98,22 @@ export class RunService {
       // still being written, so anything that read the trace at that instant
       // got a story missing its ending. Rare, which is what makes it nasty:
       // it surfaced as one flaky test in four full runs.
+      //
+      // And the RESULT is written before either. A page reads the record the
+      // moment `finished` arrives; with the answer and steps written after the
+      // event, a page that won that race showed a finished run with no answer
+      // and no step outcomes (seen live; runs.test.ts reproduces it). So:
+      // result, then the terminal event, then the state.
+      await this.deps.db
+        .update(runs)
+        .set({answer: result.answer, steps: result.steps, spent: result.spent})
+        .where(eq(runs.id, args.runId));
+
       await emit({kind: 'finished', delivered: result.delivered, spent: result.spent});
 
       await this.deps.db
         .update(runs)
-        .set({
-          state: 'done',
-          answer: result.answer,
-          steps: result.steps,
-          spent: result.spent,
-          finishedAt: new Date(),
-        })
+        .set({state: 'done', finishedAt: new Date()})
         .where(eq(runs.id, args.runId));
     } catch (err) {
       // A run that throws must still end in a state the page can render.

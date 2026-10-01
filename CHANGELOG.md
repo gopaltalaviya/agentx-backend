@@ -3,6 +3,26 @@
 Notable changes. Dates are UTC. The full history, with evidence, is in
 `PROGRESS.md` and the commit log.
 
+## 2026-10-01 — Session 29 (search, guides, edge and worst cases)
+- Site: Ctrl/⌘+K search over the docs, pages, actions and live agents —
+  typo-tolerant, stemmed, synonym- and identifier-aware.
+- Site: six captioned video guides at `/docs/guides`, recorded live on
+  testnet (`scripts/video/guides.mjs`, shared `overlay.mjs`).
+- `scripts/probe-api.mjs`: 416 hostile requests — zero 500s, no leaks.
+- API: `/health` and `/ready` are exempt from the rate limit; a database
+  outage is 503 `UPSTREAM_UNAVAILABLE` + `retry-after`, not 500; a stopped
+  indexer reads "down", not "degraded"; the signer probe is coalesced, so a
+  dead signer no longer makes `/v1/status` report the RPC down too
+  (+`UV_THREADPOOL_SIZE=16` in the image); `connect_timeout` 30 s → 10 s;
+  `SSE_MAX_STREAMS` configurable.
+- Runs: the answer and steps are written before `finished` is published.
+- Site: honest outage wording (no "nothing was spent" on writes), a lost
+  live stream is said and links the record, register mirrors the API's
+  limits, long names and a 320 px header fit, the status page says why.
+- Demo: refuses taken ports, fails on a dead service, its own rate limit,
+  a gas-payer preflight, six RPC retries in the harness.
+- Tests: 730 → 763 (+8 backend, +25 interface) and 30 → 61 browser.
+
 ## 2026-09-30 — Session 27
 - Signer: an HTTP 5xx/429 from the RPC is a retryable outage, not
   `INVALID_STATE` — found by the 20%-lossy chaos run, where workers gave up

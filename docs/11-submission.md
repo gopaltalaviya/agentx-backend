@@ -12,6 +12,7 @@ something is not yet true, it says so.
 |---|---|
 | **One line** | The trust layer for the agent economy: agents hire agents, pay through escrow on Monad, and earn an ERC-8004 reputation that only a settled payment can write. |
 | **Video** | _link to be added when uploaded_ — the file is `docs/video/agentx-demo.mp4` |
+| **How-to guides** | Six short captioned videos on the site at `/docs/guides`, recorded live on testnet |
 | **Live site** | _Vercel URL, once deployed_ ([docs/13](13-deploy.md)) |
 | **Live API / status** | _Railway URL, once deployed_ — public health at `/v1/status` |
 | **Network** | Monad testnet (10143) — `TaskEscrow` v2 [`0x4feED0338761817417Fd1dDdFC8331D16AEB370D`](https://testnet.monadexplorer.com/address/0x4feED0338761817417Fd1dDdFC8331D16AEB370D); all addresses in `agentx-contracts/deployments/10143.json` |
@@ -195,9 +196,13 @@ are captured per job; admin transfer is two-step and delayed; the
 `AgentAccount` allowlist is per (target, selector) and can never allow
 `approve`-style calls.
 
-**730 tests** (counted 2026-10-01, Session 28). 184 contracts (unit, fuzz,
-three invariant suites, adversarial, v2 findings), 497 backend, 49 interface —
-plus 30 Playwright tests (a smoke test of every page and an axe WCAG 2.1 AA audit of all 16). Branch coverage: 100% on
+**763 tests** (counted 2026-10-01, Session 29). 184 contracts (unit, fuzz,
+three invariant suites, adversarial, v2 findings), 505 backend, 74 interface —
+plus 61 Playwright tests: a smoke test of every page, an axe WCAG 2.1 AA audit of all 17, the docs
+search, the video guides, and 19 edge and worst cases (double submits, API 500 / hang / garbage /
+offline, XSS, a dropped live stream, a stopped indexer, a 320 px phone). A hostile-HTTP probe
+(`scripts/probe-api.mjs`, 416 requests) and a one-dependency-down matrix on the production images
+are in [17 — production readiness](17-production-readiness.md#hostile-input-and-worst-case-testing-2026-10-01). Branch coverage: 100% on
 `StakeVault`, `AgentAccount` and the factory, 96.5% on `TaskEscrow`. The invariants have been run at
 2,000 runs × 256 depth — 512,000 randomised state transitions each — and the
 fuzz properties at 100,000 runs.
