@@ -12,7 +12,7 @@
   chain, including a real dispute expired by the keeper after its 1 h
   timeout. Backend and interface have lint, formatting, coverage floors, CI,
   containers, metrics, graceful shutdown and a browser smoke test.
-- Overall: `██████████████████░░` 92% — **107 / 116 tasks** (4 cut, recorded in PLAN), **763 tests green**
+- Overall: `██████████████████░░` 92% — **110 / 119 tasks** (4 cut, recorded in PLAN), **763 tests green**
   (184 contracts · 505 backend · 74 interface) + 61 browser tests (14 smoke, 17 accessibility, 9 search, 2 guides, 19 edge)
 
 ---
@@ -38,8 +38,11 @@
    key from `artifacts/demo-hold.json` into `/demo` and press **Run** — the
    trace streams live and settles 4/4 in ~76 s. It must be the first run on
    those agents (a second run's prompts differ, so the cached replay misses).
-3. **Testnet MON.** You topped DEPLOYER up; after M5-06 and the screenshot
-   run it holds **~23 MON** — about 45 demo runs. A run costs ~0.5.
+3. **Testnet MON** (checked 2026-10-01, end of Session 29): DEPLOYER
+   `0xd5b8…1137` holds **15.68 MON** (~30 demo runs at ~0.5). **FUNDER
+   `0x5c03…Cc54` holds 0.0066 MON — top it up** (2–3 MON is plenty). Until
+   then run demos with `unset FUNDER_PRIVATE_KEY` so the deployer pays gas;
+   that also turns the keeper off (the demo prints exactly this if you forget).
 4. **Railway + Vercel** — follow [docs/13-deploy.md](docs/13-deploy.md): every
    service, every variable, in order. The backend now builds from its own repo
    (`chain/`), and the images were rehearsed locally. Afterwards:
@@ -61,8 +64,12 @@
 
 ### 🤖 Claude — nothing left that is mine to do before the deadline
 
-Done in Session 26: contracts v2 (the `DISPUTED` timeout among them) and the
-hardening of all three repos. Post-hackathon only:
+Done in Session 26: contracts v2 and the hardening of all three repos.
+Done in Session 29: docs search, six video guides at `/docs/guides`, the edge
+/ hostile-HTTP / one-dependency-down testing and its 14 fixes — all pushed.
+If asked for more, good candidates: re-record the guides after any UI change
+(`scripts/video/guides.mjs`), and re-run the chaos and worst-case matrices
+after any change to the signer, API or indexer. Post-hackathon only:
 
 1. ERC-8183 conformance — a new kernel with AGENTX as evaluator + hook
    ([docs/12 §7](docs/12-erc8183-mapping.md#7-what-conformance-would-look-like)).
@@ -95,7 +102,7 @@ no CORS headers).
 ## 🔌 Cold start — resuming after the terminal closed
 
 Everything a fresh session needs, assuming it knows nothing. Verified
-2026-09-25.
+2026-09-25; commands and counts re-checked 2026-10-01 (Session 29).
 
 ### ✅ Everything is backed up (resolved 2026-09-25)
 
@@ -142,11 +149,15 @@ cd ../agentx-contracts && forge build
 
 # 3. Prove it is all still green
 FOUNDRY_PROFILE=ci forge test              # expect 184 passed
-cd ../agentx-backend && npx tsc -b && npx vitest run   # expect 497 passed
-cd ../agentx-interface && npx tsc --noEmit && npx vitest run && NEXT_PUBLIC_API_URL=http://127.0.0.1:8080 npx next build   # expect 40 passed
+cd ../agentx-backend && npx tsc -b && npx vitest run   # expect 505 passed
+cd ../agentx-interface && npx tsc --noEmit && npx vitest run   # expect 74 passed
+# Browser tests: build against the mock API, then 61 Playwright tests.
+# --workers=2: other projects' test harnesses on this machine cause timeouts at full parallelism.
+NEXT_PUBLIC_API_URL=http://127.0.0.1:18787 npx next build
+E2E_PORT=13200 MOCK_API_PORT=18787 npx playwright test --workers=2   # expect 61 passed
 ```
 
-Expected totals as of 2026-09-30: **184 contracts + 505 backend + 74 interface = 763** (Session 29), plus 61 Playwright tests (14 smoke, 17 axe accessibility, 9 search, 2 guides, 19 edge).
+Expected totals as of 2026-10-01: **184 contracts + 505 backend + 74 interface = 763** (Session 29), plus 61 Playwright tests (14 smoke, 17 axe accessibility, 9 search, 2 guides, 19 edge).
 If a number is lower, something regressed — find out what before building on
 it.
 
@@ -168,8 +179,31 @@ NEXT_PUBLIC_API_URL=http://127.0.0.1:8080 pnpm dev
 NEXT_PUBLIC_API_URL=http://127.0.0.1:8080 pnpm check:contract
 ```
 
-Secrets for deploying live in `agentx-contracts/.env` (exists).
-`agentx-backend/.env` **does not exist yet** and is what blocks `pnpm demo`.
+Secrets live in `agentx-contracts/.env` (exists). Every live script loads it
+with `set -a; . ../agentx-contracts/.env; set +a` — there is no
+`agentx-backend/.env`, and none is needed.
+
+### The site + a held demo, for clicking through it yourself
+
+Two terminals. In the user's own terminal they run as long as needed (a
+Claude background task is killed after 2 h, and its child processes can
+outlive it — `demo.mjs` now refuses to start if :7098 or :8098 is taken).
+
+```bash
+# 1 — agentx-backend: fresh agents on testnet, held open
+set -a; . ../agentx-contracts/.env; set +a
+unset GEMINI_API_KEY MAINNET_DEPLOYER_PRIVATE_KEY FUNDER_PRIVATE_KEY   # FUNDER: until it is topped up
+VERIFY_CHAIN_ID=10143 AGENTX_CONTRACTS_ROOT=../agentx-contracts DATABASE_URL=postgres://agentx:agentx@127.0.0.1:5442/agentx BRAIN_CHAIN=ollama BRAIN_CHAIN_ORCHESTRATOR=ollama OLLAMA_MODEL=llama3:latest CORS_ORIGINS=http://localhost:3300,http://127.0.0.1:3300 DEMO_HOLD=ui AGENT_MODE=cached AGENT_REPLAY_MAX_MS=2000 node scripts/demo.mjs
+
+# 2 — agentx-interface: the site against it
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8098 npx next build
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8098 npx next start -p 3300
+```
+
+Open http://localhost:3300, paste the key from
+`agentx-backend/artifacts/demo-hold.json` into `/demo`, press Run: 4/4
+settle in ~80 s. Only the FIRST run on a fresh stack matches the cached
+replay; for another, restart step 1.
 
 ### Live-chain checks need the deployer key
 
@@ -246,6 +280,13 @@ v2 one — any prompt or schema change still invalidates it.
 | `EADDRINUSE 127.0.0.1:5442` in a test, once in ~15 full runs | **Not our code.** Windows ran out of ephemeral ports: an unrelated process on this machine (`another-process`) held ~1,800 sockets and churned ~7,000 into TIME_WAIT (Sep 30). This is almost certainly the old "`meta.test.ts` flake" — its first query is the first connection a file opens. Re-run; if it recurs, check `Get-NetTCPConnection -State TimeWait`. |
 | `cp "$TEMP"/…/*` copies nothing in Git Bash | `$TEMP` is a Windows path; globs do not expand through backslashes. Use `$(cygpath -u "$TEMP")`. |
 | A demo run drains DEPLOYER | ~0.5 MON a run since worker accounts. Check balances before recording; top up from FUNDER. |
+| FUNDER drained → "transaction 0x… reverted" | Fixed to a clear preflight message. FUNDER is at 0.0066 MON (Oct 1): `unset FUNDER_PRIVATE_KEY` so the deployer pays, or top it up. |
+| Claude background tasks die at 2 h, children survive | A stopped demo left its signer on :7098; the next demo's hires all failed 401. `demo.mjs` now refuses taken ports. Kill leftovers by process tree (`taskkill //PID <pid> //F //T`), checking the command line first. |
+| `:4010` / `:3100` / `:8787` belong to **another-project**, another project | Its API is also `apps/api/dist/main.js` — check the parent command line before killing anything. |
+| Playwright timeouts / "Failed to find context" across many tests | Contention from other projects' harnesses, not our code. `--workers=2`. One test passing alone confirms it. |
+| Two `next start` on one `.next` | Rebuilding `.next` under a running server gave `ChunkLoadError`s. Stop every `next start` of this repo before `next build`. |
+| `docker compose -f docker-compose.full.yml up --build` → BuildKit `EOF` | Four parallel image builds crashed Docker Desktop's builder (once taking the dev Postgres down, exit 255). `COMPOSE_PARALLEL_LIMIT=1`. Restart `agentx-backend-postgres-1` if it is down. |
+| Backend tests TRUNCATE the dev database | Never run `pnpm test` (or one API test file) while a demo is holding — it wipes the demo's agents and keys. |
 
 ### Standing rules — do not re-derive these
 
@@ -263,10 +304,13 @@ v2 one — any prompt or schema change still invalidates it.
 
 ### In-flight work right now
 
-**None in progress.** Session 29's commits are **local, not pushed** — push
-when the owner says so. Nothing is half-finished.
-There is no half-finished edit, no stashed change, no branch to
-reconcile. A fresh session can start from the Next actions list at the top of
+**None.** All three repos are clean **and pushed** as of 2026-10-01, end of
+Session 29: contracts `3d821bb`, backend `d137e48` (+ this file's update),
+interface `d311c72`. No process is left running: the local site and held
+demo were stopped by the 2 h limit and their leftovers killed; the isolated
+`agentx-full` compose stack was removed (its volume `agentx-full-pg` kept).
+The dev Postgres container `agentx-backend-postgres-1` is up. There is no
+half-finished edit, no stashed change, no branch to reconcile. A fresh session can start from the Next actions list at the top of
 this file.
 
 ---

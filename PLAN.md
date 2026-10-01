@@ -4,7 +4,7 @@
 This file changes only when scope changes. Day-to-day state lives in
 [PROGRESS.md](PROGRESS.md).
 
-- Created: 2026-09-22 · last revised 2026-09-22 (Session 4)
+- Created: 2026-09-22 · last revised 2026-10-01 (Session 29: M4-11, M4-12, M5-08 added at the owner's request)
 - Deadline: **2026-10-13, 11:59 PM ET** ✅ verified
 - Track: **4 — Trust, Identity & AI Infrastructure** ($30,000)
 - Repos: 3 ([docs/06](docs/06-repo-structure.md)) · Networks: testnet first, both supported ([docs/08](docs/08-configuration.md))
@@ -226,6 +226,8 @@ Goal: make the invisible visible.
 | M4-08 | ✅ Running totals: spent, tx count, agents hired | 🤖 | W | M4-06 |
 | M4-09 | ✅ Responsive + dark mode | 🤖 | W | M4-06 |
 | M4-10 | 👤 Vercel deploy, custom domain if wanted | 👤 | W | M4-09 |
+| M4-11 | ✅ Docs search — Ctrl/⌘+K, typo/stem/synonym-aware, pages + actions + live agents | 🤖 | W | M4-09 |
+| M4-12 | ✅ Video guides — six captioned clips at `/docs/guides`, recorded live on testnet | 🤖 | W | M4-11 |
 
 **Done when:** a stranger watching the demo page can explain what happened
 without narration.
@@ -243,6 +245,7 @@ without narration.
 | M5-05 | ✅ Confirm: no keys in logs, rate limits live, idempotency enforced | 🤖 | M5-03 |
 | M5-06 | ✅ 3 consecutive clean demo runs on testnet, timed — 149 / 153 / 168 s, Sep 30 | 🤖 | M5-02 |
 | M5-07 | 👤 **Record backup video** | 👤 | M5-06 |
+| M5-08 | ✅ Edge, hostile-input and one-dependency-down testing; 14 defects fixed ([docs/17 §16–19](docs/17-production-readiness.md)) | 🤖 | M5-06 |
 
 **Done when:** three clean runs in a row and a backup video exists.
 
