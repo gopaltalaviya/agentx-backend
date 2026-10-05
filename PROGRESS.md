@@ -331,9 +331,9 @@ this is the first thing a fresh session needs.
 
 | Repo | URL | Status |
 |---|---|---|
-| `agentx-contracts` | `git@github.com:gopaltalaviya/agentx-contracts.git` | ✅ **pushed** `5aa81a9` |
-| `agentx-backend` | `git@github.com:gopaltalaviya/agentx-backend.git` | ✅ **pushed** `199dfe6` |
-| `agentx-interface` | `git@github.com:gopaltalaviya/agentx-interface.git` | ✅ Next.js 15, 3 pages, `3503688` |
+| `agentx-contracts` | `git@github.com:gopaltalaviya/agentx-contracts.git` | ✅ **pushed** `db75bfa` |
+| `agentx-backend` | `git@github.com:gopaltalaviya/agentx-backend.git` | ✅ **pushed** `28da7e1` |
+| `agentx-interface` | `git@github.com:gopaltalaviya/agentx-interface.git` | ✅ Next.js 15, 3 pages, `98a0e72` |
 | GitHub owner | `gopaltalaviya` | ✅ |
 | Commit author name | `gopaltalaviya` | ✅ |
 | Commit author email | the owner's GitHub email | ✅ |
@@ -566,9 +566,9 @@ and seen to fail.
 | ✅ | `e2e.mjs` | passed · idempotent replay, fee 0.0002 withheld, reputation written |
 | ✅ | Chaos: worker never accepts | cancelled + refunded, re-hired, settled |
 | ✅ | Chaos: worker silent after accepting | re-hired; chain job 23 refunded by the keeper at its deadline |
-| ✅ | Chaos: slow, lossy RPC (5%) | first run **failed — found a real worker defect** (fixed, `8c56c2c`); re-run 4/4 settled |
-| ✅ | Chaos: slow, lossy RPC (20%) | Session 27. First run **2/4 — the signer called an HTTP 503 `INVALID_STATE`**, so a worker gave up an accept and another finished work (fixed, `69f7dd2`); second run **3/4 — a late accept made the cancel fail and the orchestrator abandoned the delivery** (fixed, `b81ccd8`); third run 4/4. Then 20% + **30% on broadcasts** (25/78 failed): a submit hit a 503, was retried, 4/4 settled · 858 s |
-| ✅ | **M5-06: three consecutive timed runs** (the video command) | first attempt 2/3 — **found the indexer walking a job backwards** (fixed, `b80db6f`); then 3/3 clean, 25/25 checks each · **149 / 153 / 168 s** |
+| ✅ | Chaos: slow, lossy RPC (5%) | first run **failed — found a real worker defect** (fixed, `c781ea8`); re-run 4/4 settled |
+| ✅ | Chaos: slow, lossy RPC (20%) | Session 27. First run **2/4 — the signer called an HTTP 503 `INVALID_STATE`**, so a worker gave up an accept and another finished work (fixed, `e5023d5`); second run **3/4 — a late accept made the cancel fail and the orchestrator abandoned the delivery** (fixed, `77620fe`); third run 4/4. Then 20% + **30% on broadcasts** (25/78 failed): a submit hit a 503, was retried, 4/4 settled · 858 s |
+| ✅ | **M5-06: three consecutive timed runs** (the video command) | first attempt 2/3 — **found the indexer walking a job backwards** (fixed, `0044e77`); then 3/3 clean, 25/25 checks each · **149 / 153 / 168 s** |
 | ✅ | Deploy rehearsal | production images built from `agentx-backend` alone; API migrates an empty DB pre-deploy; signer + API bound to `::`; `check-deployment.mjs` all green against a production interface build, and red on a wrong CORS origin |
 | ✅ | `verify-indexer.mjs` | Session 27, v2: directPay job 41 decoded, linked, projected; reputation from settlement; replay a no-op; reorg rewind clean |
 | ✅ | Param drift · secret scan (tracked + full history) | no drift · clean in all three repos |
@@ -813,7 +813,7 @@ uptime monitor at `/v1/status`.
 the audit kept that for consistency and documented it. The interface's agent
 page branches on `NOT_FOUND`, and its mock API had always answered 404, so the
 smoke test agreed with the assumption: against the real API the page showed
-"could not load" and a useless retry. Now 404 (`e2ba24c`); 496 tests.
+"could not load" and a useless retry. Now 404 (`1651d11`); 496 tests.
 
 ### Session 28, part 2 — 2026-10-01 (brand · independent review · the video)
 
@@ -860,7 +860,7 @@ smoke test agreed with the assumption: against the real API the page showed
 - Browser suite: 30/30 on four runs; one earlier run had a single failure
   that did not reproduce (machine under load from another project's tests).
 
-### Session 27 — deep browser testing (backend `a1ccec9`, interface `ac93de4`)
+### Session 27 — deep browser testing (backend `6d481fb`, interface `e9771f4`)
 
 - **Walkthrough against the real stack**: 51 checks — every link on 18
   pages, every control (tabs, FAQ, copy, rank modes, search, filters,
@@ -878,7 +878,7 @@ smoke test agreed with the assumption: against the real API the page showed
   scrolling code — both fixed; now 0 serious/critical.
 - The demo's figures now refresh after a run settles.
 
-### Session 27 — a product site (interface `ef54dd8`)
+### Session 27 — a product site (interface `cff1a9e`)
 
 On "still looks old; make it production level, a real company project to
 raise money": `/` is now a landing page (animated escrow diagram, live figures
@@ -891,7 +891,7 @@ logos, quotes or metrics; every fact read from the contracts, SDK, MCP tools
 and docs/15. Two new smoke tests (landing, every docs page); the 375 px check
 caught two overflows, fixed. 45 unit + 14 smoke.
 
-### Session 27 — modern UI/UX (interface `04f89ee`, `2a9e838`, `4ba71e9`)
+### Session 27 — modern UI/UX (interface `1900544`, `815fb2e`, `456e14a`)
 
 On "make it modern UIUX, latest animations", filtered to what AGENTX has (no
 trading, charts or WebSockets to design for):
@@ -923,34 +923,34 @@ run, `verify-indexer.mjs` and the balances. Docker Desktop had to be started.
 - **Chaos at 20% failed twice, each time on a real defect:**
   1. The signer classified viem's `HttpRequestError` ("HTTP request failed.",
      503 on `.status`) as `INVALID_STATE` — no `retryAfter` — so the worker
-     fixes of `8c56c2c` never engaged: one worker gave up an accept, another
+     fixes of `c781ea8` never engaged: one worker gave up an accept, another
      its finished work at submit. Now 5xx/429 on the error chain is a
-     retryable outage (`69f7dd2`).
+     retryable outage (`e5023d5`).
   2. With accepts retrying, one landed after the 45 s accept window; the
      cancel was refused (`InvalidState`) and the orchestrator reported the
      step failed while the worker delivered seconds later. It now waits for
-     the delivery; a failed wait is still never re-hired (`b81ccd8`).
+     the delivery; a failed wait is still never re-hired (`77620fe`).
   Each fix's test failed on the old code first. 471 backend tests.
 - Third run 4/4 — but not one broadcast had failed in it (reads are most of
   the traffic, and viem retries those itself), so it proved nothing about
-  fix 1. `slow-rpc.mjs` gained `SLOW_RPC_FAIL_SEND` (`1caf1fb`); at 30% on
+  fix 1. `slow-rpc.mjs` gained `SLOW_RPC_FAIL_SEND` (`942b106`); at 30% on
   broadcasts (25/78 failed) a submit hit a 503, retried, and 4/4 settled.
 - Cost: the chaos runs took DEPLOYER to 0.018 MON; you topped it up.
 
 **Then, on "complete the full product first":**
-- **Deploy-ready from one repo** (`19cab28`). A Railway build clones one repo
+- **Deploy-ready from one repo** (`e2ba821`). A Railway build clones one repo
   and could not have built: the Dockerfile read chain facts from a sibling
   checkout. They now live in `chain/` (13 JSON files, byte-exact, CI
   `--check`s drift); `deploy/railway/*.json`; runbook `docs/13-deploy.md`;
   `scripts/check-deployment.mjs`. Rehearsed on the production images — see
-  Testing. The contracts' DEPLOYMENT.md gained the sync step (`6f08cb9`).
+  Testing. The contracts' DEPLOYMENT.md gained the sync step (`dad98cf`).
 - **M5-06** — the first three timed runs went 2/3: the indexer projected an
   older `JobAccepted` over the API's `submitted`, and approve was refused.
   Projection is now forward-only, same-state writes still land the fee
-  (`b80db6f`; a first version dropped the fee and its test caught it). Then
+  (`0044e77`; a first version dropped the fee and its test caught it). Then
   3/3 clean: 149, 153, 168 s. `verify-indexer.mjs` re-run: passed.
 - **Screenshots** refreshed from a real v2 run through `POST /v1/runs`
-  (`55e55f3` in the interface).
+  (`599154a` in the interface).
 
 ### Session 26 — 2026-09-30 (industrial-standard hardening · contracts v2 · everything re-verified live)
 
@@ -958,7 +958,7 @@ run, `verify-indexer.mjs` and the balances. Docker Desktop had to be started.
 calls: redeploy v2; reads stay public with unguessable ids; AGENT_A/B testnet
 MON may fund the work.
 
-**Contracts v2** (`65ef651`, `63363f0`, `ed16677`, `13fff8e`) — tests first;
+**Contracts v2** (`c66090c`, `9fa7d8d`, `3370074`, `dfb7c3c`) — tests first;
 14 new tests failed on v1. `SameOwner`, `minJobAmount`, fee floor; payouts
 that cannot be delivered are held in `owed` and claimable; `expireDispute`
 (outcome `UNRESOLVED`, no feedback, so "dispute and wait out the arbiter"
@@ -969,7 +969,7 @@ per-(target, selector) allowlist with forbidden approve-style selectors,
 theirs. 184 tests, three invariant suites, solhint + Slither + coverage floor
 in CI. Redeployed to 10143 (start block 66905096).
 
-**Backend** (`66c34a6` … `8c56c2c`):
+**Backend** (`5ff70f5` … `c781ea8`):
 - Fixed, each with a test that failed first: the signer lock that could stay
   held forever; O(keys) scrypt auth (now `ax_<keyId>_<secret>`, SHA-256, one
   indexed lookup, IP rate limit before auth); enumerable job/run ids (uuid
@@ -985,22 +985,22 @@ in CI. Redeployed to 10143 (start block 66905096).
   full-stack compose (verified: migrations, healthy, non-root, SIGTERM in
   745 ms); CI with audit, gitleaks, CodeQL, Dependabot.
 
-**Interface** (`58bcae2`, `9234c4c`, `2a8911a`, and the screenshot commit) —
+**Interface** (`78ceaee`, `0b1dc8d`, `85b934d`, and the screenshot commit) —
 see Complete status. The smoke test found that a root `loading.tsx` made
 every `notFound()` a 200.
 
 **Live on v2 — three more defects found by running it:**
 1. The demo registered each worker's AGENTX record with DEPLOYER as owner;
    the API (correctly) refused it once workers owned their identities
-   (`6dea755`).
-2. `keeper-sweep` called a correct dispute expiry a failure (`0d2ac6b`).
+   (`01f1b71`).
+2. `keeper-sweep` called a correct dispute expiry a failure (`7502d1f`).
 3. Under a lossy RPC a failed submit was silent, and the worker then tried to
-   accept its own job again and abandoned it (`8c56c2c`).
+   accept its own job again and abandoned it (`c781ea8`).
 
 **Timing.** The v2 cached replay takes 232–265 s: 58 s of setup
 transactions, then ~45 s per hire cycle, ~24 s of it replayed model latency,
 and the new recording plans four steps, not three. `AGENT_REPLAY_MAX_MS`
-(`279cb60`) brings it to 162 s without re-recording.
+(`6cf2a86`) brings it to 162 s without re-recording.
 
 **MON:** 6 each moved AGENT_A → DEPLOYER and AGENT_B → FUNDER. Balances after Session 27: see Next actions.
 
@@ -1064,8 +1064,8 @@ e2e (EOA path) ✅. Drift: none. Full-history secret scan: clean.
 
 ### Session 24 — 2026-09-29 (orchestrator on AgentAccount · 7/7 chaos · reorgs · run history)
 
-**Shipped** — backend `aa2bc83` `eeccf86` `f33aba2` `56bba1d` `30b8346`
-`416f6c3` (and this entry) · interface `29bae34`. 128 + 363 + 7 =
+**Shipped** — backend `607eddf` `a8eb45d` `36cfb8a` `e54e03f` `87d3ef1`
+`ef44e6e` (and this entry) · interface `48f2e20`. 128 + 363 + 7 =
 **498 tests green**. Every new test failed on the old code first.
 
 **The on-chain cap claim is now fact, for the agent that spends.** The
@@ -1109,8 +1109,8 @@ env for top-ups (it has 9+ MON); `scripts/slow-rpc.mjs` for network chaos.
 
 ### Session 23 — 2026-09-29 ("complete everything": keeper, retry, caps, chaos, deck, interface)
 
-**Shipped** — backend `2a0e2ee`…`d02a1e9` (and this entry) · contracts
-`066af2b` · interface `f081679` `66b0432`. 128 + 351 + 7 = **486 tests green**.
+**Shipped** — backend `fe36586`…`0fa27bc` (and this entry) · contracts
+`ed75feb` · interface `c78e4e3` `dbc8645`. 128 + 351 + 7 = **486 tests green**.
 Every new test was run against the code before its fix and seen to fail.
 
 The instruction was to finish everything that is Claude's to finish. A docs
@@ -1189,8 +1189,8 @@ reorg deletion; DISPUTED has no timeout (contract; documented); the
 
 ### Session 22 — 2026-09-29 (the loop runs end to end · 16 defects on the live path)
 
-**Shipped** — backend `03026e5` `403633a` `b211456` `bc48a27` `c203214` ·
-contracts `164f17c`. 128 + 292 + 7 = **427 tests green**.
+**Shipped** — backend `240e239` `fe5a577` `a169c15` `f118e50` `67afd7c` ·
+contracts `0865996`. 128 + 292 + 7 = **427 tests green**.
 
 (Session 21, 2026-09-28, shipped the local `.pptx` deck, `docs/11-submission.md`,
 the status workbook and signer/DB/AgentAccount tests; it has no entry of its
@@ -1240,7 +1240,7 @@ quality upgrade rather than a blocker.
 
 ### Session 20 — 2026-09-28 (docs 05/08 audit · a real race · CI · interface tests)
 
-**Shipped** — backend `c5ab57e` · contracts `e9409a5` · interface `532823e`.
+**Shipped** — backend `1e9cf70` · contracts `cbe7668` · interface `7bd3dc2`.
 179 + 120 + 7 = **306 tests green**.
 
 Three days idle. Nothing had changed: repos clean, `.env` still absent, so
@@ -1322,7 +1322,7 @@ record, and names the three things that turned out differently.
 
 ### Session 19 — 2026-09-25 (full recheck · CI · doc 06 audit)
 
-**Shipped** — backend `f58dca1`, `ebb208f` · interface CI. 179 tests green.
+**Shipped** — backend `3c6c8fd`, `d443c3c` · interface CI. 179 tests green.
 
 **The full recheck.** Repos clean and matching their remotes, 120 + 179 tests
 green, interface builds, secret scans clean, config integrity OK, all seven
@@ -1413,7 +1413,7 @@ one machine, named `temp`. The code was safe on GitHub; the thinking behind it
 was one `rm` away — and the notes are the part that cannot be reconstructed
 from the code.
 
-Your call: move them into `agentx-backend` (commit `45cce2e`). They go public
+Your call: move them into `agentx-backend` (commit `d122adc`). They go public
 with it by Oct 13, which the submission requires anyway, and a judge reading
 the threat model or the defect log is a good outcome rather than a risk. No
 fourth repository was created.
@@ -1453,7 +1453,7 @@ first.
 
 ### Session 17 — 2026-09-24 (chaos checklist, key-free items)
 
-**Shipped** — backend `57d9840`, `9b8f1fd`. 167 backend tests green.
+**Shipped** — backend `7dd4bab`, `d55f341`. 167 backend tests green.
 
 Two of the seven chaos items are closed, and the first one found a real bug.
 
@@ -1496,7 +1496,7 @@ time injected — 10 tests, milliseconds.
 - My own test helper aborted *after* the call it expected to throw, so the
   loop spun for ten minutes before I noticed. Aborts belong in `finally`.
 
-**Later the same day — the remaining key-free items** (backend `b2f82e7`,
+**Later the same day — the remaining key-free items** (backend `b6565f5`,
 175 tests green). Two more gaps between documented and actual behaviour:
 
 - **A malformed result was stored and signed for.** The route comment claimed
@@ -1517,8 +1517,8 @@ time injected — 10 tests, milliseconds.
   address to fund; an unreachable RPC says nothing was broadcast, so retrying
   is safe.
 
-**M6 groundwork the same day** — contracts `3b087d1`, `f-sync` · backend
-`7db227f`.
+**M6 groundwork the same day** — contracts `e3c5987`, `f-sync` · backend
+`80aef80`.
 
 - Both READMEs rewritten against what actually exists. The backend one still
   described the apps as "in progress"; the contracts one had no clickable
@@ -1537,7 +1537,7 @@ tracked file in session 13. Now: exactly 12/15/18/21/24 lowercase words, alone
 on a line or inside a quoted or assigned value. Verified both directions — real
 mnemonics bare, in an env var and in JSON still flag; the prose does not.
 
-**🔴 The docs pass found the worst bug yet** — backend `b6bb59b`, 179 tests.
+**🔴 The docs pass found the worst bug yet** — backend `26cab0c`, 179 tests.
 
 Auditing docs/04 §5 against the real routes, to fix the documentation, turned
 up a defect that would have broken the demo's main path in front of judges.
@@ -1583,7 +1583,7 @@ network/budget/runs/health endpoints were entirely undocumented.
 
 ### Session 16 — 2026-09-23 (register page · security pass T1–T17)
 
-**Shipped** — contracts `5c7159a` · backend `2851876`, `baf177a` · interface `794423b`
+**Shipped** — contracts `056c8e4` · backend `fd44e25`, `409b556` · interface `4eabe95`
 
 - [M4] Register-an-agent page: ERC-8004 identity on-chain first, then the
   AGENTX record, then the key shown once.
@@ -1648,7 +1648,7 @@ with the date. Three did not:
 
 ### Session 15 — 2026-09-23 (runs API · the interface)
 
-**Shipped** — backend `b597a0e`, `255b49d` · interface `3503688` (first commit)
+**Shipped** — backend `39f941f`, `1959423` · interface `98a0e72` (first commit)
 
 - [M4-06] Live demo page, built first. One box, then the trace: plan, hire,
   judge, settle — with an explorer link on every on-chain line.
@@ -1709,7 +1709,7 @@ with the date. Three did not:
 **M3 is code-complete except the live run.** `pnpm demo` exists and gates on
 a reachable model before it writes anything to the chain.
 
-**Shipped** — backend `1092949`, `885c9f9`, `277a7a9`, `5ebab92`
+**Shipped** — backend `618edf4`, `51c7eb9`, `ac3db60`, `fc3d752`
 
 - [M3-02/03/04] `apps/mcp` — eight tools over MCP, tested through a real
   in-memory MCP session (23 tests), not just as data.
@@ -1769,7 +1769,7 @@ a reachable model before it writes anything to the chain.
 **AGENTX is live on Monad testnet.** Escrow
 `0x1B0959Dfd32323E5a4749D5444C2E6435349027c`, startBlock 65027889.
 
-**Shipped** — contracts `174031c` · backend `adf47e9`, `35979d0`, `0074f9b`
+**Shipped** — contracts `b66ec5a` · backend `28d05eb`, `a12788f`, `b417024`
 
 Fastify API (auth, discovery + ranking, job lifecycle, SSE, RFC 7807), the
 testnet deployment, and an adversarial review that found five real defects.
@@ -1819,7 +1819,7 @@ did not.**
 
 ### Session 12 — 2026-09-23 (M2: signer)
 
-**Shipped** — `agentx-backend` `ca12fb4`
+**Shipped** — `agentx-backend` `e92d6de`
 
 The signer holds every key and does nothing else. On Railway it binds to
 private networking only — an unauthenticated signing endpoint on the public
@@ -1861,7 +1861,7 @@ fixture built with the same wrong assumption would have passed.
 
 ### Session 11 — 2026-09-23 (M2: indexer)
 
-**Shipped** — contracts `8237d21` (ABI export) · backend `ff8a3be` (indexer)
+**Shipped** — contracts `63b6ed1` (ABI export) · backend `ddb58f0` (indexer)
 
 The indexer is chain → Postgres, one worker per enabled chain, built around
 being **re-runnable** (idempotency from the unique key, not from care) and
@@ -1907,7 +1907,7 @@ corrupted cursor hash       rewind replayed, nothing duplicated
 
 ### Session 10 — 2026-09-23 (M2: database layer)
 
-**Shipped** — `agentx-backend` `f19c36e`
+**Shipped** — `agentx-backend` `e2cb899`
 
 `@agentx/db`: Drizzle schema, generated migration, and a hand-written
 constraints migration for what Drizzle cannot express.
@@ -1947,7 +1947,7 @@ replaying a block range becomes a no-op rather than a duplication.
 
 ### Session 9 — 2026-09-23 (M1 contracts complete)
 
-**Shipped** — `agentx-contracts` `be2efae`
+**Shipped** — `agentx-contracts` `bdfb924`
 
 `AgentAccount` + `AgentAccountFactory`, and `Deploy.s.sol` wired for the whole
 protocol. **All contracts are now written.**
@@ -2003,7 +2003,7 @@ deploy → 6 contracts incl. ERC-8004 reference registries (absent on this chain
 
 ### Session 8 — 2026-09-23 (M1 core contracts)
 
-**Shipped** — `agentx-contracts` `5a626fb`
+**Shipped** — `agentx-contracts` `9259f4f`
 
 | Contract | Notes |
 |---|---|

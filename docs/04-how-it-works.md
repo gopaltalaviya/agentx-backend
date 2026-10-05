@@ -626,7 +626,7 @@ Every one of those checks exists because the signer service could be
 compromised. The account is the last line: even with the key, an attacker
 cannot exceed the daily cap or call a target the owner never allowlisted.
 
-> **As built (2026-09-29, commit `eeccf86`): the demo's orchestrator pays
+> **As built (2026-09-29, commit `a8eb45d`): the demo's orchestrator pays
 > through an `AgentAccount`.** It is the only agent that spends. `pnpm demo`
 > has the owner — `DEPLOYER`, standing in for a human; on a real deployment it
 > would be the human's own key, never the server's — create it through

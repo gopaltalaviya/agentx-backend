@@ -18,7 +18,7 @@ verified on Railway or Vercel.
 | ✅ | Readiness `/ready` checks real dependencies (api: db + signer; signer: db + RPC; indexer: db + recent tick) | same; `apps/indexer/src/main.ts` |
 | ✅ | Public `/ready` names a failed dependency without leaking its error | fixed this session; test injects an error naming an internal host and asserts it is absent |
 | ✅ | Public `GET /v1/status` — components, indexer lag, build; cached, bounded, no internal detail | `apps/api/src/routes/status.ts`, 7 tests in `status.test.ts` (failed on the old code first); real response against Monad testnet captured 2026-09-30 |
-| ✅ | Build metadata (version, commit, build time) on `/health` and `/v1/status` | `packages/service/src/build.ts` (3 tests); Dockerfile writes `/app/build-info.json`; local api image reported `a1f9485db5cc` + build time; CI asserts it |
+| ✅ | Build metadata (version, commit, build time) on `/health` and `/v1/status` | `packages/service/src/build.ts` (3 tests); Dockerfile writes `/app/build-info.json`; local api image reported `1a2f52d818a9` + build time; CI asserts it |
 | ✅ | Indexer lag metrics | `indexer_head_block`, `indexer_indexed_block`, `indexer_lag_blocks`; `progress()` tested; `verify-indexer.mjs` passed live on testnet |
 | ✅ | API versioned by path (`/v1`) | every route in `apps/api/src/routes` |
 | ⚠️ | Release tags / changelog | none; commit SHA is the identity. 🧑‍💻 whether to tag |
@@ -68,7 +68,7 @@ verified on Railway or Vercel.
 | ✅ | Reorg detection and rewind | live check "reorg rewind replayed without duplicating anything" |
 | ✅ | Halts (does not corrupt) on a deep reorg | `checkRewindWindow`; documented repair R4 (not rehearsed) |
 | ✅ | RPC failure: backoff, never dies | `loop.test.ts` |
-| ✅ | Forward-only state | `AT_OR_BEFORE`; Session 27 fix `b80db6f` |
+| ✅ | Forward-only state | `AT_OR_BEFORE`; Session 27 fix `0044e77` |
 | ⚠️ | Backfill / reindex tooling | SQL on the cursor (docs/16 R3); no script |
 | 🔍 | Contracts redeploy against an old database | job ids restart at 1 vs `UNIQUE (chain_id, chain_job_id)` — derived, not observed (docs/16 R11) |
 
