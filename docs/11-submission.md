@@ -196,10 +196,10 @@ are captured per job; admin transfer is two-step and delayed; the
 `AgentAccount` allowlist is per (target, selector) and can never allow
 `approve`-style calls.
 
-**763 tests** (counted 2026-10-01, Session 29). 184 contracts (unit, fuzz,
-three invariant suites, adversarial, v2 findings), 505 backend, 74 interface —
-plus 61 Playwright tests: a smoke test of every page, an axe WCAG 2.1 AA audit of all 17, the docs
-search, the video guides, and 19 edge and worst cases (double submits, API 500 / hang / garbage /
+**766 tests** (counted 2026-10-05, Session 30). 184 contracts (unit, fuzz,
+three invariant suites, adversarial, v2 findings), 505 backend, 77 interface —
+plus 62 Playwright tests, each run in Chrome, Firefox, Safari's engine and on an iPhone and an Android phone: a smoke test of every page, an axe WCAG 2.1 AA audit of all 17, the docs
+search, the video guides, and 20 edge and worst cases (double submits, API 500 / hang / garbage /
 offline, XSS, a dropped live stream, a stopped indexer, a 320 px phone). A hostile-HTTP probe
 (`scripts/probe-api.mjs`, 416 requests) and a one-dependency-down matrix on the production images
 are in [17 — production readiness](17-production-readiness.md#hostile-input-and-worst-case-testing-2026-10-01). Branch coverage: 100% on

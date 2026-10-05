@@ -214,7 +214,7 @@ tests = [
     ("agentx-backend", "signer/auth", 6, "SIGNER_TOKEN, loopback-only without one"),
     ("agentx-backend", "api/cors", 6, "Cross-origin browser calls; credentials stay off"),
     ("agentx-backend", "api/auth", 4, "ax_<keyId>_<secret>, one indexed lookup, legacy keys"),
-    ("agentx-interface", "lib/api + subscribe", 16, "formatUnits past 2^53; SSE kinds, bad frames, terminal close; 5xx/503 read as sentences"),
+    ("agentx-interface", "lib/api + subscribe", 19, "formatUnits past 2^53; SSE kinds, bad frames; only a terminal event ends a run; reconnect + replay reset; 5xx/503 read as sentences"),
     ("agentx-interface", "lib/search", 22, "Docs search: typos, stems, synonyms, identifiers, AND, ranking, hostile input, sections from HTML"),
     ("agentx-interface", "lib/links", 9, "Explorer links: https + known host only; uuid and agent id parsing"),
     ("agentx-interface", "components", 12, "RunTrace (hostile links, money, live region), NetworkBadge (never assumes testnet)"),

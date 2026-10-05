@@ -3,6 +3,16 @@
 Notable changes. Dates are UTC. The full history, with evidence, is in
 `PROGRESS.md` and the commit log.
 
+## 2026-10-05 — Session 30 (cross-browser, audit, rehearsal)
+- Site: input typed before hydration is no longer lost (Safari, phones);
+  a dropped live stream reconnects and never reads as "finished" (Firefox);
+  a reconnect no longer duplicates the trace; wide docs tables are keyboard
+  scrollable on phones. Browser tests run in five browsers on demand.
+- Docs: an independent audit's 19 findings fixed; `.env.example` complete.
+- Verified: no secret in any commit of any repo; live demo, e2e and
+  indexer checks on testnet; production-image rehearsal green.
+- Tests: 763 → 766, browser 61 → 62 (310 across five browsers).
+
 ## 2026-10-01 — Session 29 (search, guides, edge and worst cases)
 - Site: Ctrl/⌘+K search over the docs, pages, actions and live agents —
   typo-tolerant, stemmed, synonym- and identifier-aware.

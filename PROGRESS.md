@@ -12,8 +12,8 @@
   chain, including a real dispute expired by the keeper after its 1 h
   timeout. Backend and interface have lint, formatting, coverage floors, CI,
   containers, metrics, graceful shutdown and a browser smoke test.
-- Overall: `██████████████████░░` 92% — **110 / 119 tasks** (4 cut, recorded in PLAN), **763 tests green**
-  (184 contracts · 505 backend · 74 interface) + 61 browser tests (14 smoke, 17 accessibility, 9 search, 2 guides, 19 edge)
+- Overall: `██████████████████░░` 92% — **110 / 119 tasks** (4 cut, recorded in PLAN), **766 tests green**
+  (184 contracts · 505 backend · 77 interface) + 62 browser tests (14 smoke, 17 accessibility, 9 search, 2 guides, 20 edge) — also run in Firefox, WebKit, iPhone and Android (310 runs)
 
 ---
 
@@ -42,11 +42,25 @@
    (~80 demo runs at ~0.5), FUNDER **15.01 MON** — the keeper and the agents'
    gas top-ups run from it again. If FUNDER ever drains, the demo now says so
    before sending anything.
-4. **Railway + Vercel** — follow [docs/13-deploy.md](docs/13-deploy.md): every
-   service, every variable, in order. The backend now builds from its own repo
-   (`chain/`), and the images were rehearsed locally. Afterwards:
-   `node scripts/check-deployment.mjs <api-url> <site-url>`. A hosted *run*
-   needs a model key on the API (your quota); browsing does not.
+4. **Railway + Vercel** — ⛔ **blocked on you: Railway says the trial has
+   expired** ("please select a plan", 2026-10-05). The CLI is logged in as you;
+   nothing was created. Pick a plan, then say "deploy" — Claude does the rest
+   with the CLI ([docs/13-deploy.md](docs/13-deploy.md)). Vercel needs one
+   `npx vercel login` from you. The images were rehearsed again on Oct 5:
+   `check-deployment` all green, 613 hostile requests clean, every page clean
+   in Chromium, Firefox and WebKit against the production API.
+   **You chose hosted live runs with your Gemini key** (works: one test call,
+   200 in 5 s). What that needs beyond the core services, all designed, none
+   built yet:
+   - agents seeded with **fresh random keys** — the demo's keys are fixed and
+     public in the repo;
+   - a **daily session-key renewal**: the contract caps a session key at 24 h
+     (`MAX_SESSION_KEY_TTL`), so a hosted orchestrator stops hiring after a
+     day without it — a small cron job holding the hosted accounts' owner key;
+   - the three worker bots as Railway services, with the Gemini key;
+   - a per-orchestrator daily run cap, so a leaked key cannot drain the quota;
+   - the orchestrator's API key goes to judges in the submission form only —
+     never in a repo or on the site.
 5. **`EXPLORER_API_KEY`** in `agentx-contracts/.env` for verified source.
    Deployed source is untouched on purpose so verification still matches.
 6. **Gemini — tried, as asked; not used for the video.** The key works. The
@@ -149,14 +163,14 @@ cd ../agentx-contracts && forge build
 # 3. Prove it is all still green
 FOUNDRY_PROFILE=ci forge test              # expect 184 passed
 cd ../agentx-backend && npx tsc -b && npx vitest run   # expect 505 passed
-cd ../agentx-interface && npx tsc --noEmit && npx vitest run   # expect 74 passed
-# Browser tests: build against the mock API, then 61 Playwright tests.
+cd ../agentx-interface && npx tsc --noEmit && npx vitest run   # expect 77 passed
+# Browser tests: build against the mock API, then 62 Playwright tests (E2E_ALL_BROWSERS=1 adds Firefox, WebKit and two phones: 310).
 # --workers=2: other projects' test harnesses on this machine cause timeouts at full parallelism.
 NEXT_PUBLIC_API_URL=http://127.0.0.1:18787 npx next build
-E2E_PORT=13200 MOCK_API_PORT=18787 npx playwright test --workers=2   # expect 61 passed
+E2E_PORT=13200 MOCK_API_PORT=18787 npx playwright test --workers=2   # expect 62 passed
 ```
 
-Expected totals as of 2026-10-01: **184 contracts + 505 backend + 74 interface = 763** (Session 29), plus 61 Playwright tests (14 smoke, 17 axe accessibility, 9 search, 2 guides, 19 edge).
+Expected totals as of 2026-10-05: **184 contracts + 505 backend + 77 interface = 766** (Session 30), plus 62 Playwright tests (14 smoke, 17 axe accessibility, 9 search, 2 guides, 20 edge).
 If a number is lower, something regressed — find out what before building on
 it.
 
@@ -303,11 +317,10 @@ v2 one — any prompt or schema change still invalidates it.
 
 ### In-flight work right now
 
-**None.** All three repos are clean **and pushed** as of 2026-10-01, end of
-Session 29: contracts `3d821bb`, backend `d137e48` (+ this file's update),
-interface `d311c72`. No process is left running: the local site and held
-demo were stopped by the 2 h limit and their leftovers killed; the isolated
-`agentx-full` compose stack was removed (its volume `agentx-full-pg` kept).
+**None in progress.** Session 30 (2026-10-05) is committed in backend and
+interface; push when the owner says so. No process is left running; the
+rehearsal `agentx-full` stack was removed (volume kept). The Railway deploy
+waits on the owner's plan (Next actions 4).
 The dev Postgres container `agentx-backend-postgres-1` is up. There is no
 half-finished edit, no stashed change, no branch to reconcile. A fresh session can start from the Next actions list at the top of
 this file.
@@ -541,9 +554,9 @@ and metrics ports; every service validates its environment at boot.
 |---|---|---|
 | Contracts — unit, fuzz, invariant (3 suites), adversarial, v2 findings | **184** | ✅ 100% branch on StakeVault/AgentAccount/Factory, 96.5% TaskEscrow |
 | Backend — 33 files | **505** | ✅ lint, format, typecheck of tests, coverage floors 75/78/74/75 |
-| Interface — unit | **74** | ✅ plus lint, `next build`, audit |
-| Interface — Playwright | **61** | ✅ smoke + axe on every page, docs search, video guides, 19 edge and worst cases; production build, mocked API |
-| **Total** | **763** + 61 | |
+| Interface — unit | **77** | ✅ plus lint, `next build`, audit |
+| Interface — Playwright | **62** | ✅ smoke + axe on every page, docs search, video guides, 20 edge and worst cases; all 62 also pass in Firefox, WebKit, iPhone 13 and Pixel 7; production build, mocked API |
+| **Total** | **766** + 62 | |
 
 Every test that guards a Session 26 fix was run against the old code first
 and seen to fail.
@@ -697,6 +710,31 @@ Append-only. Never rewrite a decision — supersede it with a new row.
 ---
 
 ## 📓 Session log
+
+### Session 30 — 2026-10-05 (depth testing · cross-browser · audit · deploy rehearsal)
+
+- **Cross-browser for the first time**: all browser tests in Firefox, WebKit
+  (Safari), iPhone 13 and Pixel 7 — 310 runs. Found three real bugs, fixed
+  with tests that fail on the old code: input typed before hydration was
+  wiped (Safari, slow phones); a dropped live stream read as "finished" in
+  Firefox; a reconnect showed every trace line twice (the server replays
+  history) in every browser. Plus a phone accessibility bug: wide docs
+  tables could not be scrolled by keyboard.
+- **Independent docs audit** (sub-agent, read-only): 7 high, 7 medium, 5 low
+  — every one fixed (503 for a DB outage in runbooks/API docs, rate-limit
+  exemptions, "per IP" not "per key", missing params, `.env.example` gaps,
+  two broken anchors, overclaimed on-chain caps on the site). Link check:
+  237 relative links, 0 broken.
+- **Security**: full git history of all three repos scanned for the five
+  real secrets (4 private keys, Gemini) — none, in any commit. `pnpm audit
+  --prod` clean in backend and interface.
+- **Live on testnet**: demo with x402 — every check, 184 s; `e2e.mjs` passed;
+  `verify-indexer` 13/13. Contracts 184 (CI fuzz profile), backend 505
+  (coverage 79.9 / 81.9 / 78.1 %), interface 77 + 62 browser.
+- **Deploy rehearsal** on the production images: `check-deployment` green;
+  `probe-api` 613 requests clean; every page clean in three engines.
+- **Railway blocked**: trial expired — owner must pick a plan. FUNDER topped
+  up by the owner (15.01 MON).
 
 ### Session 29 — 2026-10-01 (search · guides · edge, critical and worst cases)
 
