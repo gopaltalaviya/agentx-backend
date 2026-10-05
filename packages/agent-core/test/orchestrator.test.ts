@@ -835,3 +835,38 @@ describe('a worker that goes silent', () => {
     expect(calls.approved).toEqual(['101']);
   });
 });
+
+describe('two runs with the same goal', () => {
+  // The SDK derived a hire's idempotency key from the worker and the spec
+  // alone. A second run with the same goal planned the same spec, sent the
+  // same key, and got the FIRST run's job back — already refunded — so it
+  // could never hire (hosted rehearsal, 2026-10-05; the demo runs once per set
+  // of agents and never showed it). A hire's key belongs to its run.
+  it('hire with different idempotency keys; within one run a step keeps one key', async () => {
+    const keys: (string | undefined)[] = [];
+    const over = {
+      hire: async (args: {idempotencyKey?: string}) => {
+        keys.push(args.idempotencyKey);
+        return {
+          jobId: String(keys.length),
+          chainJobId: '9',
+          state: 'created',
+          path: 'escrow',
+          amount: '20000',
+          amountDisplay: '0.02 USDC',
+          txHash: '0x',
+          explorerUrl: 'https://explorer/tx/0x',
+        };
+      },
+    };
+    const {orchestrator} = build(over);
+    await orchestrator.run('how deep is ETH/USDC?');
+    await orchestrator.run('how deep is ETH/USDC?');
+    const second = build(over).orchestrator;
+    await second.run('how deep is ETH/USDC?');
+
+    expect(keys).toHaveLength(3);
+    expect(keys.every((k) => typeof k === 'string' && k.length >= 32)).toBe(true);
+    expect(new Set(keys).size).toBe(3);
+  });
+});

@@ -1,4 +1,5 @@
-import {eq} from 'drizzle-orm';
+import {and, asc, eq, gt} from 'drizzle-orm';
+import {AgentxError, ErrorCode} from '@agentx/shared';
 import {runEvents, runs, type Db} from '@agentx/db';
 import type {EventBus} from './events.js';
 
@@ -54,6 +55,12 @@ export class RunService {
       bus: EventBus;
       execute: RunExecutor;
       log?: (err: unknown, msg: string) => void;
+      /**
+       * Runs one orchestrator may start in a rolling 24 h; 0 or unset = no cap.
+       * A hosted orchestrator's key is handed to judges and every run spends
+       * the owner's model quota — a leaked key must not be able to drain it.
+       */
+      runsPerDay?: number;
     },
   ) {}
 
@@ -70,6 +77,26 @@ export class RunService {
     apiKey: string;
     goal: string;
   }): Promise<{runId: number; publicId: string}> {
+    const cap = this.deps.runsPerDay ?? 0;
+    if (cap > 0) {
+      const since = new Date(Date.now() - 24 * 3600 * 1000);
+      const recent = await this.deps.db
+        .select({startedAt: runs.startedAt})
+        .from(runs)
+        .where(and(eq(runs.agentId, args.agentId), gt(runs.startedAt, since)))
+        .orderBy(asc(runs.startedAt))
+        .limit(cap);
+      if (recent.length >= cap) {
+        // The oldest run in the window is the next to fall out of it.
+        const freeAt = recent[0]!.startedAt.getTime() + 24 * 3600 * 1000;
+        throw new AgentxError(
+          ErrorCode.RATE_LIMITED,
+          `this orchestrator has started ${cap} run${cap === 1 ? '' : 's'} in the last 24 hours, its limit — try again later`,
+          Math.max(1, Math.ceil((freeAt - Date.now()) / 1000)),
+        );
+      }
+    }
+
     const [run] = await this.deps.db
       .insert(runs)
       .values({

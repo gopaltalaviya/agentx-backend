@@ -287,6 +287,8 @@ AGENT_MODE=cached                  # cached | record | live
 AGENT_CACHE_DIR=
 BRAIN_CHAIN=gemini,groq,ollama,claude
 BRAIN_CHAIN_ORCHESTRATOR=claude,gemini,groq,ollama
+# Any entry may name a Gemini model: gemini:gemini-3.6-flash — so a chain can
+# fall back across models when one is overloaded (hosted: docs/13 §3b).
 CLAUDE_MODEL=
 CLAUDE_WORKER_MODEL=
 GEMINI_MODEL=
@@ -307,10 +309,14 @@ SIGNER_PORT=7070
 SIGNER_HOST=                       # bind address; anything but loopback needs SIGNER_TOKEN
 SIGNER_URL=http://127.0.0.1:7070
 KEEPER_INTERVAL_MS=15000           # how often the keeper sweeps
+SESSION_OWNER_PRIVATE_KEY=          # signer, testnet: owner of the hosted AgentAccounts; renews their 24 h session keys
+SESSION_RENEW_INTERVAL_MS=3600000  # how often the renewer looks
+SESSION_RENEW_BEFORE_S=21600       # renew a grant that lapses within this many seconds
 LOG_LEVEL=info
 INDEXER_POLL_MS=2000
 INDEXER_MAX_BACKOFF_MS=60000
 INDEXER_HEALTH_PORT=               # indexer: serve /health /ready /metrics here; unset → none
+INDEXER_START_AT_HEAD=0            # 1: a FIRST start begins at the chain head (no ~2 h backfill)
 
 # api
 NODE_ENV=development               # production → CORS_ORIGINS required, public-https endpoint URLs,
@@ -320,6 +326,7 @@ CORS_ORIGINS=                      # comma-separated browser origins; unset → 
 TRUST_PROXY=0                      # 1 behind Railway's proxy, so rate limits see the client IP
 RATE_LIMIT_PER_MINUTE=600          # per client IP, per process
 SSE_MAX_STREAMS=1000               # open SSE streams per kind, per process; then 503 + retry-after
+RUNS_PER_DAY=0                     # per-orchestrator runs per rolling 24 h; then 429 RATE_LIMITED; 0 = off
 SIGNER_TIMEOUT_MS=30000            # how long the api waits for the signer
 STATUS_MAX_INDEXER_LAG_BLOCKS=150  # /v1/status: indexer "degraded" beyond this (+ confirmations)
 

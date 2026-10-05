@@ -12,8 +12,8 @@
   chain, including a real dispute expired by the keeper after its 1 h
   timeout. Backend and interface have lint, formatting, coverage floors, CI,
   containers, metrics, graceful shutdown and a browser smoke test.
-- Overall: `██████████████████░░` 92% — **110 / 119 tasks** (4 cut, recorded in PLAN), **766 tests green**
-  (184 contracts · 505 backend · 77 interface) + 62 browser tests (14 smoke, 17 accessibility, 9 search, 2 guides, 20 edge) — also run in Firefox, WebKit, iPhone and Android (310 runs)
+- Overall: `██████████████████░░` 92% — **110 / 119 tasks** (4 cut, recorded in PLAN), **789 tests green**
+  (184 contracts · 528 backend · 77 interface) + 63 browser tests (14 smoke, 17 accessibility, 9 search, 2 guides, 21 edge) — also run in Firefox, WebKit, iPhone and Android (315 runs)
 
 ---
 
@@ -44,23 +44,17 @@
    before sending anything.
 4. **Railway + Vercel** — ⛔ **blocked on you: Railway says the trial has
    expired** ("please select a plan", 2026-10-05). The CLI is logged in as you;
-   nothing was created. Pick a plan, then say "deploy" — Claude does the rest
-   with the CLI ([docs/13-deploy.md](docs/13-deploy.md)). Vercel needs one
-   `npx vercel login` from you. The images were rehearsed again on Oct 5:
-   `check-deployment` all green, 613 hostile requests clean, every page clean
-   in Chromium, Firefox and WebKit against the production API.
-   **You chose hosted live runs with your Gemini key** (works: one test call,
-   200 in 5 s). What that needs beyond the core services, all designed, none
-   built yet:
-   - agents seeded with **fresh random keys** — the demo's keys are fixed and
-     public in the repo;
-   - a **daily session-key renewal**: the contract caps a session key at 24 h
-     (`MAX_SESSION_KEY_TTL`), so a hosted orchestrator stops hiring after a
-     day without it — a small cron job holding the hosted accounts' owner key;
-   - the three worker bots as Railway services, with the Gemini key;
-   - a per-orchestrator daily run cap, so a leaked key cannot drain the quota;
-   - the orchestrator's API key goes to judges in the submission form only —
-     never in a repo or on the site.
+   nothing was created. Pick a plan, then say "deploy". Vercel needs one
+   `npx vercel login` from you. **Everything else is built and rehearsed**
+   (Session 31): hosted live runs worked end to end on this machine with the
+   production images, the three worker bots and your Gemini key — 2 hires,
+   2 settlements, answer shown, 151 s, 0.21 MON. The deploy is then:
+   core services ([docs/13 §1](docs/13-deploy.md#1-railway)) →
+   `node scripts/seed-hosted.mjs https://<api>` (fresh keys, ~11.5 MON from
+   FUNDER) → signer/worker variables from the seed file's `env` →
+   [docs/13 §3b](docs/13-deploy.md#3b-hosted-live-runs) → `check-deployment`.
+   The orchestrator's API key (`env.orchestratorApiKeyForJudges` in
+   `artifacts/hosted-agents.json`) goes in the submission form only.
 5. **`EXPLORER_API_KEY`** in `agentx-contracts/.env` for verified source.
    Deployed source is untouched on purpose so verification still matches.
 6. **Gemini — tried, as asked; not used for the video.** The key works. The
@@ -162,15 +156,15 @@ cd ../agentx-contracts && forge build
 
 # 3. Prove it is all still green
 FOUNDRY_PROFILE=ci forge test              # expect 184 passed
-cd ../agentx-backend && npx tsc -b && npx vitest run   # expect 505 passed
+cd ../agentx-backend && npx tsc -b && npx vitest run   # expect 528 passed
 cd ../agentx-interface && npx tsc --noEmit && npx vitest run   # expect 77 passed
-# Browser tests: build against the mock API, then 62 Playwright tests (E2E_ALL_BROWSERS=1 adds Firefox, WebKit and two phones: 310).
+# Browser tests: build against the mock API, then 63 Playwright tests (E2E_ALL_BROWSERS=1 adds Firefox, WebKit and two phones: 315).
 # --workers=2: other projects' test harnesses on this machine cause timeouts at full parallelism.
 NEXT_PUBLIC_API_URL=http://127.0.0.1:18787 npx next build
-E2E_PORT=13200 MOCK_API_PORT=18787 npx playwright test --workers=2   # expect 62 passed
+E2E_PORT=13200 MOCK_API_PORT=18787 npx playwright test --workers=2   # expect 63 passed
 ```
 
-Expected totals as of 2026-10-05: **184 contracts + 505 backend + 77 interface = 766** (Session 30), plus 62 Playwright tests (14 smoke, 17 axe accessibility, 9 search, 2 guides, 20 edge).
+Expected totals as of 2026-10-05: **184 contracts + 528 backend + 77 interface = 789** (Session 31), plus 63 Playwright tests (14 smoke, 17 axe accessibility, 9 search, 2 guides, 21 edge).
 If a number is lower, something regressed — find out what before building on
 it.
 
@@ -317,10 +311,11 @@ v2 one — any prompt or schema change still invalidates it.
 
 ### In-flight work right now
 
-**None in progress.** Session 30 (2026-10-05) is committed in backend and
+**None in progress.** Session 31 (2026-10-05) is committed in backend and
 interface; push when the owner says so. No process is left running; the
-rehearsal `agentx-full` stack was removed (volume kept). The Railway deploy
-waits on the owner's plan (Next actions 4).
+hosted rehearsal stack was removed and its keys retired (`--reclaim` returned
+6.38 MON to FUNDER; the file is `artifacts/hosted-agents.rehearsal-2026-10-05.json`,
+gitignored). The Railway deploy waits on the owner's plan (Next actions 4).
 The dev Postgres container `agentx-backend-postgres-1` is up. There is no
 half-finished edit, no stashed change, no branch to reconcile. A fresh session can start from the Next actions list at the top of
 this file.
@@ -553,10 +548,10 @@ and metrics ports; every service validates its environment at boot.
 | Suite | Count | State |
 |---|---|---|
 | Contracts — unit, fuzz, invariant (3 suites), adversarial, v2 findings | **184** | ✅ 100% branch on StakeVault/AgentAccount/Factory, 96.5% TaskEscrow |
-| Backend — 33 files | **505** | ✅ lint, format, typecheck of tests, coverage floors 75/78/74/75 |
+| Backend — 35 files | **528** | ✅ lint, format, typecheck of tests, coverage floors 75/78/74/75 |
 | Interface — unit | **77** | ✅ plus lint, `next build`, audit |
-| Interface — Playwright | **62** | ✅ smoke + axe on every page, docs search, video guides, 20 edge and worst cases; all 62 also pass in Firefox, WebKit, iPhone 13 and Pixel 7; production build, mocked API |
-| **Total** | **766** + 62 | |
+| Interface — Playwright | **63** | ✅ smoke + axe on every page, docs search, video guides, 21 edge and worst cases; all 63 also pass in Firefox, WebKit, iPhone 13 and Pixel 7; production build, mocked API |
+| **Total** | **789** + 63 | |
 
 Every test that guards a Session 26 fix was run against the old code first
 and seen to fail.
@@ -710,6 +705,27 @@ Append-only. Never rewrite a decision — supersede it with a new row.
 ---
 
 ## 📓 Session log
+
+### Session 31 — 2026-10-05 (hosted live runs: built, rehearsed, fixed)
+
+- **Built:** `scripts/seed-hosted.mjs` (fresh random keys; `--top-up`,
+  `--reclaim`), `scripts/lib/agents.mjs` (the demo's setup, shared — demo
+  unchanged, 25/25 live), the signer's **session-key renewer**
+  (`SESSION_OWNER_PRIVATE_KEY`), a per-orchestrator **`RUNS_PER_DAY`** cap
+  (429 `RATE_LIMITED`), `INDEXER_START_AT_HEAD`, the compose `hosted` profile.
+- **Rehearsed** the hosted layout end to end ([docs/17 §20](docs/17-production-readiness.md)):
+  a live Gemini run from the real site settled 2/2 in 151 s; renewal proven
+  on chain; the cap refused a run on the site; deployment checks, probe and
+  three-engine crawl clean.
+- **Six defects found on the way, all fixed with failing-first tests:**
+  parallel image builds segfaulted/hung (now per-service, 110 s for seven);
+  a transient 503 ended a run (retries); one overloaded Gemini model was a
+  dead end (`gemini:<model>` chains); a thinking model truncated at 400
+  tokens (headroom + truncation moves the chain on); JSON in prose failed a
+  job; **a second run with the same goal could never hire** (idempotency key
+  per run, not per spec).
+- Tests: 766 → 789 (backend 528), browser 62 → 63; live demo 25/25 after
+  every change; no secret (5 real + 9 rehearsal) in any commit.
 
 ### Session 30 — 2026-10-05 (depth testing · cross-browser · audit · deploy rehearsal)
 

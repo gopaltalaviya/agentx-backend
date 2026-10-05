@@ -39,16 +39,31 @@ export abstract class JsonHttpBrain implements Brain {
     const jsonSchema = zodToJsonSchema(req.schema, {target: 'jsonSchema7'}) as object;
     const {url, headers, body} = this.buildRequest(req, jsonSchema);
 
-    let res: Response;
-    try {
-      res = await fetch(url, {
-        method: 'POST',
-        headers: {'content-type': 'application/json', ...headers},
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(60_000),
-      });
-    } catch (err) {
-      throw new BrainUnavailable(this.name, 'timeout', (err as Error).message);
+    // Transient answers are retried before the provider is declared down.
+    // Gemini says "high demand … usually temporary" with a 503, and a hosted
+    // run failed at the plan because the first one ended it. A client error or
+    // a rejected key is not retried: neither fixes itself.
+    let res!: Response;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        res = await fetch(url, {
+          method: 'POST',
+          headers: {'content-type': 'application/json', ...headers},
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(60_000),
+        });
+      } catch (err) {
+        // A dropped connection is retried; a request that already waited out
+        // its 60 s timeout is not — four of those would stall a run 4 minutes.
+        if ((err as Error).name !== 'TimeoutError' && attempt < RETRY_DELAYS_MS.length) {
+          await this.sleep(this.retryDelay(attempt, null));
+          continue;
+        }
+        throw new BrainUnavailable(this.name, 'timeout', (err as Error).message);
+      }
+      if (!TRANSIENT.has(res.status) || attempt >= RETRY_DELAYS_MS.length) break;
+      await res.body?.cancel().catch(() => undefined);
+      await this.sleep(this.retryDelay(attempt, res.headers.get('retry-after')));
     }
 
     if (res.status === 429) throw new BrainUnavailable(this.name, 'rate_limit', 'rate limited');
@@ -60,7 +75,13 @@ export abstract class JsonHttpBrain implements Brain {
       throw new BrainUnavailable(this.name, 'outage', `${res.status} ${detail.slice(0, 200)}`);
     }
 
-    const text = this.extractText(await res.json());
+    const payload = await res.json();
+    // A reply cut off at the token limit is the provider failing to answer, not
+    // a bad answer: the next provider in the chain may well finish.
+    if (this.isTruncated(payload)) {
+      throw new BrainUnavailable(this.name, 'outage', 'reply cut off at the output token limit');
+    }
+    const text = this.extractText(payload);
     if (!text) throw new BrainInvalidOutput(this.name, 'response contained no text');
 
     let raw: unknown;
@@ -86,11 +107,50 @@ export abstract class JsonHttpBrain implements Brain {
   async available(): Promise<boolean> {
     return this.endpoint() !== null;
   }
+
+  /** The wait before retry `attempt`: the server's retry-after if sane, else backoff with jitter. */
+  protected retryDelay(attempt: number, retryAfter: string | null): number {
+    const seconds = retryAfter !== null ? Number(retryAfter) : NaN;
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, MAX_RETRY_WAIT_MS);
+    const base = RETRY_DELAYS_MS[attempt] ?? RETRY_DELAYS_MS.at(-1)!;
+    return base + Math.floor(Math.random() * 250);
+  }
+
+  /** Whether the provider stopped at its output limit. Per provider; off by default. */
+  protected isTruncated(_payload: unknown): boolean {
+    return false;
+  }
+
+  /** Overridden in tests so they do not wait. */
+  protected sleep(ms: number): Promise<void> {
+    return new Promise((r) => setTimeout(r, ms));
+  }
 }
 
-/** Some models wrap JSON in code fences despite being told not to. */
+/** Statuses that mean "try again shortly": rate limited, overloaded, a gateway blip. */
+const TRANSIENT = new Set([429, 500, 502, 503, 504]);
+/**
+ * Two retries — about 7 s — before the fallback chain moves on. Short on
+ * purpose: when one model is overloaded the next one in the chain (another
+ * model, another vendor) is the better bet than waiting longer.
+ */
+const RETRY_DELAYS_MS = [2_000, 5_000];
+const MAX_RETRY_WAIT_MS = 20_000;
+
+/**
+ * The JSON in a model's reply. Asked for JSON only, some models still wrap it:
+ * in a code fence, behind "Here is the JSON requested:", or with a closing
+ * line after it. Plain JSON is returned as is; otherwise the first fenced
+ * block; otherwise the outermost {...}. Whatever comes back is still parsed
+ * and validated against the schema by the caller — this only finds it.
+ */
 function stripFences(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) return trimmed;
   const fence = String.fromCharCode(96).repeat(3);
-  const re = new RegExp('^\\s*' + fence + '(?:json)?\\s*\\n([\\s\\S]*?)\\n\\s*' + fence + '\\s*$');
-  return re.exec(text)?.[1] ?? text.trim();
+  const fenced = new RegExp(fence + '(?:json)?\\s*\\n([\\s\\S]*?)\\n\\s*' + fence).exec(text);
+  if (fenced?.[1]) return fenced[1].trim();
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  return start !== -1 && end > start ? text.slice(start, end + 1) : trimmed;
 }

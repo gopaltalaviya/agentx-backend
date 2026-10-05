@@ -339,3 +339,56 @@ spend inside the on-chain daily cap, stolen-key calls refused, `SameOwner`
 and `AmountBelowMinimum` refused, earnings swept, reputation written from
 settlement. Session 27's run at the same setting settled 4/4; at this loss
 rate the count depends on which broadcasts fail.
+
+### 20. Hosted live runs — rehearsed end to end (2026-10-05)
+The production images plus the three worker bots (`docker compose --profile
+hosted`), a fresh database, the API in live mode on the owner's Gemini key,
+agents seeded with `scripts/seed-hosted.mjs` on Monad testnet, and the real
+site driven like a judge: paste the orchestrator key, **Run**.
+
+**Result:** the run planned 2 subtasks, hired 2 agents through escrow, judged
+both and settled both on chain in 151 s; the answer card showed; the indexer
+(started at the head with `INDEXER_START_AT_HEAD=1`) wrote both workers'
+reputation; `/v1/status` was operational within seconds of a fresh start.
+Gas measured: 0.14 MON from the orchestrator's session key, 0.034 per hired
+worker — 0.21 MON a run.
+
+| Also proven live | Result |
+|---|---|
+| Daily session-key renewal | with the window forced to 24 h, the signer's renewer re-granted all four accounts' keys on chain (expiry read before and after; budgets kept) |
+| Run cap | with `RUNS_PER_DAY=1`, the second run was refused on the site: "this orchestrator has started 1 run in the last 24 hours, its limit" |
+| Deployment checks | `check-deployment` green (with an orchestrator now), `probe-api` 86 requests clean, every page clean in Chromium, Firefox and WebKit |
+| Retiring agents | `seed-hosted.mjs --reclaim` returned 6.38 MON from the rehearsal keys to FUNDER |
+
+**What it took — six defects, each fixed with a test that fails on the old
+code:**
+
+1. **The images could not be built reliably.** `pnpm -r build` compiled all
+   14 packages in parallel in every image; concurrent `tsc -b` over shared
+   project references segfaulted or hung (a worker image hung 35 min).
+   Each image now builds only its service and its dependencies, one at a time:
+   seven images in 110 s.
+2. **A transient model error ended the run.** Gemini answered 503 "high
+   demand … usually temporary" and the provider gave up at once. Transient
+   statuses (429, 500, 502, 503, 504) and dropped connections are retried
+   twice with backoff (honouring `retry-after`); a timeout or a client error
+   is not.
+3. **One overloaded model was a dead end.** `gemini-3.8-flash` and `3.7` were
+   refusing while `3.6`, `3.5` and `flash-latest` answered. A chain can now
+   name models — `BRAIN_CHAIN=gemini:gemini-3.6-flash,gemini:gemini-flash-latest,gemini`.
+4. **A thinking model ran out of tokens mid-answer.** Gemini 3.x spends
+   `maxOutputTokens` on thinking first; a worker's triage asked for 400 and
+   got `{"`. Gemini now gets 8 192 of headroom (billing is per token produced),
+   and a reply cut off at the limit is a provider failure, so the chain moves
+   on.
+5. **JSON wrapped in prose failed the job.** "Here is the JSON requested:"
+   and a fenced block — valid JSON inside — was rejected. The parser now takes
+   plain JSON, else the first fenced block, else the outermost object; the
+   schema still validates it.
+6. **A second run with the same goal could never hire.** The hire's
+   idempotency key was derived from worker and spec only, so the second run
+   got the first run's job back — already refunded. Keys are now per run. The
+   demo never showed it: it runs once per set of agents.
+
+Recorded too: Gemini returned 429 "rate limited" once mid-run; with the model
+chain and retries the next run completed.

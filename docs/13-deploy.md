@@ -163,11 +163,68 @@ API key, type a goal, **Run**, and watch each step settle on the explorer.
 That needs the model from §0, a registered and funded orchestrator, and
 workers listening.
 
+## 3b. Hosted live runs
+
+Browsing needs only §1–§3. For a judge to press **Run** on the hosted site,
+four more things must be true — each one was a reason a hosted run would
+fail, and each is now handled:
+
+| Need | Why | What does it |
+|---|---|---|
+| Agents on **fresh keys** | the demo's keys are fixed and public in `scripts/demo.mjs` | `scripts/seed-hosted.mjs` |
+| Session keys **renewed daily** | `AgentAccount` caps a grant at 24 h and only the owner may renew it — a hosted orchestrator stopped hiring after a day | the signer's renewer, `SESSION_OWNER_PRIVATE_KEY` |
+| Workers **listening** | a hire needs a worker to accept it | three worker services, the `hosted` compose profile |
+| A **run cap** | the orchestrator key goes to judges; every run spends your model quota | `RUNS_PER_DAY` on the API (429 `RATE_LIMITED` past it) |
+
+### Seed the agents (once, after the API is up)
+
+```bash
+cd agentx-backend
+set -a; . ../agentx-contracts/.env; set +a
+node scripts/seed-hosted.mjs https://<api-domain>
+```
+
+It writes `artifacts/hosted-agents.json` (gitignored) — keys, API keys, and an
+`env` block with exactly what each service needs. FUNDER pays gas — 5 MON to the
+orchestrator's session key, 1.5 MON to each worker key, 2 MON to the owner,
+about 11.5 MON in all (unset `FUNDER_PRIVATE_KEY` to have the deployer pay).
+A hosted run measured 0.21 MON: 0.14 for the orchestrator, 0.034 per hired
+worker. `--top-up` refills them; `--reclaim` sends what is left back when the
+agents are retired. Nothing secret is printed.
+
+### Variables, on top of §1
+
+| Service | Variable | Value |
+|---|---|---|
+| `signer` | `SIGNER_DEV_PRIVATE_KEYS` | `env.signer.SIGNER_DEV_PRIVATE_KEYS` from the seed file |
+| `signer` | `SESSION_OWNER_PRIVATE_KEY` | `env.signer.SESSION_OWNER_PRIVATE_KEY` |
+| `signer` | `KEEPER_PRIVATE_KEY` | FUNDER's key (gas only) |
+| `api` | `AGENT_MODE` · `BRAIN_CHAIN_ORCHESTRATOR` · `GEMINI_API_KEY` | `live` · `gemini:gemini-3.6-flash,gemini:gemini-flash-latest,gemini:gemini-3.5-flash-lite,gemini` · your key |
+| `api` | `RUNS_PER_DAY` | `10` |
+| `indexer` | `INDEXER_START_AT_HEAD` | `1` — a new database needs none of the chain's history; without it the indexer backfills ~2 h before it is current |
+| each worker | `SERVICE` · `AGENTX_API_URL` · `AGENTX_API_KEY` · `AGENTX_CHAIN_ID` | `@agentx/research-bot` (etc.) · `http://${{api.RAILWAY_PRIVATE_DOMAIN}}:8080` · `env.workers.<capability>.AGENTX_API_KEY` · `10143` |
+| each worker | `AGENT_MODE` · `BRAIN_CHAIN` · `GEMINI_API_KEY` | `live` · `gemini:gemini-3.6-flash,gemini:gemini-flash-latest,gemini:gemini-3.5-flash-lite,gemini` · your key |
+
+The chain lists several Gemini models because one can be overloaded while
+others on the same key answer (2026-10-05: `3.8-flash` and `3.7` refused with
+503 "high demand", `3.6`, `3.5` and `flash-latest` answered). Order it by what
+answers on the day; the chain moves on after two quick retries.
+
+The orchestrator's API key (`env.orchestratorApiKeyForJudges`) goes in the
+submission form only — never in a repo, never on the site.
+
+Rehearsed end to end on this machine with the production images and the
+`hosted` profile ([docs/17 §20](17-production-readiness.md)):
+
+```bash
+docker compose -f docker-compose.full.yml --profile hosted up -d
+```
+
 ## 4. What costs money
 
 | | |
 |---|---|
-| Railway | 4 small services + Postgres |
+| Railway | 4 small services + Postgres; 7 with the hosted workers |
 | Vercel | hobby tier is enough |
 | Testnet MON | every hire, accept, submit and settle pays gas from the agents' wallets; ~0.5 MON per full demo run |
 | Model | every hosted run calls the model — the one cost that is real money |

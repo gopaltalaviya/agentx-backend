@@ -28,7 +28,8 @@
  */
 
 import {spawn} from 'node:child_process';
-import {agentCardUri, registerAgent, send as sendTx, topUp} from './lib/chain.mjs';
+import {registerAgent, send as sendTx} from './lib/chain.mjs';
+import {setupAgents} from './lib/agents.mjs';
 import {randomBytes} from 'node:crypto';
 import {createWriteStream, mkdirSync} from 'node:fs';
 import {createServer} from 'node:net';
@@ -40,7 +41,6 @@ import {
   http,
   parseAbi,
   parseEventLogs,
-  toFunctionSelector,
 } from 'viem';
 import {privateKeyToAccount} from 'viem/accounts';
 import {foundry} from 'viem/chains';
@@ -230,91 +230,20 @@ try {
 
   const identity = chain.erc8004['identityRegistry'];
   const token = chain.contracts['PaymentToken'];
-  const vault = chain.contracts['StakeVault'];
   const escrow = chain.contracts['TaskEscrow'];
 
-  await write(token, erc20, 'mint', [DEPLOYER.address, 1_000_000_000n]);
-  await write(token, erc20, 'approve', [vault, 1_000_000_000n]);
-  await write(token, erc20, 'approve', [escrow, 1_000_000_000n]);
-
   const idAbi = abis['MockIdentityRegistry'];
-  const escrowSelector = (fn) =>
-    toFunctionSelector(abis['TaskEscrow'].find((x) => x.type === 'function' && x.name === fn));
-
-  // ── the orchestrator spends through an AgentAccount ─────────────────
-  // The claim this project rests on is that a hijacked agent cannot spend
-  // past caps its owner set — enforced by a contract, not by our server. The
-  // OWNER (the deployer, standing in for a human) creates the account, sets
-  // its caps and its allowlist (per target AND selector, since v2), funds it,
-  // grants the escrow an allowance, and gives the signer's hot key a session
-  // key that expires within a day. The hot key can then spend — but only
-  // through the account, only to the escrow, only within the caps.
-  const factory = chain.contracts['AgentAccountFactory'];
   const accountAbi = abis['AgentAccount'];
-  // CREATE2 salts, unique per RUN: the run's start time in the high bits, an
-  // index in the low. A salt derived from the next agent id collided after an
-  // aborted run, and createAccount reverted on the address it had occupied.
-  const runStart = BigInt(Date.now());
-  const runSalt = (n) => `0x${((runStart << 64n) | BigInt(n)).toString(16).padStart(64, '0')}`;
-  const salt = runSalt(0);
-  const orchestratorWallet = await pub.readContract({
-    address: factory,
-    abi: abis['AgentAccountFactory'],
-    functionName: 'predictAddress',
-    args: [DEPLOYER.address, salt],
-  });
-  const caps = {
-    perTaskCap: BigInt(chain.params.defaultPerTaskCap),
-    dailyCap: BigInt(chain.params.defaultDailyCap),
-    allowlistOnly: true,
-  };
-  await write(factory, abis['AgentAccountFactory'], 'createAccount', [DEPLOYER.address, salt, caps]);
-  for (const fn of ['createJob', 'directPay', 'approve', 'dispute', 'cancel']) {
-    await write(orchestratorWallet, accountAbi, 'setAllowedCall', [escrow, escrowSelector(fn), true]);
-  }
-  await write(orchestratorWallet, accountAbi, 'setAllowance', [escrow, 1_000_000_000n]);
-  await write(token, erc20, 'mint', [orchestratorWallet, 1_000_000n]); // 1 MockUSDC to spend
+
+  // The demo's keys are FIXED and public (this file): fine for a local demo
+  // on testnet, never for a hosted deployment — scripts/seed-hosted.mjs makes
+  // fresh ones. The orchestrator's hot key and one key per worker; each worker
+  // key is its account's session key AND registers its identity.
   const hotKey = `0x${'0a'.repeat(32)}`;
-  const hot = privateKeyToAccount(hotKey);
-  const block = await pub.getBlock({blockTag: 'latest'});
-  await write(orchestratorWallet, accountAbi, 'grantSessionKey', [
-    hot.address,
-    block.timestamp + 23n * 3600n,
-    caps.dailyCap,
-  ]);
-  ok(
-    `orchestrator spends through AgentAccount ${orchestratorWallet} — caps ${chain.formatToken(caps.perTaskCap)}/task, ${chain.formatToken(caps.dailyCap)}/day, escrow-only, session key ${hot.address.slice(0, 10)}…`,
-  );
-
-  // Ids are READ from the Registered event, never assumed as nextId + i: on a
-  // shared testnet anyone may register between two of our transactions.
-  const orchestratorId = await registerAgent(pub, wallet, {
-    identity,
-    abi: idAbi,
-    uri: agentCardUri({
-      name: 'Orchestrator',
-      capabilities: ['orchestration'],
-      apiUrl: `http://127.0.0.1:${API_PORT}`,
-    }),
-    wallet: orchestratorWallet,
-  });
-
-  // Each worker holds its OWN key. That key is the worker account's session
-  // key (the chain checks msg.sender against the registered wallet), AND it
-  // registers the worker's identity — so the worker's owner is not the
-  // orchestrator's. v2's escrow refuses a hire between two agents of one
-  // owner (SameOwner): a demo that registered everyone from one key could no
-  // longer hire anybody, which is the point.
   const workerKeys = WORKERS.map((_, i) => `0x${(i + 1).toString(16).padStart(2, '0').repeat(32)}`);
-  const workerAccounts = workerKeys.map((k) => privateKeyToAccount(k));
 
-  // Gas first: the workers now pay for their own registration. 0.5 MON each —
-  // every accept and submit is a call wrapped in AgentAccount.execute, and
-  // Monad reserves the full gas LIMIT, about 0.054 MON per wrapped call. The
-  // wallets are the same every run, so this is paid once, not per run. It
-  // comes from FUNDER, whose documented job this is, and runs before the
-  // signer starts, so it cannot race the keeper for FUNDER's nonces.
-  const GAS_TOPUP = 500_000_000_000_000_000n;
+  // FUNDER's documented job is gas; it runs before the signer starts, so it
+  // cannot race the keeper for FUNDER's nonces.
   const gasPayer = process.env.FUNDER_PRIVATE_KEY
     ? createWalletClient({
         account: privateKeyToAccount(process.env.FUNDER_PRIVATE_KEY),
@@ -322,84 +251,21 @@ try {
         transport: rpc(),
       })
     : wallet;
-  // Say so BEFORE sending if the payer cannot cover it. A drained FUNDER used
-  // to surface as a bare "transaction 0x… reverted" from the first top-up.
-  {
-    let needed = 0n;
-    for (const account of [...workerAccounts, hot]) {
-      const balance = await pub.getBalance({address: account.address});
-      if (balance < GAS_TOPUP) needed += GAS_TOPUP - balance;
-    }
-    const has = await pub.getBalance({address: gasPayer.account.address});
-    const margin = 50_000_000_000_000_000n; // the top-ups' own gas
-    if (needed > 0n && has < needed + margin) {
-      const mon = (wei) => (Number(wei / 10n ** 12n) / 1e6).toFixed(4);
-      throw new Error(
-        `the gas payer (${process.env.FUNDER_PRIVATE_KEY ? 'FUNDER' : 'DEPLOYER'} ${gasPayer.account.address}) ` +
-          `has ${mon(has)} MON; topping up the agents' wallets needs ~${mon(needed + margin)}. ` +
-          `Fund it${process.env.FUNDER_PRIVATE_KEY ? ', or unset FUNDER_PRIVATE_KEY so the deployer pays' : ''}. No top-up was sent.`,
-      );
-    }
-  }
-  for (const account of [...workerAccounts, hot]) {
-    await topUp(pub, gasPayer, account.address, GAS_TOPUP);
-  }
-
-  // ── the workers act through AgentAccounts too ───────────────────────
-  // A worker never spends, so its account is the narrowest one possible:
-  // caps of zero, a session key with a budget of zero, and exactly two
-  // allowed calls — acceptJob and submitResult, on the escrow. A stolen
-  // worker key can accept and deliver work — all it could ever legitimately
-  // do — and nothing else. Payouts land in the account; the owner sweeps them.
-  const workerCaps = {perTaskCap: 0n, dailyCap: 0n, allowlistOnly: true};
-  const workerWallets = [];
-  for (const [i, key] of workerAccounts.entries()) {
-    const workerSalt = runSalt(i + 1);
-    const account = await pub.readContract({
-      address: factory,
-      abi: abis['AgentAccountFactory'],
-      functionName: 'predictAddress',
-      args: [DEPLOYER.address, workerSalt],
+  const {caps, orchestratorWallet, orchestratorId, hot, workerAccounts, workerWallets, workerIds} =
+    await setupAgents({
+      pub,
+      chain,
+      abis,
+      walletFor: (account) => createWalletClient({account, chain: viemChain, transport: rpc()}),
+      owner: wallet,
+      bonder: wallet,
+      gasPayer,
+      hotKey,
+      workerKeys,
+      workers: WORKERS,
+      apiUrl: `http://127.0.0.1:${API_PORT}`,
+      log: ok,
     });
-    await write(factory, abis['AgentAccountFactory'], 'createAccount', [
-      DEPLOYER.address,
-      workerSalt,
-      workerCaps,
-    ]);
-    for (const fn of ['acceptJob', 'submitResult']) {
-      await write(account, accountAbi, 'setAllowedCall', [escrow, escrowSelector(fn), true]);
-    }
-    await write(account, accountAbi, 'grantSessionKey', [key.address, block.timestamp + 23n * 3600n, 0n]);
-    workerWallets.push(account);
-  }
-  ok(
-    `${WORKERS.length} workers act through AgentAccounts — zero caps, only acceptJob + submitResult on the escrow, each on its own session key`,
-  );
-
-  const workerIds = [];
-  for (const [i, w] of WORKERS.entries()) {
-    const workerClient = createWalletClient({
-      account: workerAccounts[i],
-      chain: viemChain,
-      transport: rpc(),
-    });
-    const id = await registerAgent(pub, workerClient, {
-      identity,
-      abi: idAbi,
-      uri: agentCardUri({
-        name: titleCase(w.capability),
-        capabilities: [w.capability],
-        apiUrl: `http://127.0.0.1:${API_PORT}`,
-      }),
-      wallet: workerWallets[i],
-    });
-    workerIds.push(id);
-    // Anyone may bond an agent; the deployer does, standing in for the owner.
-    await write(vault, abis['StakeVault'], 'deposit', [id, 10_000_000n]);
-  }
-  ok(
-    `${WORKERS.length + 1} agents on-chain (orchestrator ${orchestratorId}, workers ${workerIds.join(', ')} — each worker its own owner), bonded and funded for gas`,
-  );
 
   // ── 2. services ───────────────────────────────────────────────────────
   const env = {

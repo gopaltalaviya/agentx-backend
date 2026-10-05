@@ -27,6 +27,13 @@ const Env = z.object({
   DATABASE_URL: env.postgresUrl(),
   INDEXER_POLL_MS: env.positiveInt(2_000),
   INDEXER_MAX_BACKOFF_MS: env.positiveInt(60_000),
+  /**
+   * A FIRST start begins at the chain head instead of the deployment block —
+   * ~1.6 M blocks and about two hours of backfill on Monad testnet. For a new
+   * deployment whose database holds none of that history anyway. An existing
+   * cursor is never moved.
+   */
+  INDEXER_START_AT_HEAD: env.flag(),
   /** Optional: serve /health, /ready and /metrics. A worker has no other face. */
   INDEXER_HEALTH_PORT: z.coerce.number().int().min(1).max(65_535).optional(),
   METRICS_TOKEN: z.string().optional(),
@@ -72,8 +79,15 @@ const shutdown = installShutdown({
 });
 
 const workersDone = Promise.all(
-  Object.values(config.chains).map((chain) => {
+  Object.values(config.chains).map(async (chain) => {
     const indexer = new Indexer({db, chain, abis, logger});
+    if (cfg.INDEXER_START_AT_HEAD) {
+      const at = await indexer.seedCursorToHead();
+      logger.info(
+        {chainId: chain.chainId, seededAt: at?.toString() ?? 'existing cursor kept'},
+        'start at head',
+      );
+    }
     logger.info({chainId: chain.chainId, name: chain.name, startBlock: chain.startBlock}, 'indexer started');
 
     return runIndexerLoop(

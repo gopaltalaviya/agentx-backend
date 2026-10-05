@@ -1,3 +1,4 @@
+import {createHash, randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import {AgentxError, ErrorCode, type JobSpec} from '@agentx/shared';
 import {NotAccepted, type AgentSummary, type AgentxClient} from '@agentx/sdk';
@@ -126,11 +127,21 @@ export class Orchestrator {
   /** This orchestrator's own agent id, learned at the start of each run. Never a candidate. */
   private self: number | null = null;
 
+  /**
+   * Unique per `run()`. A hire's idempotency key is derived from it, the
+   * worker and the spec: a retried request within a run is the same hire, but
+   * a second run with the same goal is a NEW one. Keyed on worker and spec
+   * alone (the SDK's default), the second run got the first run's job back —
+   * already refunded — and could never hire.
+   */
+  private runNonce = '';
+
   constructor(private readonly opts: OrchestratorOptions) {
     this.judge = new Judge(opts.judgeBrain ?? opts.brain);
   }
 
   async run(goal: string, opts: {timeoutMs?: number} = {}): Promise<RunReport> {
+    this.runNonce = randomUUID();
     const steps: StepOutcome[] = [];
     let spent = 0n;
 
@@ -379,6 +390,10 @@ export class Orchestrator {
         workerAgentId: chosen.agentId,
         spec,
         maxPrice: ceiling.toString(),
+        idempotencyKey: createHash('sha256')
+          .update(`${this.runNonce}:${chosen.agentId}:${JSON.stringify(spec)}`)
+          .digest('hex')
+          .slice(0, 32),
       });
     } catch (err) {
       // The cap is enforced outside this process and will not move. Reporting it is the

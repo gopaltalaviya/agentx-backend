@@ -41,10 +41,14 @@ COPY pnpm-lock.yaml pnpm-workspace.yaml package.json tsconfig.json tsconfig.base
 COPY packages ./packages
 COPY apps ./apps
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile --ignore-scripts
-RUN pnpm -r build
-# A self-contained copy of one service with production dependencies only.
+# Only this service and what it depends on ("…" = its workspace dependencies),
+# one package at a time. `pnpm -r build` compiled all 14 packages in parallel
+# in every image; concurrent `tsc -b` over shared project references raced and
+# intermittently segfaulted or hung (seen building the worker images).
 RUN test -n "${SERVICE}" || (echo "build-arg SERVICE is required" && exit 1) \
- && pnpm --filter "${SERVICE}" --prod deploy /out
+ && pnpm --filter "${SERVICE}..." --workspace-concurrency=1 build
+# A self-contained copy of one service with production dependencies only.
+RUN pnpm --filter "${SERVICE}" --prod deploy /out
 
 FROM node:${NODE_VERSION}-alpine AS runtime
 # UV_THREADPOOL_SIZE: DNS lookups run on libuv's pool (default 4). A dependency

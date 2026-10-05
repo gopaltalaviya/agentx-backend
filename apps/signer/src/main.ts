@@ -9,6 +9,7 @@ import {buildSignerApp} from './app.js';
 import {EnvKeystoreSource, RawKeySource, type KeySource} from './keystore.js';
 import {SignerService} from './signer.js';
 import {chainKeeper} from './keeper.js';
+import {chainRenewer} from './renewer.js';
 import {bindHost} from './auth.js';
 
 /**
@@ -26,6 +27,11 @@ const Env = z.object({
   SIGNER_KEYSTORE_JSON: z.string().optional(),
   KEEPER_PRIVATE_KEY: env.privateKey().optional(),
   KEEPER_INTERVAL_MS: env.positiveInt(15_000),
+  /** Owner of the hosted AgentAccounts: renews their 24 h session keys. Testnet only. */
+  SESSION_OWNER_PRIVATE_KEY: env.privateKey().optional(),
+  SESSION_RENEW_INTERVAL_MS: env.positiveInt(3_600_000),
+  /** Renew a grant that lapses within this many seconds. */
+  SESSION_RENEW_BEFORE_S: env.positiveInt(21_600),
   METRICS_TOKEN: z.string().optional(),
   TRUST_PROXY: env.flag(),
   LOG_LEVEL: env.logLevel(),
@@ -93,10 +99,33 @@ if (cfg.KEEPER_PRIVATE_KEY) {
   logger.warn('no KEEPER_PRIVATE_KEY: expired escrow jobs will wait for someone else to exit them');
 }
 
+// The renewer keeps the hosted accounts' session keys alive. AgentAccount caps
+// a grant at 24 h and only the OWNER may renew it, so without this a hosted
+// orchestrator stops hiring a day after it was set up.
+let stopRenewer: (() => void) | undefined;
+if (cfg.SESSION_OWNER_PRIVATE_KEY) {
+  if (!chain.testnet)
+    throw new Error('SESSION_OWNER_PRIVATE_KEY is a raw key; raw keys are for testnet only');
+  const held = (keys.all?.() ?? []).map((a) => a.address);
+  const renewer = chainRenewer({
+    db,
+    chain,
+    abis,
+    account: privateKeyToAccount(cfg.SESSION_OWNER_PRIVATE_KEY as `0x${string}`),
+    keys: held,
+    renewBeforeSeconds: cfg.SESSION_RENEW_BEFORE_S,
+    logger,
+    metrics,
+  });
+  stopRenewer = renewer.start(cfg.SESSION_RENEW_INTERVAL_MS);
+  logger.info({chainId: chain.chainId, keys: held.length}, 'renewer keeping session keys alive');
+}
+
 installShutdown({
   logger,
   closers: [
     ['keeper', async () => stopKeeper?.()],
+    ['renewer', async () => stopRenewer?.()],
     // Stops accepting, then waits for in-flight signs to finish.
     ['http', () => app.close()],
     ['locks', () => closeLockPool(locks)],

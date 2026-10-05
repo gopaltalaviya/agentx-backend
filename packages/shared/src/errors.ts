@@ -24,6 +24,8 @@ export const ErrorCode = {
   NOT_FOUND: 'NOT_FOUND',
   /** A service this one depends on did not answer usefully. Safe to retry. */
   UPSTREAM_UNAVAILABLE: 'UPSTREAM_UNAVAILABLE',
+  /** Too many requests, or a run cap reached — retry after `retry-after`. */
+  RATE_LIMITED: 'RATE_LIMITED',
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -43,6 +45,7 @@ export const ERROR_STATUS: Record<ErrorCode, number> = {
   FORBIDDEN: 403,
   NOT_FOUND: 404,
   UPSTREAM_UNAVAILABLE: 503,
+  RATE_LIMITED: 429,
 };
 
 export interface Problem {

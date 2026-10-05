@@ -370,3 +370,61 @@ describe('when the live stream says "finished"', () => {
     }
   }, 20_000);
 });
+
+describe('a daily run cap per orchestrator', () => {
+  // A hosted orchestrator's key reaches judges, and every run spends the
+  // owner's model quota. Without a cap, a leaked key could start runs without
+  // end. The cap is per AGENT, over a rolling 24 hours.
+  it('refuses the run past the cap with 429 RATE_LIMITED and retry-after; other agents are unaffected', async () => {
+    const capped = await buildApp({
+      db,
+      chains: config.chains,
+      defaultChainId: 31337,
+      runExecutor: async () => DELIVERED,
+      runsPerDay: 2,
+      submit: async () => ({txHash: `0x${'ef'.repeat(32)}`, chainJobId: '1'}),
+    });
+    try {
+      const a = await register();
+      const start = (key: string) =>
+        capped.inject({method: 'POST', url: '/v1/runs', headers: auth(key), payload: {goal: 'a goal'}});
+      expect((await start(a.apiKey)).statusCode).toBe(202);
+      expect((await start(a.apiKey)).statusCode).toBe(202);
+      const third = await start(a.apiKey);
+      expect(third.statusCode).toBe(429);
+      expect(third.json()).toMatchObject({code: 'RATE_LIMITED'});
+      expect(third.json().detail).toMatch(/2 runs/);
+      expect(Number(third.headers['retry-after'])).toBeGreaterThan(0);
+
+      const other = (
+        await capped.inject({
+          method: 'POST',
+          url: '/v1/agents',
+          payload: {
+            name: 'OtherBot',
+            capabilities: ['market-research'],
+            pricePerTask: '20000',
+            walletAddress: '0x' + '33'.repeat(20),
+            ownerAddress: '0x' + '44'.repeat(20),
+          },
+        })
+      ).json() as {apiKey: string};
+      expect((await start(other.apiKey)).statusCode).toBe(202);
+    } finally {
+      await capped.close();
+    }
+  });
+
+  it('is off by default', async () => {
+    const {apiKey} = await register();
+    for (let i = 0; i < 4; i++) {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/v1/runs',
+        headers: auth(apiKey),
+        payload: {goal: 'a goal'},
+      });
+      expect(res.statusCode).toBe(202);
+    }
+  });
+});

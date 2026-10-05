@@ -1,7 +1,7 @@
 import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {afterAll, describe, expect, it} from 'vitest';
+import {afterAll, describe, expect, it, vi} from 'vitest';
 import {z} from 'zod';
 import {
   BrainInvalidOutput,
@@ -217,6 +217,31 @@ describe('buildBrain configuration', () => {
   it('always keeps cached as the final backstop in live mode', () => {
     const brain = buildBrain({role: 'worker', env: {AGENT_MODE: 'live'}, cacheDir: dir});
     expect(brain.name).toContain('cached');
+  });
+
+  // One model overloaded ("503 high demand") while others on the same key
+  // answered: gemini-3.8-flash and 3.7 were refusing, 3.6, 3.5 and
+  // flash-latest were not (2026-10-05). A chain may list models to fall back to.
+  it('accepts several Gemini models in one chain, each a provider of its own', async () => {
+    const brain = buildBrain({
+      role: 'orchestrator',
+      env: {
+        AGENT_MODE: 'live',
+        GEMINI_API_KEY: 'k',
+        BRAIN_CHAIN_ORCHESTRATOR: 'gemini,gemini:gemini-3.6-flash,gemini:gemini-flash-latest',
+      },
+      cacheDir: dir,
+    });
+    expect(brain.name).toContain('gemini→gemini:gemini-3.6-flash→gemini:gemini-flash-latest');
+    const urls: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      urls.push(String(url));
+      return new Response('{"error":{"message":"high demand"}}', {status: 400});
+    });
+    await brain.complete(req).catch(() => undefined);
+    vi.restoreAllMocks();
+    expect(urls.some((u) => u.includes('/models/gemini-3.6-flash:'))).toBe(true);
+    expect(urls.some((u) => u.includes('/models/gemini-flash-latest:'))).toBe(true);
   });
 
   it('rejects an unknown provider by name instead of silently skipping it', () => {

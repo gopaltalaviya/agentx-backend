@@ -8,18 +8,23 @@ import type {CompletionRequest} from '../brain.js';
  * 500 AGENTX demo runs), and it accepts a response schema natively rather
  * than being asked nicely for JSON.
  */
+const DEFAULT_MODEL = 'gemini-3.8-flash';
+
 export class GeminiBrain extends JsonHttpBrain {
-  readonly name = 'gemini';
+  readonly name: string;
   protected readonly model: string;
 
   constructor(
     // gemini-2.5-flash answered 404 "no longer available to new users" on
     // 2026-09-30, naming this as its replacement. GEMINI_MODEL overrides it.
-    model = process.env['GEMINI_MODEL'] ?? 'gemini-3.8-flash',
+    model = process.env['GEMINI_MODEL'] ?? DEFAULT_MODEL,
     private readonly apiKey = process.env['GEMINI_API_KEY'],
   ) {
     super();
     this.model = model;
+    // The default model is plain "gemini"; another is named for its model, so
+    // a chain of several reads (and logs) unambiguously.
+    this.name = model === DEFAULT_MODEL ? 'gemini' : `gemini:${model}`;
   }
 
   protected endpoint(): string | null {
@@ -40,10 +45,19 @@ export class GeminiBrain extends JsonHttpBrain {
         generationConfig: {
           responseMimeType: 'application/json',
           responseJsonSchema: jsonSchema,
-          maxOutputTokens: req.maxTokens ?? 2_000,
+          // Gemini 3.x spends part of this on THINKING before it writes a word,
+          // so a caller's small budget (a worker's triage asks for 400) ran
+          // out mid-answer: `{"` and stop. Headroom costs nothing — billing is
+          // for tokens produced, not the cap.
+          maxOutputTokens: Math.max(req.maxTokens ?? 2_000, 8_192),
         },
       },
     };
+  }
+
+  protected override isTruncated(payload: unknown): boolean {
+    const p = payload as {candidates?: {finishReason?: string}[]};
+    return p.candidates?.[0]?.finishReason === 'MAX_TOKENS';
   }
 
   protected extractText(payload: unknown): string | null {

@@ -3,6 +3,18 @@
 Notable changes. Dates are UTC. The full history, with evidence, is in
 `PROGRESS.md` and the commit log.
 
+## 2026-10-05 — Session 31 (hosted live runs)
+- Hosted runs: `seed-hosted.mjs` (fresh keys, `--top-up`, `--reclaim`), the
+  signer renews the hosted accounts' 24 h session keys, `RUNS_PER_DAY`,
+  `INDEXER_START_AT_HEAD`, worker bots in the compose `hosted` profile.
+- Agents: transient model errors retried; chains across Gemini models
+  (`gemini:<model>`); headroom for thinking models and truncation handled;
+  JSON found inside prose; hire idempotency keys are per run (a second run
+  with the same goal reused a refunded job).
+- Images build per service, one package at a time (parallel `tsc -b`
+  segfaulted or hung).
+- Tests 766 → 789; browser 62 → 63.
+
 ## 2026-10-05 — Session 30 (cross-browser, audit, rehearsal)
 - Site: input typed before hydration is no longer lost (Safari, phones);
   a dropped live stream reconnects and never reads as "finished" (Firefox);

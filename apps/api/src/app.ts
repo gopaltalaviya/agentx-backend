@@ -38,6 +38,8 @@ export interface AppDeps {
   rateLimitPerMinute?: number;
   /** Open SSE streams this instance holds, per stream kind (jobs, runs); past it, 503 + retry-after. */
   maxStreams?: number;
+  /** Runs one orchestrator may start per rolling 24 h; 0/unset = no cap. */
+  runsPerDay?: number;
   /** Refuse non-public, non-https agent endpoint URLs (production). */
   requirePublicHttpsEndpoints?: boolean;
   logger?: boolean;
@@ -229,6 +231,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
             bus: runBus,
             execute: deps.runExecutor,
             log: (err, msg) => app.log.error({err}, msg),
+            ...(deps.runsPerDay ? {runsPerDay: deps.runsPerDay} : {}),
           }),
         }
       : {}),

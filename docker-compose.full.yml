@@ -56,6 +56,11 @@ services:
       SIGNER_KEYSTORE_PASSPHRASE: ${SIGNER_KEYSTORE_PASSPHRASE:-}
       # Testnet only; the signer refuses a raw key anywhere else.
       SIGNER_DEV_PRIVATE_KEY: ${SIGNER_DEV_PRIVATE_KEY:-}
+      # Hosted agents (scripts/seed-hosted.mjs → artifacts/hosted-agents.json "env"):
+      # their session keys, and the owner key that renews them every day.
+      SIGNER_DEV_PRIVATE_KEYS: ${SIGNER_DEV_PRIVATE_KEYS:-}
+      SESSION_OWNER_PRIVATE_KEY: ${SESSION_OWNER_PRIVATE_KEY:-}
+      SESSION_RENEW_BEFORE_S: ${SESSION_RENEW_BEFORE_S:-21600}
       KEEPER_PRIVATE_KEY: ${KEEPER_PRIVATE_KEY:-}
     depends_on:
       migrate: {condition: service_completed_successfully}
@@ -70,6 +75,7 @@ services:
     environment:
       <<: *chain
       INDEXER_HEALTH_PORT: 9090
+      INDEXER_START_AT_HEAD: ${INDEXER_START_AT_HEAD:-0}
     depends_on:
       migrate: {condition: service_completed_successfully}
     healthcheck:
@@ -86,6 +92,11 @@ services:
       SIGNER_TOKEN: ${SIGNER_TOKEN:?set SIGNER_TOKEN (32+ characters), shared with the signer}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       TRUST_PROXY: ${TRUST_PROXY:-0}
+      # Live runs: a model key (your quota) and a per-orchestrator daily cap.
+      AGENT_MODE: ${AGENT_MODE:-cached}
+      BRAIN_CHAIN_ORCHESTRATOR: ${BRAIN_CHAIN_ORCHESTRATOR:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      RUNS_PER_DAY: ${RUNS_PER_DAY:-0}
     ports: ['${API_PORT:-8080}:8080']
     depends_on:
       signer: {condition: service_healthy}
@@ -94,6 +105,36 @@ services:
       interval: 5s
       retries: 12
     restart: unless-stopped
+
+  # ── hosted live runs: the three worker bots (docker compose --profile hosted) ──
+  research-bot: &worker
+    profiles: [hosted]
+    build: {<<: *build, args: {SERVICE: '@agentx/research-bot'}}
+    environment: &worker-env
+      AGENTX_API_URL: http://api:8080
+      AGENTX_CHAIN_ID: ${DEFAULT_CHAIN_ID:-10143}
+      AGENTX_API_KEY: ${RESEARCH_BOT_API_KEY:-}
+      AGENT_MODE: ${AGENT_MODE:-cached}
+      BRAIN_CHAIN: ${BRAIN_CHAIN:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      api: {condition: service_healthy}
+    restart: unless-stopped
+
+  trading-bot:
+    <<: *worker
+    build: {<<: *build, args: {SERVICE: '@agentx/trading-bot'}}
+    environment:
+      <<: *worker-env
+      AGENTX_API_KEY: ${TRADING_BOT_API_KEY:-}
+
+  execution-bot:
+    <<: *worker
+    build: {<<: *build, args: {SERVICE: '@agentx/execution-bot'}}
+    environment:
+      <<: *worker-env
+      AGENTX_API_KEY: ${EXECUTION_BOT_API_KEY:-}
 
 volumes:
   agentx-full-pg:

@@ -1,0 +1,153 @@
+import {afterEach, describe, expect, it, vi} from 'vitest';
+import {z} from 'zod';
+import {BrainUnavailable, GeminiBrain} from '../src/index.js';
+
+/**
+ * Gemini answers 503 "This model is currently experiencing high demand.
+ * Spikes in demand are usually temporary" — and a hosted rehearsal run failed
+ * at the plan because the provider gave up on the FIRST one. A transient
+ * status is retried with backoff before the provider is declared down.
+ */
+const Plan = z.object({steps: z.array(z.string())});
+const req = {schema: Plan, schemaName: 'Plan', system: 's', prompt: 'p'};
+const ok = () =>
+  new Response(JSON.stringify({candidates: [{content: {parts: [{text: '{"steps":["a"]}'}]}}]}), {
+    status: 200,
+  });
+const status = (n: number, headers: Record<string, string> = {}) =>
+  new Response('{"error":{"message":"This model is currently experiencing high demand."}}', {
+    status: n,
+    headers,
+  });
+
+/** No real waiting in tests: the delays are recorded instead. */
+class FastGemini extends GeminiBrain {
+  waits: number[] = [];
+  protected override sleep(ms: number) {
+    this.waits.push(ms);
+    return Promise.resolve();
+  }
+}
+
+afterEach(() => vi.restoreAllMocks());
+
+describe('a provider under transient failure', () => {
+  it('retries a 503 and succeeds when the spike passes', async () => {
+    const fetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(status(503))
+      .mockResolvedValueOnce(status(503))
+      .mockResolvedValueOnce(ok());
+    const brain = new FastGemini('m', 'key');
+    const result = await brain.complete(req);
+    expect(result.value).toEqual({steps: ['a']});
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(brain.waits).toHaveLength(2);
+    expect(brain.waits[1]!).toBeGreaterThan(brain.waits[0]!); // backs off
+  });
+
+  it('retries 429 and 504 too (and 500, 502), and honours retry-after (capped)', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(status(429, {'retry-after': '7'}))
+      .mockResolvedValueOnce(status(504))
+      .mockResolvedValueOnce(ok());
+    const brain = new FastGemini('m', 'key');
+    await brain.complete(req);
+    expect(brain.waits[0]).toBe(7_000);
+  });
+
+  it('gives up after its attempts with the provider marked unavailable, so the fallback chain moves on', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => status(503));
+    const brain = new FastGemini('m', 'key');
+    await expect(brain.complete(req)).rejects.toBeInstanceOf(BrainUnavailable);
+    expect(fetch).toHaveBeenCalledTimes(3); // the first try and two retries
+  });
+
+  it('never retries a client error or a rejected key — those do not fix themselves', async () => {
+    for (const n of [400, 401, 403, 404]) {
+      const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(status(n));
+      await expect(new FastGemini('m', 'key').complete(req)).rejects.toThrow();
+      expect(fetch).toHaveBeenCalledTimes(1);
+      vi.restoreAllMocks();
+    }
+  });
+});
+
+describe('a provider that cannot be reached', () => {
+  it('retries a dropped connection, but not a request that already timed out', async () => {
+    const drop = Object.assign(new TypeError('fetch failed'), {name: 'TypeError'});
+    let fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(drop).mockResolvedValueOnce(ok());
+    await new FastGemini('m', 'key').complete(req);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    vi.restoreAllMocks();
+
+    const timeout = Object.assign(new Error('The operation was aborted due to timeout'), {
+      name: 'TimeoutError',
+    });
+    fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(timeout);
+    await expect(new FastGemini('m', 'key').complete(req)).rejects.toBeInstanceOf(BrainUnavailable);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('a model that wraps its JSON in prose', () => {
+  // gemini-3.6-flash answered a worker's triage with "Here is the JSON
+  // requested:" and a fenced block — and the worker failed the job, though the
+  // JSON inside was valid (hosted rehearsal, 2026-10-05).
+  const reply = (text: string) =>
+    new Response(JSON.stringify({candidates: [{content: {parts: [{text}]}}]}), {status: 200});
+  const fence = '`'.repeat(3);
+
+  it.each([
+    ['prose, then a fenced block', `Here is the JSON requested:\n${fence}json\n{"steps":["a"]}\n${fence}`],
+    ['a fenced block, then prose', `${fence}json\n{"steps":["a"]}\n${fence}\nLet me know if you need more.`],
+    ['an unfenced object inside prose', 'Sure. {"steps":["a"]} Hope that helps.'],
+    ['plain JSON, as asked', '{"steps":["a"]}'],
+  ])('finds the JSON in %s', async (_, text) => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(reply(text));
+    expect((await new FastGemini('m', 'key').complete(req)).value).toEqual({steps: ['a']});
+  });
+
+  it('still refuses a reply with no JSON in it', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(reply('I cannot help with that.'));
+    await expect(new FastGemini('m', 'key').complete(req)).rejects.toThrow(/not valid JSON/);
+  });
+});
+
+describe('a fenced block is preferred to a brace hunt', () => {
+  it('takes the fenced JSON even when the prose around it has braces of its own', async () => {
+    const fence = '`'.repeat(3);
+    const text = `Format {like this}:\n${fence}json\n{"steps":["a"]}\n${fence}\n(see {docs})`;
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({candidates: [{content: {parts: [{text}]}}]}), {status: 200}),
+    );
+    expect((await new FastGemini('m', 'key').complete(req)).value).toEqual({steps: ['a']});
+  });
+});
+
+describe('a thinking model and a small token budget', () => {
+  // Gemini 3.x counts its thinking against maxOutputTokens. A worker's triage
+  // asks for 400; the model thought, then wrote `{"` and stopped — and the
+  // worker failed the job (hosted rehearsal, 2026-10-05).
+  it('asks Gemini for headroom, whatever the caller asked for', async () => {
+    let sent: {generationConfig?: {maxOutputTokens?: number}} = {};
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async (_url, init) => {
+      sent = JSON.parse(String(init?.body));
+      return ok();
+    });
+    await new FastGemini('m', 'key').complete({...req, maxTokens: 400});
+    expect(sent.generationConfig?.maxOutputTokens).toBeGreaterThanOrEqual(4096);
+  });
+
+  it('a reply cut off at the token limit is the provider failing, so the chain moves on', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({candidates: [{finishReason: 'MAX_TOKENS', content: {parts: [{text: '{"'}]}}]}),
+        {
+          status: 200,
+        },
+      ),
+    );
+    await expect(new FastGemini('m', 'key').complete(req)).rejects.toBeInstanceOf(BrainUnavailable);
+  });
+});

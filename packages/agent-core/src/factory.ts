@@ -100,6 +100,11 @@ function resolveChain(role: Role, env: NodeJS.ProcessEnv): string[] {
 }
 
 function makeBrain(name: string, role: Role, env: NodeJS.ProcessEnv): Brain {
+  // `gemini:<model>` — another Gemini model, as a provider of its own. One
+  // model can be overloaded ("503 high demand") while others on the same key
+  // answer, so a chain may fall back across models, not only across vendors.
+  const [provider, model] = name.split(/:(.*)/s) as [string, string | undefined];
+  if (provider === 'gemini' && model) return new GeminiBrain(model, env['GEMINI_API_KEY']);
   switch (name) {
     case 'claude':
       // Haiku for workers is a deliberate cost choice, recorded in the
@@ -118,7 +123,7 @@ function makeBrain(name: string, role: Role, env: NodeJS.ProcessEnv): Brain {
       return new OllamaBrain();
     default:
       throw new Error(
-        `unknown brain "${name}" in BRAIN_CHAIN — expected one of claude, gemini, groq, ollama`,
+        `unknown brain "${name}" in BRAIN_CHAIN — expected one of claude, gemini (or gemini:<model>), groq, ollama`,
       );
   }
 }
