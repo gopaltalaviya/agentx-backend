@@ -190,7 +190,7 @@ once something collects it.
 |---|---|---|---|---|
 | `/v1/status` → `status: "down"` or unreachable for 2 checks | uptime monitor | SEV1 | owner | [R2](16-runbooks.md#r2-database-down), [R6](16-runbooks.md#r6-recover-a-failed-service) |
 | `components.signer == "down"` 5 min | uptime monitor | SEV2 — hires and transitions fail with 503 | owner | [R6](16-runbooks.md#r6-recover-a-failed-service) |
-| `components.indexer == "degraded"` 15 min (lag > 150 + confirmations) | uptime monitor / `indexer_lag_blocks` | SEV3 — settlements show late | owner | [R3](16-runbooks.md#r3-indexer-stopped-or-behind) |
+| `components.indexer == "degraded"` 15 min (lag > 150 + confirmations), or `"down"` 5 min (stopped) | uptime monitor / `indexer_lag_blocks` | SEV3 (SEV2 if down) — settlements show late | owner | [R3](16-runbooks.md#r3-indexer-stopped-or-behind) |
 | indexer `/ready` 503, or log "reorg dropped … halting" | Railway health / logs | SEV2 — projection frozen | owner | [R4](16-runbooks.md#r4-indexer-halted-on-a-reorg-or-showing-wrong-data) |
 | `components.rpc == "down"` 10 min | uptime monitor | SEV2 | owner | [R5](16-runbooks.md#r5-rpc-down-or-rate-limited) |
 | `rate(signer_refusals_total{code="INTERNAL"}[10m]) > 0` | metrics | SEV3 | owner | [R6](16-runbooks.md#r6-recover-a-failed-service) |

@@ -136,11 +136,15 @@ The parameter table in [04 §2.5](04-how-it-works.md#25-parameters) is
   "minStake":             "10000000",   // 10 USDC
   "withdrawDelaySeconds": 604800,       // 7 days
   "fastPathMax":          "30000",      // 0.03 USDC
+  "minJobAmount":         "10000",      // 0.01 USDC — no dust jobs
+  "minFee":               "100",        // 0.0001 USDC — every review costs something
   "fastPathMinScore":     70,
   "protocolFeeBps":       100,          // 1%
   "acceptWindowSeconds":  300,          // 5 min
   "workWindowSeconds":    1800,         // 30 min
   "reviewWindowSeconds":  600,          // 10 min
+  "disputeTimeoutSeconds": 3600,        // 1 h, then the keeper may expire it
+  "adminDelaySeconds":    3600,         // 1 h between proposing and applying
   "confidenceFloor":      25,
   "defaultPerTaskCap":    "100000",     // 0.10 USDC, a new agent's spend_policies row
   "defaultDailyCap":      "1000000"     // 1.00 USDC
@@ -153,11 +157,15 @@ The parameter table in [04 §2.5](04-how-it-works.md#25-parameters) is
   "minStake":             "100000000",  // 100 USDC
   "withdrawDelaySeconds": 1209600,      // 14 days
   "fastPathMax":          "500000",     // 0.50 USDC
+  "minJobAmount":         "10000",      // 0.01 USDC
+  "minFee":               "100",        // 0.0001 USDC
   "fastPathMinScore":     80,
   "protocolFeeBps":       100,
   "acceptWindowSeconds":  900,
   "workWindowSeconds":    3600,
   "reviewWindowSeconds":  3600,         // an hour to dispute, not ten minutes
+  "disputeTimeoutSeconds": 259200,      // 72 h
+  "adminDelaySeconds":    172800,       // 48 h
   "confidenceFloor":      50,
   "defaultPerTaskCap":    "50000",      // 0.05 USDC
   "defaultDailyCap":      "250000"      // 0.25 USDC
@@ -187,7 +195,7 @@ the drift check is for.
 and `StakeVault`'s `minStake` / `withdrawDelay` from the chain, maps them the
 way `Deploy.s.sol` does, and exits 1 on any difference. It is run by hand; CI
 does not run it, since CI has no deployed chain to read. Against Monad testnet
-on 2026-09-29 it reported no drift. A config file that disagrees with the
+on 2026-09-30 (v2, Session 26) it reported no drift. A config file that disagrees with the
 chain is worse than no config file.
 
 ---
@@ -359,8 +367,7 @@ services, and are documented where they are used.
 > `EXPLORER_API_KEY` belongs to `agentx-contracts/.env`, not this one.
 >
 > **Added 2026-09-29:** `SIGNER_TOKEN`, `SIGNER_HOST`, `KEEPER_PRIVATE_KEY` and
-> `KEEPER_INTERVAL_MS`. `SIGNER_HOST` is read by the signer but not listed in
-> `.env.example`. In `agentx-contracts/.env`, `ARBITER_ADDRESS` and
+> `KEEPER_INTERVAL_MS`. In `agentx-contracts/.env`, `ARBITER_ADDRESS` and
 > `FEE_RECIPIENT` are now read by `Deploy.s.sol` (empty means the deployer);
 > before that date nothing read them.
 

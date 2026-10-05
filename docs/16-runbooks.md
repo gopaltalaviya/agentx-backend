@@ -62,7 +62,8 @@ curl -s "$API/health"          # chains[].escrow = chain/deployments/<id>.json T
 ## R2. Database down
 
 **Symptom:** `/v1/status` `status: "down"`, `components.database: "down"`;
-`/ready` 503 `database.ok: false` on api, signer, indexer; API requests 500.
+`/ready` 503 `database.ok: false` on api, signer, indexer; API requests 503
+`UPSTREAM_UNAVAILABLE` with `retry-after: 5`.
 
 1. Railway → Postgres service: is it running, is the volume full, is there a
    platform incident? The API logs `readiness check failed` with the real
@@ -78,13 +79,14 @@ curl -s "$API/health"          # chains[].escrow = chain/deployments/<id>.json T
    from there, idempotently, and catches up (R3).
 
 **Validation:** `/ready` 200 everywhere; `/v1/status` operational.
-**Expected:** service resumes; hires made during the outage failed with 500
-and are safe to retry under the same `Idempotency-Key`.
+**Expected:** service resumes; hires made during the outage failed with 503
+`UPSTREAM_UNAVAILABLE` and are safe to retry under the same `Idempotency-Key`.
 
 ## R3. Indexer stopped or behind
 
 **Symptom:** `/v1/status` `components.indexer: "degraded"` (lag > 150 +
-confirmations), or `lastIndexedAt` old while `rpc: "up"`; indexer `/ready`
+confirmations) or `"down"` (behind, and no progress for 120 s — stopped, not
+catching up), or `lastIndexedAt` old while `rpc: "up"`; indexer `/ready`
 503 ("no successful tick for N s"); jobs stuck in their API-written state.
 
 **Diagnose**

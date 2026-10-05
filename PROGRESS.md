@@ -4,7 +4,7 @@
 > terminal. Read it top to bottom before doing anything else.
 
 - Last updated: **2026-10-01** (Session 29 — docs search, video guides, hostile-HTTP probe, one-dependency-down matrix on the production images; 14 defects found and fixed)
-- Days to deadline: **12** — verified: **2026-10-13, 11:59 PM ET**
+- Deadline: **2026-10-13, 11:59 PM ET** (verified)
 - Target track: **4 — Trust, Identity & AI Infrastructure** ($30,000)
 - Current state: **v2 live on Monad testnet, end to end, re-verified.** The
   escrow now refuses self-hires (`SameOwner`) and dust jobs, never traps a
@@ -38,11 +38,10 @@
    key from `artifacts/demo-hold.json` into `/demo` and press **Run** — the
    trace streams live and settles 4/4 in ~76 s. It must be the first run on
    those agents (a second run's prompts differ, so the cached replay misses).
-3. **Testnet MON** (checked 2026-10-01, end of Session 29): DEPLOYER
-   `0xd5b8…1137` holds **15.68 MON** (~30 demo runs at ~0.5). **FUNDER
-   `0x5c03…Cc54` holds 0.0066 MON — top it up** (2–3 MON is plenty). Until
-   then run demos with `unset FUNDER_PRIVATE_KEY` so the deployer pays gas;
-   that also turns the keeper off (the demo prints exactly this if you forget).
+3. **Testnet MON — done** (topped up 2026-10-05): DEPLOYER **40.68 MON**
+   (~80 demo runs at ~0.5), FUNDER **15.01 MON** — the keeper and the agents'
+   gas top-ups run from it again. If FUNDER ever drains, the demo now says so
+   before sending anything.
 4. **Railway + Vercel** — follow [docs/13-deploy.md](docs/13-deploy.md): every
    service, every variable, in order. The backend now builds from its own repo
    (`chain/`), and the images were rehearsed locally. Afterwards:
@@ -192,7 +191,7 @@ outlive it — `demo.mjs` now refuses to start if :7098 or :8098 is taken).
 ```bash
 # 1 — agentx-backend: fresh agents on testnet, held open
 set -a; . ../agentx-contracts/.env; set +a
-unset GEMINI_API_KEY MAINNET_DEPLOYER_PRIVATE_KEY FUNDER_PRIVATE_KEY   # FUNDER: until it is topped up
+unset GEMINI_API_KEY MAINNET_DEPLOYER_PRIVATE_KEY   # (unset FUNDER_PRIVATE_KEY too if FUNDER is ever empty)
 VERIFY_CHAIN_ID=10143 AGENTX_CONTRACTS_ROOT=../agentx-contracts DATABASE_URL=postgres://agentx:agentx@127.0.0.1:5442/agentx BRAIN_CHAIN=ollama BRAIN_CHAIN_ORCHESTRATOR=ollama OLLAMA_MODEL=llama3:latest CORS_ORIGINS=http://localhost:3300,http://127.0.0.1:3300 DEMO_HOLD=ui AGENT_MODE=cached AGENT_REPLAY_MAX_MS=2000 node scripts/demo.mjs
 
 # 2 — agentx-interface: the site against it
@@ -280,7 +279,7 @@ v2 one — any prompt or schema change still invalidates it.
 | `EADDRINUSE 127.0.0.1:5442` in a test, once in ~15 full runs | **Not our code.** Windows ran out of ephemeral ports: an unrelated process on this machine (`another-process`) held ~1,800 sockets and churned ~7,000 into TIME_WAIT (Sep 30). This is almost certainly the old "`meta.test.ts` flake" — its first query is the first connection a file opens. Re-run; if it recurs, check `Get-NetTCPConnection -State TimeWait`. |
 | `cp "$TEMP"/…/*` copies nothing in Git Bash | `$TEMP` is a Windows path; globs do not expand through backslashes. Use `$(cygpath -u "$TEMP")`. |
 | A demo run drains DEPLOYER | ~0.5 MON a run since worker accounts. Check balances before recording; top up from FUNDER. |
-| FUNDER drained → "transaction 0x… reverted" | Fixed to a clear preflight message. FUNDER is at 0.0066 MON (Oct 1): `unset FUNDER_PRIVATE_KEY` so the deployer pays, or top it up. |
+| FUNDER drained → "transaction 0x… reverted" | Fixed to a clear preflight message. If it happens: `unset FUNDER_PRIVATE_KEY` so the deployer pays, or top FUNDER up (it was, Oct 5). |
 | Claude background tasks die at 2 h, children survive | A stopped demo left its signer on :7098; the next demo's hires all failed 401. `demo.mjs` now refuses taken ports. Kill leftovers by process tree (`taskkill //PID <pid> //F //T`), checking the command line first. |
 | `:4010` / `:3100` / `:8787` belong to **another-project**, another project | Its API is also `apps/api/dist/main.js` — check the parent command line before killing anything. |
 | Playwright timeouts / "Failed to find context" across many tests | Contention from other projects' harnesses, not our code. `--workers=2`. One test passing alone confirms it. |
@@ -361,9 +360,9 @@ this is the first thing a fresh session needs.
 | Explorer | `https://testnet.monadexplorer.com` (also `testnet.monadscan.com`) | ✅ |
 | Faucet | `https://faucet.monad.xyz` | ✅ |
 | Native currency | `MON` | ✅ |
-| Faucet daily limit | `_______` | ⬜ you check |
-| Verification: API key needed? | `_______` | ⬜ you check |
-| Canonical USDC on testnet | `_______` (likely none → MockUSDC) | ⬜ you check |
+| Faucet daily limit | not needed — MON was sent by the owner | — |
+| Verification: API key needed? | yes — `EXPLORER_API_KEY` in `agentx-contracts/.env` ([07 §A1](docs/07-what-i-need-from-you.md#a1-explorer-api-key--for-verified-contract-source)) | ⬜ key not set yet |
+| Canonical USDC on testnet | none used — our `MockUSDC` (deployed) | ✅ |
 
 **Mainnet** (chain ID **143**) — live, `v0.15.2 / MONAD_NINE`
 
@@ -392,12 +391,12 @@ longer a blocker, only a deploy target.
 
 ### Wallets — addresses only, never keys
 
-| Role | Address | MON (checked Sep 23) |
+| Role | Address | MON (checked 2026-10-05) |
 |---|---|---|
-| `DEPLOYER` | `0xd5b812EFb94124E737c3520739d04539a8441137` | **1.0** ✅ |
-| `FUNDER` | `0x5c03DB6fb41c0F42777dDE051d07EAb9F54fCc54` | 0 — fund from DEPLOYER |
-| `AGENT_A` | `0xfB95885d3A72A82836f3fCAC720Bf80A4155F6c2` | 0 — fund from DEPLOYER |
-| `AGENT_B` | `0x2Ff72eE6B8de27dD8F2D9FbFf7102EfbaD8D37D6` | 0 — fund from DEPLOYER |
+| `DEPLOYER` | `0xd5b812EFb94124E737c3520739d04539a8441137` | **40.68** ✅ |
+| `FUNDER` | `0x5c03DB6fb41c0F42777dDE051d07EAb9F54fCc54` | **15.01** ✅ (topped up Oct 5) |
+| `AGENT_A` | `0xfB95885d3A72A82836f3fCAC720Bf80A4155F6c2` | 29.00 |
+| `AGENT_B` | `0x2Ff72eE6B8de27dD8F2D9FbFf7102EfbaD8D37D6` | 18.91 |
 
 > **The faucet cannot be automated.** `faucet.monad.xyz` runs a bot-detection
 > check and gates larger drips behind X/Discord linking. Claude does not
@@ -428,7 +427,7 @@ CI-check it has not moved (M1-00d).
 > deployment and mainnet at the canonical one, with identical code.
 > Rationale: [09 §8](docs/09-landscape.md#8-m1-00-verification--results-2026-09-22-on-chain)
 
-**Ours, once M1-19 runs:**
+**Ours (deployed):**
 
 | Contract | Testnet 10143 ✅ LIVE — **v2**, 2026-09-30 | Mainnet 143 |
 |---|---|---|

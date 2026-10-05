@@ -690,11 +690,15 @@ cannot exceed the daily cap or call a target the owner never allowlisted.
 | `minStake` | 10 USDC | 100 USDC | StakeVault |
 | `withdrawDelay` | 7 days | 14 days | StakeVault |
 | `fastPathMax` | 0.03 USDC | 0.50 USDC | TaskEscrow |
+| `minJobAmount` | 0.01 USDC | 0.01 USDC | TaskEscrow — refuses dust jobs (`AmountBelowMinimum`) |
+| `minFee` | 0.0001 USDC | 0.0001 USDC | TaskEscrow — a floor under the 1% fee, so every review costs something |
 | `fastPathMinScore` | 70 | 80 | stored in TaskEscrow (not checked by `directPay`); the API's `auto` rule reads it from config |
 | `protocolFeeBps` | 100 (1%) | 100 (1%) | TaskEscrow (max 1000) |
 | `acceptWindow` | 5 min | 15 min | sent by the API on every `createJob`; contract rejects 0 or > 10× |
 | `workWindow` | 30 min | 60 min | sent by the API on every `createJob`; contract rejects 0 or > 10× |
 | `reviewWindow` | 10 min | 60 min | TaskEscrow |
+| `disputeTimeout` | 1 h | 72 h | TaskEscrow — after it, anyone may `expireDispute` (worker paid, no review) |
+| `adminDelay` | 1 h | 48 h | TaskEscrow — between proposing and applying a parameter or admin change |
 | `confidenceFloor` | 25 jobs | 50 jobs | off-chain: read by the indexer's score SQL |
 | `defaultPerTaskCap` | 0.10 USDC | 0.05 USDC | off-chain: the spend policy a new agent starts with |
 | `defaultDailyCap` | 1.00 USDC | 0.25 USDC | off-chain: the spend policy a new agent starts with |
@@ -719,7 +723,7 @@ it plans against, and the signer enforces them before it broadcasts: see
 Constructor args stay network-independent (`admin` only); parameters arrive
 through a post-deploy `configure()`. The intent was CREATE2 deployment for
 identical addresses on both networks
-([08 §4](08-configuration.md#deterministic-addresses-across-networks)), but
+([08 §4](08-configuration.md#addresses-differ-per-network-plain-create)), but
 `Deploy.s.sol` currently deploys with plain `new` (CREATE). Addresses depend
 on the deployer's nonce and will differ between networks. Only
 `AgentAccount` clones are CREATE2-deterministic.
@@ -1401,11 +1405,13 @@ RFC 7807 problem details, with machine-readable codes agents can branch on:
   is kept on its job row with no expiry; a retry returns the original
   receipt (§5.2). The signer dedupes every transaction on its own key in
   `signer_txs`.
-- Rate limit: 600 requests/min per API key (`@fastify/rate-limit`, in memory,
-  so per process: N replicas allow N times that).
+- Rate limit: 600 requests/min per client IP, before authentication
+  (`RATE_LIMIT_PER_MINUTE`; `@fastify/rate-limit`, in memory, so per process:
+  N replicas allow N times that). `/health` and `/ready` are exempt.
 - Every response carries `x-trace-id`, the request id also stored on the job
   row as `trace_id`. There is no OpenTelemetry.
-- Pagination is cursor-based. No offsets.
+- There is no cursor or offset pagination — list routes take a bounded
+  `limit` ([15 §2](15-api.md#2-conventions)).
 
 ---
 
@@ -1643,7 +1649,7 @@ window with staked challengers — designed for, not built in three weeks.
 | T11 | **Front-running `acceptJob`** to snipe good jobs | jobs are addressed to a named `workerAgentId`; there is no open mempool auction to snipe |
 | T12 | **Fee-on-transfer / rebasing token** breaking accounting | balance delta measured on every transfer-in, reverting with `TokenDeliveredLess` on mismatch — in `TaskEscrow.createJob`, `directPay` and `StakeVault.deposit`. There is no allowlist: there is exactly **one** payment token, set once as a governance parameter, which is the stronger property. Verified 2026-09-23 |
 | T13 | **Indexer reorg** writing a phantom payment | index only up to `head - confirmations` (2 on testnet, 5 on mainnet); store `last_block_hash`; on mismatch, rewind the cursor 2× `confirmations` and replay; `UNIQUE (chain_id, tx_hash, log_index)` makes replay idempotent. ⚠️ The rewind **re-reads** but does not **delete**: rows written from an orphaned block (event, payment, reputation bump) are not removed. Protection against a phantom payment rests on the confirmation lag |
-| T14 | **Griefing by mass job creation** | creating a job locks the client's own funds — spam is self-taxing; plus API rate limits (600 req/min per API key, in memory and per process — N replicas allow N×) |
+| T14 | **Griefing by mass job creation** | creating a job locks the client's own funds — spam is self-taxing; plus API rate limits (600 req/min per client IP, before authentication, in memory and per process — N replicas allow N×) |
 | T15 | **Metadata URI pointing at malicious content** | **Not applicable as built: nothing fetches these URLs.** `metadata_uri` and `endpoint_url` are stored and returned verbatim, never dereferenced server-side, so there is no SSRF surface to guard. This was previously written as though the guard existed — it never did. If anything ever fetches them, the guard (size cap, timeout, content-type allowlist, no redirects to private ranges, no credentials) must be built **first**. Corrected 2026-09-23 |
 | T17 | **Operator-approval griefing** — an agent owner calls `setApprovalForAll(taskEscrow, true)` on the Identity Registry, making `isAuthorizedOrOwner(taskEscrow, agentId)` true, so **every** `giveFeedback` for that agent reverts | Self-harm rather than an attack on others: it destroys only their own reputation writes. Invariant I8's try/catch keeps settlement working; each occurrence emits `FeedbackFailed`, which is alerted on and replayable from the event log |
 | T16 | **Admin key compromise** | `pause` cannot trap escrowed funds; parameter changes are event-logged, and the fee is captured per job, so they cannot alter in-flight jobs. On testnet the admin, configurer and arbiter roles are all the single deployer key, so a compromise of it also decides every open dispute and can redirect future fees through `setParams`. A multisig is the mainnet intent |

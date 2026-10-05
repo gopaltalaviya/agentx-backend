@@ -1,6 +1,6 @@
 # 07 — What I Need From You
 
-Grouped by status. Updated 2026-09-29 against the code and
+Grouped by status. Updated 2026-10-05 against the code and
 [PROGRESS.md](../PROGRESS.md). **Nothing here blocks development any more.**
 The demo runs end to end on Monad testnet with a local model. What is left is
 what a *submission* needs: verified source, hosting, public repos, and two

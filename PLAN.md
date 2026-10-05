@@ -48,7 +48,7 @@ is deployed and verified on Monad testnet.
 | ID | Task | Who | Repo | Depends on |
 |---|---|---|---|---|
 | M0-01 | ✅ Confirm hackathon deadline + submission format | 👤 | — | — |
-| M0-02 | ✅ Gather Monad chain facts ([07 §A2](docs/07-what-i-need-from-you.md#a2-monad-chain-facts---mostly-done)) | 🤖 | — | — |
+| M0-02 | ✅ Gather Monad chain facts ([07 §C](docs/07-what-i-need-from-you.md#c-done)) | 🤖 | — | — |
 | M0-02b | ✅ **Testnet first, both networks supported** | 👤 | — | — |
 | M0-03 | ✅ Create 3 empty GitHub repos, send URLs | 👤 | — | — |
 | M0-04 | ✅ Create + fund 4 wallets, send addresses | 👤 | — | — |
@@ -170,7 +170,7 @@ Spec: [docs/04 §4–5](docs/04-how-it-works.md#4-database-schema).
 | M2-22 | 👤 Railway: api, signer, indexer (+ optional workers) + Postgres — configs in `deploy/railway/`, runbook [docs/13](docs/13-deploy.md) | 👤 | B | M2-21 |
 | M2-23 | 👤 Run `node scripts/check-deployment.mjs <api> <site>` against Railway + Vercel | 👤 | B | M2-22 |
 
-**Done when:** `./scripts/e2e.sh` passes unattended against the deployed
+**Done when:** `node scripts/e2e.mjs` passes unattended against the deployed
 backend and asserts on-chain balances, fee, score change, and 5 `job_events`
 rows.
 

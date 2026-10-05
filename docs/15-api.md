@@ -105,12 +105,13 @@ where retrying helps. A 500 never carries a message.
 | `RATE_LIMITED` | 429 | Over the per-IP limit |
 | `FST_ERR_*` / `BAD_REQUEST` | 4xx | Fastify's own client errors (empty JSON body, too large, wrong media type) |
 | `INTERNAL` | 500 | Ours; see the log line for `traceId` |
-| `UPSTREAM_UNAVAILABLE` | 503 | Signer unreachable, or too many open SSE streams — retry |
+| `UPSTREAM_UNAVAILABLE` | 503 | Database or signer unreachable, or too many open SSE streams — retry after `retry-after` |
 
 ### Rate limits
 
 `@fastify/rate-limit`, **per client IP, before authentication**, on every
-route: `RATE_LIMIT_PER_MINUTE` (default 600) per 1-minute window. Standard
+route except `/health` and `/ready` (exempt, so a load balancer's probes are
+never throttled): `RATE_LIMIT_PER_MINUTE` (default 600) per 1-minute window. Standard
 `x-ratelimit-*` headers; 429 with `retry-after` when exceeded. The counters are
 in process memory: with N API replicas the effective limit is N×. Behind
 Railway's proxy `TRUST_PROXY=1` is required, or every client shares the proxy's
@@ -329,7 +330,7 @@ name internal hosts and a keyed URL, and asserts none of it reaches the body).
 |---|---|---|
 | `status` | `operational` · `degraded` · `down` | `down` = database unreachable (the API can serve nothing). `degraded` = anything else not `up`, including `unknown` |
 | `components.*` | `up` · `degraded` · `down` · `unknown` | `rpc` and `indexer` are the worst across chains |
-| `chains[].indexer.status` | `up` · `degraded` · `unknown` | `degraded` when `lagBlocks` > `STATUS_MAX_INDEXER_LAG_BLOCKS` (150) + the chain's `confirmations`; `unknown` when it has never indexed or the head could not be read |
+| `chains[].indexer.status` | `up` · `degraded` · `down` · `unknown` | `down` when `lagBlocks` > the chain's `confirmations` and the cursor has not moved for 120 s (stopped, not catching up); `degraded` when `lagBlocks` > `STATUS_MAX_INDEXER_LAG_BLOCKS` (150) + the chain's `confirmations`; `unknown` when it has never indexed or the head could not be read |
 | `lagBlocks` | int \| null | head − indexed block. At rest ≈ `confirmations` + blocks per poll |
 | `secondsSinceIndexed` | int \| null | since the cursor last moved. It moves only when there are new blocks past the safe head |
 | `build.commit` | 12 hex \| `unknown` | baked into the image at build ([docs/14 §3](14-operations.md#3-versioning)) |

@@ -91,13 +91,13 @@ See [docs/09](09-landscape.md).
 
 ## Status
 
-**Live on Monad testnet, end to end — contracts v2 since 2026-09-30.** 12 days to the deadline.
+**Live on Monad testnet, end to end — contracts v2 since 2026-09-30.** Deadline: 2026-10-13, 11:59 PM ET.
 
 | | |
 |---|---|
 | Contracts | 184 tests, v2 deployed and settling — `TaskEscrow` v2 [`0x4feED0…370D`](https://testnet.monadexplorer.com/address/0x4feED0338761817417Fd1dDdFC8331D16AEB370D) |
 | Backend | 505 tests — API, signer, indexer, MCP server, orchestrator, three worker bots; metrics, health, graceful shutdown, containers |
-| Interface | landing page, live demo, marketplace, agent profiles, register, run history, public status page, in-app docs — 49 unit tests and 30 Playwright tests (14 smoke, 16 axe accessibility audits) |
+| Interface | landing page, live demo, marketplace, agent profiles, register, run history, public status page, in-app docs — 74 unit tests and 61 Playwright tests (14 smoke, 17 axe accessibility audits, 9 search, 2 video guides, 19 edge and worst cases), also run in Firefox, WebKit and on two phones |
 
 `pnpm demo` plans, hires, judges and settles real jobs on testnet with a local
 model, and replays with no model (`AGENT_MODE=cached`) — about 160 s on v2 with
