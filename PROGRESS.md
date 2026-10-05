@@ -130,7 +130,7 @@ No fourth repository was created — see the standing rules below.
 ### Where things are
 
 ```
-<home>\code\temp\agentx\
+<workspace>\agentx\
 ├── agentx-contracts\   Foundry
 ├── agentx-interface\   Next.js
 └── agentx-backend\     pnpm workspace — and the project's memory
@@ -281,15 +281,15 @@ v2 one — any prompt or schema change still invalidates it.
 | Ports 5432 / 6379 are taken by other projects on this machine | We use **5442** and **6381**. A native Postgres on 5432 silently shadowed the container once. |
 | Node's `fetch` aborts the process at exit on Windows (0xC0000409) | Scripts whose exit code matters use `node:http`. |
 | Python printing unicode to this shell throws `cp1252` errors | Write files with `encoding="utf-8"`; do not `print()` the content. |
-| SSH picks the wrong key from the global config | Each repo pins `core.sshCommand` to `~/.ssh/id_github`. |
+| SSH picks the wrong key from the global config | Each repo pins `core.sshCommand` to the owner's GitHub key (a per-repo setting, not committed). |
 | Monad's RPC rejects `eth_getLogs` over 100 blocks | `maxLogRange` per network in config — never hardcode a span. |
 | `forge test` needs `via_ir` | Already set; ERC-8004's 11-arg event overflows the stack without it. |
-| `EADDRINUSE 127.0.0.1:5442` in a test, once in ~15 full runs | **Not our code.** Windows ran out of ephemeral ports: an unrelated process on this machine (`another-process`) held ~1,800 sockets and churned ~7,000 into TIME_WAIT (Sep 30). This is almost certainly the old "`meta.test.ts` flake" — its first query is the first connection a file opens. Re-run; if it recurs, check `Get-NetTCPConnection -State TimeWait`. |
+| `EADDRINUSE 127.0.0.1:5442` in a test, once in ~15 full runs | **Not our code.** Windows ran out of ephemeral ports: an unrelated process on this machine held ~1,800 sockets and churned ~7,000 into TIME_WAIT (Sep 30). This is almost certainly the old "`meta.test.ts` flake" — its first query is the first connection a file opens. Re-run; if it recurs, check `Get-NetTCPConnection -State TimeWait`. |
 | `cp "$TEMP"/…/*` copies nothing in Git Bash | `$TEMP` is a Windows path; globs do not expand through backslashes. Use `$(cygpath -u "$TEMP")`. |
 | A demo run drains DEPLOYER | ~0.5 MON a run since worker accounts. Check balances before recording; top up from FUNDER. |
 | FUNDER drained → "transaction 0x… reverted" | Fixed to a clear preflight message. If it happens: `unset FUNDER_PRIVATE_KEY` so the deployer pays, or top FUNDER up (it was, Oct 5). |
 | Claude background tasks die at 2 h, children survive | A stopped demo left its signer on :7098; the next demo's hires all failed 401. `demo.mjs` now refuses taken ports. Kill leftovers by process tree (`taskkill //PID <pid> //F //T`), checking the command line first. |
-| `:4010` / `:3100` / `:8787` belong to **another-project**, another project | Its API is also `apps/api/dist/main.js` — check the parent command line before killing anything. |
+| `:4010` / `:3100` / `:8787` belong to another project on this machine | Its API is also `apps/api/dist/main.js` — check the parent command line before killing anything. |
 | Playwright timeouts / "Failed to find context" across many tests | Contention from other projects' harnesses, not our code. `--workers=2`. One test passing alone confirms it. |
 | Two `next start` on one `.next` | Rebuilding `.next` under a running server gave `ChunkLoadError`s. Stop every `next start` of this repo before `next build`. |
 | `docker compose -f docker-compose.full.yml up --build` → BuildKit `EOF` | Four parallel image builds crashed Docker Desktop's builder (once taking the dev Postgres down, exit 255). `COMPOSE_PARALLEL_LIMIT=1`. Restart `agentx-backend-postgres-1` if it is down. |
@@ -336,7 +336,7 @@ this is the first thing a fresh session needs.
 | `agentx-interface` | `git@github.com:gopaltalaviya/agentx-interface.git` | ✅ Next.js 15, 3 pages, `3503688` |
 | GitHub owner | `gopaltalaviya` | ✅ |
 | Commit author name | `gopaltalaviya` | ✅ |
-| Commit author email | `58229620+gopaltalaviya@users.noreply.github.com` | ✅ |
+| Commit author email | the owner's GitHub email | ✅ |
 
 > **Third repo is `agentx-interface`, not `agentx-web`.** All docs renamed
 > 2026-09-22 to match. Access is SSH (`git@github.com:…`), so pushes need an
@@ -1052,7 +1052,7 @@ key in a header rather than the URL. It then planned well and answered 503
 - the run page had no SSE listener for the new `plan-failed` event.
 
 **The `meta.test.ts` flake is not ours.** Caught once in 15 looped runs as
-`EADDRINUSE 127.0.0.1:5442`: an unrelated local process (`another-process`) had
+`EADDRINUSE 127.0.0.1:5442`: an unrelated local process had
 exhausted Windows' ephemeral ports. No code change; recorded under gotchas.
 
 **Chaos, re-run live with worker accounts:** no-accept ✅, silent-after-accept ✅
@@ -1930,8 +1930,8 @@ That last pair is what makes the indexer safely re-runnable after a reorg:
 replaying a block range becomes a no-op rather than a duplication.
 
 **Learned / changed**
-- **Port collisions with your other projects.** 6379 (`another-redis`), 6380
-  (`another-project-redis`) and 5432 (a native Postgres shadowing `localhost`) were
+- **Port collisions with your other projects.** 6379, 6380 (other projects' Redis)
+  and 5432 (a native Postgres shadowing `localhost`) were
   all taken. Moved to **5442 / 6381**. The Postgres one was the dangerous
   case: the container *appeared* healthy and bound the port, but `localhost`
   resolved to a different database — silently connecting to the wrong

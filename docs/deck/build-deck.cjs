@@ -78,7 +78,9 @@ function card(s, o) {
     'Fifteen seconds: the name, one sentence, and the fact that it is already on chain.',
   );
   // The mark: four agents whose lines cross at the escrow (agentx-interface docs/brand).
-  s.addImage({path: path.join(__dirname, 'agentx-mark.png'), x: M, y: 1.72, w: 1.05, h: 1.05});
+  // altText: without it PptxGenJS writes the image's LOCAL PATH into the slide's
+  // hidden description — a home directory, in a public file.
+  s.addImage({path: path.join(__dirname, 'agentx-mark.png'), altText: 'AGENTX logo', x: M, y: 1.72, w: 1.05, h: 1.05});
   s.addText(
     [
       {text: 'AGENT', options: {color: TEXT}},
