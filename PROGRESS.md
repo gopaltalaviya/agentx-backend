@@ -28,7 +28,7 @@
    dependabot PRs — which still pointed at pre-rewrite commits carrying
    personal info — are gone. A full-history scan of all four for every real
    secret in `.env` and for personal info found none (Session 32).
-2. **The video is made: [`docs/video/agentx-demo.mp4`](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/video/agentx-demo.mp4)** — 2:35, 1080p, a live testnet run started from the site. It lives in `agentx-docs` now. Upload it and put the link in docs/11 §"For the submission form". To re-record: [docs/video/README.md](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/video/README.md). For your own terminal recording: `.agent-cache/` holds a
+2. **The video is made: [`docs/video/agentx-demo.mp4`](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/video/agentx-demo.mp4)** — 2:35, 1080p, a live testnet run started from the site. It lives in `agentx-docs` now. **Uploaded 2026-10-06: https://youtu.be/IQESfGqXn1M** (unlisted, channel "ZeroXAGENTX"); the link is in docs/11 §"For the submission form". To re-record: [docs/video/README.md](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/video/README.md). For your own terminal recording: `.agent-cache/` holds a
    fresh **v2** Ollama recording (Session 26; the v1 one no longer matches).
    `DEMO_X402=1 AGENT_MODE=cached` replays everything — 4 settlements, x402,
    stolen key, `SameOwner`, below-minimum — in ~232 s at the recorded pace, or
