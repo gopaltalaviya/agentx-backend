@@ -121,7 +121,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: {path: agentx-backend}
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       # From this repo alone, exactly as a hosted build (Railway) does it: the
       # chain facts come from chain/, which the tests job checks for drift.
       - name: build ${{ matrix.service }}
