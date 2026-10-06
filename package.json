@@ -35,7 +35,7 @@
     "@types/node": "^22.9.0",
     "@vitest/coverage-v8": "2.1.9",
     "eslint": "^9",
-    "globals": "^15",
+    "globals": "^17",
     "postgres": "^3.4.5",
     "prettier": "^3.3.3",
     "typescript": "^5.6.3",
