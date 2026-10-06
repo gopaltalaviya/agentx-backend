@@ -3,9 +3,9 @@
  * Records the AGENTX demo video: one continuous browser session over the real
  * site, a real held demo stack on Monad testnet, and three HTML cards.
  * Writes artifacts/video/raw.webm + marks.json (scene start times, seconds).
- * Then `node scripts/video/make-video.mjs` cuts and encodes docs/video/agentx-demo.mp4.
+ * Then `node scripts/video/make-video.mjs` cuts and encodes agentx-docs/docs/video/agentx-demo.mp4.
  *
- * Prerequisites (see docs/video/README.md):
+ * Prerequisites (see agentx-docs: docs/video/README.md):
  *   1. the interface built with NEXT_PUBLIC_API_URL=http://127.0.0.1:8098 and
  *      served on SITE (default http://127.0.0.1:13300);
  *   2. `DEMO_HOLD=ui CORS_ORIGINS=<SITE> AGENT_MODE=cached node scripts/demo.mjs`

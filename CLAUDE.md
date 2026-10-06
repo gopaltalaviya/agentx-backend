@@ -1,7 +1,7 @@
 # AGENTX — project instructions
 
-Applies to all three repos below this folder: `agentx-contracts`,
-`agentx-backend`, `agentx-interface`.
+Applies to all four repos below this folder: `agentx-contracts`,
+`agentx-backend`, `agentx-interface`, `agentx-docs`.
 
 ## Deliverables are LOCAL FILES. Never Artifacts.
 
@@ -14,10 +14,10 @@ belongs to:
 
 | Deliverable | Format | Where |
 |---|---|---|
-| Slide decks | `.pptx`, or a self-contained `.html` | `agentx-backend/docs/deck/` |
-| Documents, specs, notes | `.md` | `agentx-backend/docs/` |
+| Slide decks | `.pptx`, or a self-contained `.html` | `agentx-docs/docs/deck/` |
+| Documents, specs, notes | `.md` | `agentx-docs/docs/` |
 | Pages and prototypes | `.html` | the repo they belong to |
-| Tables, budgets, checklists | `.xlsx` or `.csv` | `agentx-backend/docs/` |
+| Tables, budgets, checklists | `.xlsx` or `.csv` | `agentx-docs/docs/` |
 
 Reasons this is the rule, so nobody reverses it by accident:
 
@@ -30,7 +30,7 @@ Reasons this is the rule, so nobody reverses it by accident:
 ## Standing rules
 
 - **Testnet only.** Any mainnet action needs explicit per-action confirmation.
-- **Never create a git repository or a remote.** The three that exist were
+- **Never create a git repository or a remote.** The four that exist were
   created by the owner.
 - Secrets live in `.env` only — never in chat, never in `.env.example` (which
   is tracked), never in a log or a commit.

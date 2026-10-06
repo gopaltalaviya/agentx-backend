@@ -7,8 +7,8 @@ This file changes only when scope changes. Day-to-day state lives in
 - Created: 2026-09-22 · last revised 2026-10-01 (Session 29: M4-11, M4-12, M5-08 added at the owner's request)
 - Deadline: **2026-10-13, 11:59 PM ET** ✅ verified
 - Track: **4 — Trust, Identity & AI Infrastructure** ($30,000)
-- Repos: 3 ([docs/06](docs/06-repo-structure.md)) · Networks: testnet first, both supported ([docs/08](docs/08-configuration.md))
-- Built on **ERC-8004** — read [docs/09](docs/09-landscape.md) before any contract work
+- Repos: 3 ([docs/06](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/06-repo-structure.md)) · Networks: testnet first, both supported ([docs/08](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/08-configuration.md))
+- Built on **ERC-8004** — read [docs/09](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/09-landscape.md) before any contract work
 - Code: written by Claude · Keys, deploys, decisions: owned by you
 
 ---
@@ -48,7 +48,7 @@ is deployed and verified on Monad testnet.
 | ID | Task | Who | Repo | Depends on |
 |---|---|---|---|---|
 | M0-01 | ✅ Confirm hackathon deadline + submission format | 👤 | — | — |
-| M0-02 | ✅ Gather Monad chain facts ([07 §C](docs/07-what-i-need-from-you.md#c-done)) | 🤖 | — | — |
+| M0-02 | ✅ Gather Monad chain facts ([07 §C](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/07-what-i-need-from-you.md#c-done)) | 🤖 | — | — |
 | M0-02b | ✅ **Testnet first, both networks supported** | 👤 | — | — |
 | M0-03 | ✅ Create 3 empty GitHub repos, send URLs | 👤 | — | — |
 | M0-04 | ✅ Create + fund 4 wallets, send addresses | 👤 | — | — |
@@ -64,8 +64,8 @@ is deployed and verified on Monad testnet.
 | M0-14 | ✅ Install `@agentx/contracts` in B and W; prove the wiring | 🤖 | B, W | M0-13 |
 | M0-15 | ✅ `packages/shared`: `JobSpec` / `JobResult` zod schemas | 🤖 | B | M0-06 |
 | M0-16 | ✅ `.env.example` in all 3 repos — secrets + wiring only | 🤖 | C, B, W | M0-05/06/07 |
-| M0-17 | ✅ `config/networks.json` — 10143, 143, 31337 ([08 §2](docs/08-configuration.md#2-network-registry--confignetworksjson)) | 🤖 | C | M0-05 |
-| M0-18 | ✅ `config/params.<chainId>.json` × 3 ([08 §3](docs/08-configuration.md#3-protocol-parameters--configparamschainidjson)) | 🤖 | C | M0-17 |
+| M0-17 | ✅ `config/networks.json` — 10143, 143, 31337 ([08 §2](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/08-configuration.md#2-network-registry--confignetworksjson)) | 🤖 | C | M0-05 |
+| M0-18 | ✅ `config/params.<chainId>.json` × 3 ([08 §3](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/08-configuration.md#3-protocol-parameters--configparamschainidjson)) | 🤖 | C | M0-17 |
 | M0-19 | ✅ `foundry.toml` multi-network aliases + `Makefile NETWORK=` | 🤖 | C | M0-17 |
 | M0-20 | ✅ `scripts/write-deployment.mjs` → `deployments/<chainId>.json` | 🤖 | C | M0-19 |
 | M0-21 | ✅ `@agentx/config`: zod-validated, frozen `loadConfig()` | 🤖 | B | M0-14, M0-18 |
@@ -81,9 +81,9 @@ every date below slips one-for-one.
 
 ## M1 — Contracts · Sep 25–28
 
-Goal: the money layer is correct. Spec: [docs/04 §2](docs/04-how-it-works.md#2-smart-contracts).
+Goal: the money layer is correct. Spec: [docs/04 §2](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/04-how-it-works.md#2-smart-contracts).
 
-> **Revised 2026-09-22 by [09 — Landscape Analysis](docs/09-landscape.md).**
+> **Revised 2026-09-22 by [09 — Landscape Analysis](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/09-landscape.md).**
 > `AgentRegistry` and `ReputationRegistry` are no longer built — ERC-8004's
 > registries are already deployed on Monad. `StakeVault` replaces the custody
 > they lack. Net effect: roughly breakeven on time, materially better
@@ -91,7 +91,7 @@ Goal: the money layer is correct. Spec: [docs/04 §2](docs/04-how-it-works.md#2-
 
 | ID | Task | Who | Repo | Depends on |
 |---|---|---|---|---|
-| M1-00 | ✅ **Verify ERC-8004 on Monad** — done 2026-09-22 ([09 §8](docs/09-landscape.md#8-m1-00-verification--results-2026-09-22-on-chain)). Live on **mainnet only**; **absent on testnet**; both are ERC-1967 proxies | 🤖 | C | — |
+| M1-00 | ✅ **Verify ERC-8004 on Monad** — done 2026-09-22 ([09 §8](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/09-landscape.md#8-m1-00-verification--results-2026-09-22-on-chain)). Live on **mainnet only**; **absent on testnet**; both are ERC-1967 proxies | 🤖 | C | — |
 | M1-00b | ✅ **Resolved 2026-09-22**: `giveFeedback` is plain `external` — a contract CAN call it. Also found: `getSummary` reverts on an empty client list; self-feedback guard → T17 | 🤖 | C | — |
 | M1-00c | ✅ Deploy ERC-8004 Identity + Reputation to **testnet**; record in `deployments/10143.json` `erc8004` block | 🤖/👤 | C | M1-00b |
 | M1-00d | ✅ CI check: mainnet registry proxy implementation has not changed from the pinned address | 🤖 | C | M1-00c |
@@ -111,7 +111,7 @@ Goal: the money layer is correct. Spec: [docs/04 §2](docs/04-how-it-works.md#2-
 | M1-12 | ✅ `AgentAccountFactory` | 🤖 | C | M1-10 |
 | M1-13 | ✅ Unit tests: every transition, legal and illegal | 🤖 | C | M1-02…M1-12 |
 | M1-14 | ✅ Fuzz tests: amounts, deadlines, fee rounding | 🤖 | C | M1-13 |
-| M1-15 | ✅ Invariant tests I1–I8 ([04 §2.2](docs/04-how-it-works.md#22-taskescrow)) | 🤖 | C | M1-13 |
+| M1-15 | ✅ Invariant tests I1–I8 ([04 §2.2](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/04-how-it-works.md#22-taskescrow)) | 🤖 | C | M1-13 |
 | M1-16 | ✅ `forge snapshot` committed; gas budget per hire recorded | 🤖 | C | M1-13 |
 | M1-17 | ✅ 100% branch coverage on `TaskEscrow` | 🤖 | C | M1-13 |
 | M1-18 | ✅ `Deploy.s.sol` — network-agnostic, reads `params.<chainId>.json`, CREATE2 + fixed salt, post-deploy `configure()` | 🤖 | C | M1-12, M0-20 |
@@ -125,8 +125,8 @@ Goal: the money layer is correct. Spec: [docs/04 §2](docs/04-how-it-works.md#2-
 
 | ID | Task | Who | Repo |
 |---|---|---|---|
-| M1-F1 | ❌ `AgentRegistry.sol` per [04 §2.1](docs/04-how-it-works.md#21-agentregistry) — **cut:** not needed — ERC-8004 Identity is deployed on Monad (docs/09) | 🤖 | C |
-| M1-F2 | ❌ `ReputationRegistry.sol` per [04 §2.3](docs/04-how-it-works.md#23-reputationregistry) — **cut:** not needed — ERC-8004 Reputation is deployed on Monad (docs/09) | 🤖 | C |
+| M1-F1 | ❌ `AgentRegistry.sol` per [04 §2.1](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/04-how-it-works.md#21-agentregistry) — **cut:** not needed — ERC-8004 Identity is deployed on Monad (docs/09) | 🤖 | C |
+| M1-F2 | ❌ `ReputationRegistry.sol` per [04 §2.3](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/04-how-it-works.md#23-reputationregistry) — **cut:** not needed — ERC-8004 Reputation is deployed on Monad (docs/09) | 🤖 | C |
 
 Cost if triggered: +1.5 days, absorbed by the M5 buffer. Decide on **Sep 25**,
 not later.
@@ -140,12 +140,12 @@ not later.
 ## M2 — Backend spine · Sep 29 – Oct 2
 
 Goal: a hire settles end to end via `curl`. No UI.
-Spec: [docs/04 §4–5](docs/04-how-it-works.md#4-database-schema).
+Spec: [docs/04 §4–5](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/04-how-it-works.md#4-database-schema).
 
 | ID | Task | Who | Repo | Depends on |
 |---|---|---|---|---|
 | M2-01 | ✅ `packages/db`: Drizzle schema, full DDL from 04 §4 — **`chain_id` on every chain-derived table, all uniqueness per-chain** | 🤖 | B | M0-06 |
-| M2-01b | ✅ Composite FKs preventing cross-chain jobs ([08 §8](docs/08-configuration.md#8-multi-chain-data-model)) | 🤖 | B | M2-01 |
+| M2-01b | ✅ Composite FKs preventing cross-chain jobs ([08 §8](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/08-configuration.md#8-multi-chain-data-model)) | 🤖 | B | M2-01 |
 | M2-02 | ✅ Migrations + `pnpm db:migrate` | 🤖 | B | M2-01 |
 | M2-03 | ❌ Seed: 6 agents, ~300 settled jobs, realistic scores — **cut:** decided against — ~300 invented settlements would be fabricated reputation, the one thing AGENTX exists to prevent; the marketplace shows only real settled jobs | 🤖 | B | M2-02 |
 | M2-04 | ✅ Indexer: viem event watchers, **one worker per enabled chain** | 🤖 | B | M1-20, M2-02 |
@@ -167,7 +167,7 @@ Spec: [docs/04 §4–5](docs/04-how-it-works.md#4-database-schema).
 | M2-19 | ✅ API: RFC 7807 errors, all codes from 04 §5.3 | 🤖 | B | M2-17 |
 | M2-20 | ✅ API: rate limits, idempotency middleware, trace IDs | 🤖 | B | M2-19 |
 | M2-21 | ✅ `scripts/e2e.sh` — full lifecycle via curl, asserted — as `scripts/e2e.mjs` | 🤖 | B | M2-20 |
-| M2-22 | 👤 Railway: api, signer, indexer (+ optional workers) + Postgres — configs in `deploy/railway/`, runbook [docs/13](docs/13-deploy.md) | 👤 | B | M2-21 |
+| M2-22 | 👤 Railway: api, signer, indexer (+ optional workers) + Postgres — configs in `deploy/railway/`, runbook [docs/13](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/13-deploy.md) | 👤 | B | M2-21 |
 | M2-23 | 👤 Run `node scripts/check-deployment.mjs <api> <site>` against Railway + Vercel | 👤 | B | M2-22 |
 
 **Done when:** `node scripts/e2e.mjs` passes unattended against the deployed
@@ -182,7 +182,7 @@ broadcast, corrected by the indexer on confirmation.
 ## M3 — Agents + MCP · Oct 3–5
 
 Goal: the demo runs itself. **This milestone wins or loses the hackathon.**
-Spec: [docs/04 §6–7](docs/04-how-it-works.md#6-the-mcp-agent-interface).
+Spec: [docs/04 §6–7](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/04-how-it-works.md#6-the-mcp-agent-interface).
 
 | ID | Task | Who | Repo | Depends on |
 |---|---|---|---|---|
@@ -196,7 +196,7 @@ Spec: [docs/04 §6–7](docs/04-how-it-works.md#6-the-mcp-agent-interface).
 | M3-08 | ✅ `execution-bot` | 🤖 | B | M3-05 |
 | M3-09 | ✅ Orchestrator: plan → discover → hire → await → approve | 🤖 | B | M3-03 |
 | M3-10 | ✅ Orchestrator: failure branches — no candidate, budget, timeout, schema mismatch | 🤖 | B | M3-09 |
-| M3-11 | ✅ Prompt-injection containment ([04 §7.3](docs/04-how-it-works.md#73-prompt-injection-containment)) | 🤖 | B | M3-09 |
+| M3-11 | ✅ Prompt-injection containment ([04 §7.3](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/04-how-it-works.md#73-prompt-injection-containment)) | 🤖 | B | M3-09 |
 | M3-12 | ✅ `pnpm demo` — the full two-step trace, unattended | 🤖 | B | M3-10 |
 | M3-13 | ✅ 👤 Run `pnpm demo`; send explorer links | 👤 | B | M3-12 |
 | M3-14 | ✅ **x402 facilitator**: `POST /v1/x402/verify` + `/settle`, backed by `directPay` (P2 — cut first) | 🤖 | B | M3-01 |
@@ -238,14 +238,14 @@ without narration.
 
 | ID | Task | Who | Depends on |
 |---|---|---|---|
-| M5-01 | ✅ 👤 Chaos checklist, 7 items ([roadmap §8](docs/05-roadmap.md#8-m5--harden-and-rehearse--oct-911)) | 👤 | M4-10 |
+| M5-01 | ✅ 👤 Chaos checklist, 7 items ([roadmap §8](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/05-roadmap.md#8-m5--harden-and-rehearse--oct-911)) | 👤 | M4-10 |
 | M5-02 | ✅ Fix everything chaos day surfaces | 🤖 | M5-01 |
-| M5-03 | ✅ Security pass against [04 §9](docs/04-how-it-works.md#9-security-model-and-threats), T1–T16 | 🤖 | M5-02 |
+| M5-03 | ✅ Security pass against [04 §9](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/04-how-it-works.md#9-security-model-and-threats), T1–T16 | 🤖 | M5-02 |
 | M5-04 | ✅ SSRF guard on `metadataURI` fetches | 🤖 | M5-03 |
 | M5-05 | ✅ Confirm: no keys in logs, rate limits live, idempotency enforced | 🤖 | M5-03 |
 | M5-06 | ✅ 3 consecutive clean demo runs on testnet, timed — 149 / 153 / 168 s, Sep 30 | 🤖 | M5-02 |
 | M5-07 | 👤 **Record backup video** | 👤 | M5-06 |
-| M5-08 | ✅ Edge, hostile-input and one-dependency-down testing; 14 defects fixed ([docs/17 §16–19](docs/17-production-readiness.md)) | 🤖 | M5-06 |
+| M5-08 | ✅ Edge, hostile-input and one-dependency-down testing; 14 defects fixed ([docs/17 §16–19](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/17-production-readiness.md)) | 🤖 | M5-06 |
 
 **Done when:** three clean runs in a row and a backup video exists.
 
@@ -262,7 +262,7 @@ without narration.
 | M6-05 | ✅ Decide: make `agentx-contracts` public? — **D2**: yes, all three repos go public (owner, Oct 1) | 👤 | — |
 | M6-06 | 👤 Submit, with hours of buffer | 👤 | M6-04 |
 | M6-07 | 👤 Verify every submission link from a logged-out browser | 👤 | M6-06 |
-| M6-08 | 👤 Freeze `main` | 👤 | M6-06 |
+| M6-08 | 👤 Freeze `master` | 👤 | M6-06 |
 
 ---
 

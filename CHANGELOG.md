@@ -3,6 +3,14 @@
 Notable changes. Dates are UTC. The full history, with evidence, is in
 `PROGRESS.md` and the commit log.
 
+## 2026-10-06 — Session 32 (public, `master`, docs repo)
+- All four repos public; the production branch is `master` (CI triggers
+  follow).
+- `docs/` moved to [agentx-docs](https://github.com/gopaltalaviya/agentx-docs) with its history;
+  `docs/README.md` here points there. The API-doc test and CI read it from
+  a sibling checkout; the video script writes into it; `pptxgenjs` left
+  this repo with the deck.
+
 ## 2026-10-05 — Session 31 (hosted live runs)
 - Hosted runs: `seed-hosted.mjs` (fresh keys, `--top-up`, `--reclaim`), the
   signer renews the hosted accounts' 24 h session keys, `RUNS_PER_DAY`,

@@ -8,7 +8,7 @@
  *   FFMPEG=… node scripts/video/guides.mjs encode [slug…]
  *                                                  # → agentx-interface/public/guides/<slug>.mp4/.vtt/.jpg
  *
- * Prerequisites — the same as record.mjs (see docs/video/README.md): the site
+ * Prerequisites — the same as record.mjs (see agentx-docs: docs/video/README.md): the site
  * on SITE (default http://127.0.0.1:13300) built against the demo's API, and
  * `DEMO_HOLD=ui … node scripts/demo.mjs` holding FRESH agents — "first-run"
  * must be their first run (a cached replay only matches that one), so record

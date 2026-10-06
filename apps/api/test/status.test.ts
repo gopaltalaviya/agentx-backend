@@ -1,5 +1,6 @@
 import {afterAll, beforeAll, beforeEach, describe, expect, it} from 'vitest';
 import {readFileSync} from 'node:fs';
+import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {sql} from 'drizzle-orm';
 import {loadConfig} from '@agentx/config';
@@ -268,7 +269,11 @@ describe('/metrics in production', () => {
 /**
  * docs/15-api.md is hand-written. This keeps it honest: every route the API
  * serves has a row in its endpoint index, and every row names a real route.
+ * The doc lives in the agentx-docs repo: AGENTX_DOCS_DIR, else the checkout
+ * beside this one (CI checks it out there). A missing file fails the test.
  */
+const DOCS_DIR =
+  process.env.AGENTX_DOCS_DIR ?? fileURLToPath(new URL('../../../../agentx-docs', import.meta.url));
 describe('docs/15-api.md', () => {
   it('lists exactly the routes the API serves', async () => {
     const served = new Set<string>();
@@ -284,7 +289,7 @@ describe('docs/15-api.md', () => {
       },
     );
     await app.ready();
-    const doc = readFileSync(new URL('../../../docs/15-api.md', import.meta.url), 'utf8');
+    const doc = readFileSync(join(DOCS_DIR, 'docs', '15-api.md'), 'utf8');
     const documented = new Set(
       [...doc.matchAll(/^\| `(GET|POST|PATCH|PUT|DELETE) (\/[^`]*)` \|/gm)].map((m) => `${m[1]} ${m[2]}`),
     );

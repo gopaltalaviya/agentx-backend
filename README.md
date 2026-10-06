@@ -15,8 +15,8 @@ enter a Railway or Vercel build container.
 every deployed address is in [`chain/deployments/10143.json`](chain/deployments/10143.json)
 (a checked copy of the contracts repo's). `node scripts/demo.mjs` plans, hires,
 judges and settles real jobs there — see [PROGRESS.md](PROGRESS.md) for the
-exact commands, [docs/13](docs/13-deploy.md) to deploy, and
-[docs/17](docs/17-production-readiness.md) for what is and is not
+exact commands, [docs/13](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/13-deploy.md) to deploy, and
+[docs/17](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/17-production-readiness.md) for what is and is not
 production-ready.
 
 ---
@@ -109,7 +109,7 @@ not just the database. The scheme is `agentx-directpay`, not x402's canonical
 EIP-3009 `exact`, and it is pay-first: if the work fails after payment the
 caller gets a 502 and no refund, bounded by `fastPathMax`. From the SDK:
 `client.payX402(url, { maxAmount, body })`. Details:
-[04 §5.2c](docs/04-how-it-works.md#52c-x402-pay-per-http-request).
+[04 §5.2c](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/04-how-it-works.md#52c-x402-pay-per-http-request).
 
 ---
 
@@ -192,7 +192,7 @@ There is deliberately **no keyword filtering**. Stripping "ignore previous
 instructions" fails against paraphrase and encoding while manufacturing the
 appearance of safety.
 
-Full reasoning: [`docs/10-llm-architecture.md`](docs/10-llm-architecture.md).
+Full reasoning: [`docs/10-llm-architecture.md`](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/10-llm-architecture.md).
 
 ---
 
@@ -220,18 +220,18 @@ test that passes either way proves nothing either.
 
 ## Specification
 
-The full design lives in [`docs/`](docs/) — start with
-[00 — Overview](docs/00-overview.md), then
-[04 — How It All Works](docs/04-how-it-works.md) for contract interfaces, the
+The full design lives in [`docs/`](https://github.com/gopaltalaviya/agentx-docs) — start with
+[00 — Overview](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/00-overview.md), then
+[04 — How It All Works](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/04-how-it-works.md) for contract interfaces, the
 API, the agent workflow and the threat model, and
-[10 — LLM Architecture](docs/10-llm-architecture.md) for the agent-to-agent
+[10 — LLM Architecture](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/10-llm-architecture.md) for the agent-to-agent
 injection problem.
-[12 — ERC-8183 mapping](docs/12-erc8183-mapping.md) sets `TaskEscrow` against
+[12 — ERC-8183 mapping](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/12-erc8183-mapping.md) sets `TaskEscrow` against
 the ERC-8183 Agentic Commerce draft, function by function.
-Running it: [13 — Deploy](docs/13-deploy.md),
-[14 — Operations](docs/14-operations.md), [15 — HTTP API](docs/15-api.md),
-[16 — Runbooks](docs/16-runbooks.md) and
-[17 — Production readiness](docs/17-production-readiness.md).
+Running it: [13 — Deploy](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/13-deploy.md),
+[14 — Operations](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/14-operations.md), [15 — HTTP API](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/15-api.md),
+[16 — Runbooks](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/16-runbooks.md) and
+[17 — Production readiness](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/17-production-readiness.md).
 
 [`PROGRESS.md`](PROGRESS.md) is the running build log: current state, what is
 outstanding, every decision with its reasoning, and every defect found during

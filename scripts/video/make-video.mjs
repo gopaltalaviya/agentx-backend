@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Cuts artifacts/video/raw.webm (from record.mjs) into docs/video/agentx-demo.mp4:
+ * Cuts artifacts/video/raw.webm (from record.mjs) into agentx-docs/docs/video/agentx-demo.mp4
+ * (the sibling docs repo; AGENTX_DOCS_DIR overrides where it is):
  * scene by scene from marks.json, the live run at 1.5×, 1920×1080 @ 30 fps,
  * H.264 + a silent AAC track (some upload forms reject video-only files),
  * fades in and out.
@@ -16,7 +17,8 @@ import {fileURLToPath} from 'node:url';
 
 const BACKEND = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const IN = join(BACKEND, 'artifacts', 'video');
-const OUT = join(BACKEND, 'docs', 'video', 'agentx-demo.mp4');
+const DOCS = resolve(process.env.AGENTX_DOCS_DIR ?? join(BACKEND, '..', 'agentx-docs'));
+const OUT = join(DOCS, 'docs', 'video', 'agentx-demo.mp4');
 const FFMPEG = process.env.FFMPEG ?? 'ffmpeg';
 
 const m = Object.fromEntries(

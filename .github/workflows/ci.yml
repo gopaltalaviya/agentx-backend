@@ -2,7 +2,7 @@ name: backend
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
 
 permissions:
@@ -77,6 +77,11 @@ jobs:
           repository: gopaltalaviya/agentx-contracts
           path: agentx-contracts
           token: ${{ secrets.CONTRACTS_TOKEN || github.token }}
+      # docs/15-api.md lives there; a test checks it against the served routes.
+      - uses: actions/checkout@v4
+        with:
+          repository: gopaltalaviya/agentx-docs
+          path: agentx-docs
 
       - uses: pnpm/action-setup@v4
         with: {version: 9.12.0}
