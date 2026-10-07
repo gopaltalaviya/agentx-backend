@@ -284,6 +284,22 @@ describe('the branches a live demo actually hits', () => {
     expect(report.steps[0]).toMatchObject({status: 'budget-exceeded'});
   });
 
+  /**
+   * Live, a goal needing a statement the user had not attached planned nothing,
+   * and the run said only "the plan had no subtasks". The planner had said why.
+   */
+  it('gives the planner’s reason when it plans nothing', async () => {
+    const {orchestrator, calls} = build(
+      {},
+      {Plan: {subtasks: [], reasoning: 'the goal needs the account statement, which was not attached'}},
+    );
+    const report = await orchestrator.run('audit my statement');
+    expect(report.planError).toBe(
+      'nothing to hire for: the goal needs the account statement, which was not attached',
+    );
+    expect(calls.hired).toBe(0);
+  });
+
   it('returns a report rather than throwing when planning fails', async () => {
     const {orchestrator, calls} = build({}, {Plan: 'throw'});
 

@@ -185,7 +185,9 @@ export class Orchestrator {
       return null;
     });
     if (!plan || plan.subtasks.length === 0) {
-      planError ??= 'the plan had no subtasks';
+      // An empty plan is the planner declining the goal; its reasoning says
+      // why, and that is what a user needs — not "no subtasks".
+      planError ??= plan ? `nothing to hire for: ${plan.reasoning}` : 'the plan had no subtasks';
       this.emit({kind: 'plan-failed', reason: planError});
       return {
         goal,
