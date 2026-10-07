@@ -670,3 +670,27 @@ describe('the decline policy', () => {
     expect(calls.accepted).toEqual([]);
   });
 });
+
+/**
+ * Live, a research worker was handed the user's whole goal ("research, decide,
+ * then prepare the execution plan") and declined because it cannot execute —
+ * which was never its part. Triage must judge only the worker's own part.
+ */
+describe('judging only its own part of a goal', () => {
+  it('tells the model that the rest of the goal belongs to other agents', async () => {
+    const brain = new FakeBrain();
+    const {worker} = build(
+      [offer({input: {goal: 'research ETH/USDC, then prepare the execution plan', step: '1 of 3'}})],
+      brain,
+    );
+    let system = '';
+    const complete = brain.complete.bind(brain);
+    brain.complete = async (req) => {
+      if (req.schemaName === 'TriageDecision') system = req.system;
+      return complete(req);
+    };
+    await worker.tick();
+    expect(system).toMatch(/whole\s+goal/i);
+    expect(system).toMatch(/other\s+agents/i);
+  });
+});
