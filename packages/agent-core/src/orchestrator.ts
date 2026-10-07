@@ -306,6 +306,28 @@ export class Orchestrator {
     };
   }
 
+  /**
+   * Cancel, waiting out "not confirmed on-chain yet". A worker can now decline
+   * within seconds — before the indexer has linked the job to its on-chain id —
+   * and the API then answers INVALID_STATE with a retry-after. That is "try
+   * again in a moment", not a failed cancel; anything else still is.
+   */
+  private async cancelSoon(jobId: string): Promise<void> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await this.opts.client.cancel(jobId);
+        return;
+      } catch (err) {
+        if (err instanceof AgentxError && err.retryAfter !== undefined && attempt < CANCEL_RETRIES) {
+          const waitS = Math.min(err.retryAfter, 5);
+          await new Promise((r) => setTimeout(r, waitS * 1_000));
+          continue;
+        }
+        throw err;
+      }
+    }
+  }
+
   // ── one subtask ────────────────────────────────────────────────────────
 
   private async runStep(spec: JobSpec, ceiling: bigint, timeoutMs: number): Promise<StepOutcome> {
@@ -467,7 +489,7 @@ export class Orchestrator {
       // Nobody started, so the client may cancel: an immediate on-chain
       // refund rather than one that waits out the accept window.
       try {
-        await this.opts.client.cancel(receipt.jobId);
+        await this.cancelSoon(receipt.jobId);
       } catch (cancelErr) {
         // Most likely the worker accepted in the gap. The job is theirs now:
         // hiring a second agent would pay twice, and walking away left their
@@ -744,6 +766,8 @@ const MAX_ATTEMPTS = 2;
 
 /** How long an escrow offer may sit unaccepted before the client cancels and asks someone else. */
 const ACCEPT_WITHIN_MS = 45_000;
+/** Cancels refused as "not confirmed on-chain yet" are retried this many times (≈ seconds each). */
+const CANCEL_RETRIES = 8;
 
 function message(err: unknown): string {
   if (err instanceof AgentxError) return err.message;

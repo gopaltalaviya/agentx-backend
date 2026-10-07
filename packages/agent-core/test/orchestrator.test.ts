@@ -716,9 +716,12 @@ describe('a worker that goes silent', () => {
       agentId: number,
     ) => 'never-accepts' | 'declines' | 'accepts-late' | 'accepts-then-silent' | 'delivers';
     cancelFails?: boolean;
+    /** The first cancel is refused as "not confirmed on-chain yet", with a retry-after. */
+    cancelNotConfirmedOnce?: boolean;
   }) {
     const hires: {agentId: number; maxPrice: string}[] = [];
     const cancelled: string[] = [];
+    const cancelRefused = new Set<string>();
     const byJob = new Map<string, number>();
     const {client, calls} = fakeClient({
       discover: async () => opts.candidates,
@@ -760,6 +763,14 @@ describe('a worker that goes silent', () => {
       },
       cancel: async (jobId: string) => {
         if (opts.cancelFails) throw new AgentxError(ErrorCode.INVALID_STATE, 'job is "accepted"');
+        if (opts.cancelNotConfirmedOnce && !cancelRefused.has(jobId)) {
+          cancelRefused.add(jobId);
+          throw new AgentxError(
+            ErrorCode.INVALID_STATE,
+            'the job is not confirmed on-chain yet — retry in a moment',
+            0,
+          );
+        }
         cancelled.push(jobId);
         return {jobId, explorerUrl: 'x'};
       },
@@ -793,6 +804,24 @@ describe('a worker that goes silent', () => {
    * A worker that says no has answered: hire the next one at once, and keep
    * its reason. It used to be indistinguishable from an offline worker.
    */
+  /**
+   * Live: a worker declined within seconds — before the indexer had linked the
+   * job to its on-chain id — and the cancel was refused "not confirmed yet,
+   * retry in a moment". The orchestrator read that as a failed cancel and gave
+   * up on the step. The API said when to try again; do.
+   */
+  it('retries a cancel the API says to retry, then hires someone else', async () => {
+    const {orchestrator, hires, cancelled} = scenario({
+      candidates: [CANDIDATE, OTHER],
+      silent: (id) => (id === 7 ? 'declines' : 'delivers'),
+      cancelNotConfirmedOnce: true,
+    });
+    const report = await orchestrator.run('how deep is ETH/USDC?');
+    expect(cancelled).toEqual(['101']);
+    expect(hires.map((h) => h.agentId)).toEqual([7, 8]);
+    expect(report.steps[0]).toMatchObject({status: 'settled', agentId: 8});
+  });
+
   it('hires someone else when a worker declines, and keeps its reason', async () => {
     const {orchestrator, hires, cancelled, events} = scenario({
       candidates: [CANDIDATE, OTHER],
