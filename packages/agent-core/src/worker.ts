@@ -59,9 +59,32 @@ export class TriageUnavailable extends Error {
   }
 }
 
+/**
+ * What stands in the way of a job, if anything. Only the first three are
+ * grounds to decline — enforced in code, like the spending caps, because live
+ * a model refused research on a chain newer than its training three runs in
+ * a row however the prompt was worded.
+ */
+export const BLOCKERS = [
+  'none',
+  'client_only_data',
+  'impossible_action',
+  'outside_capability',
+  'missing_knowledge',
+  'other',
+] as const;
+const DECLINABLE = new Set<string>(['client_only_data', 'impossible_action', 'outside_capability']);
+
 export const TriageDecision = z.object({
   accept: z.boolean(),
   reason: z.string().min(1).max(300).describe('which condition failed, or why you can do this'),
+  // Optional, so decisions recorded before it existed still replay.
+  blocker: z
+    .enum(BLOCKERS)
+    .optional()
+    .describe(
+      'none; client_only_data (a private document, wallet or account only the client has and did not include — never public market data); impossible_action; outside_capability; missing_knowledge (the subject is newer than or beyond what you know); other',
+    ),
 });
 export type TriageDecision = z.infer<typeof TriageDecision>;
 
@@ -213,6 +236,11 @@ export class Worker<T> {
       // think — but worded as what it is: a fact about this worker.
       await this.tellClient(offer.jobId, `could not reach its model: ${message(err)}`);
       return {status: 'failed', stage: 'triage', reason: message(err)};
+    }
+    // A refusal the policy does not allow is overruled: the worker takes the
+    // job and delivers what it honestly can, caveated.
+    if (!decision.accept && decision.blocker !== undefined && !DECLINABLE.has(decision.blocker)) {
+      decision = {accept: true, reason: `taken despite: ${decision.reason}`, blocker: decision.blocker};
     }
     if (!decision.accept) {
       this.declined.add(offer.jobId);

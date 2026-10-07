@@ -626,3 +626,47 @@ describe('telling the client', () => {
     expect(brain.timeouts[0]).toBe(15_000);
   });
 });
+
+/**
+ * Which refusals are allowed is policy, enforced in code — like the spending
+ * caps. Live, a model declined "research ETH/USDC on Monad" three times over
+ * because Monad postdates its training; no prompt wording stopped it.
+ */
+describe('the decline policy', () => {
+  it('accepts anyway when the model declines over missing knowledge', async () => {
+    const brain = new FakeBrain({
+      triage: {accept: false, reason: 'Monad is newer than my knowledge', blocker: 'missing_knowledge'},
+    });
+    const {worker, calls} = build([offer()], brain);
+    const [outcome] = await worker.tick();
+    expect(outcome).toMatchObject({status: 'delivered'});
+    expect(calls.accepted).toEqual(['1']);
+    expect(calls.declined).toEqual([]);
+  });
+
+  it('accepts anyway when the model cannot name a real blocker', async () => {
+    const brain = new FakeBrain({triage: {accept: false, reason: 'needs live data', blocker: 'other'}});
+    const {worker, calls} = build([offer()], brain);
+    await worker.tick();
+    expect(calls.accepted).toEqual(['1']);
+  });
+
+  it.each(['client_only_data', 'impossible_action', 'outside_capability'])(
+    'declines for a real blocker: %s',
+    async (blocker) => {
+      const brain = new FakeBrain({triage: {accept: false, reason: `because ${blocker}`, blocker}});
+      const {worker, calls} = build([offer()], brain);
+      const [outcome] = await worker.tick();
+      expect(outcome).toMatchObject({status: 'declined', reason: `because ${blocker}`});
+      expect(calls.declined).toHaveLength(1);
+    },
+  );
+
+  it('still honours a decline recorded before blockers existed', async () => {
+    const brain = new FakeBrain({triage: {accept: false, reason: 'no market named'}});
+    const {worker, calls} = build([offer()], brain);
+    const [outcome] = await worker.tick();
+    expect(outcome).toMatchObject({status: 'declined'});
+    expect(calls.accepted).toEqual([]);
+  });
+});

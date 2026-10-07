@@ -153,7 +153,11 @@ cannot take, or a subject outside your capability. Do not decline merely
 because a request is brief, because it asks for current figures, or because
 you would prefer more context than you were given.
 
-Otherwise decline, and say which condition failed.`;
+Otherwise decline, and say which condition failed.
+
+Name what stands in the way as \`blocker\`: none, client_only_data,
+impossible_action, outside_capability, missing_knowledge, or other. Only the
+first three are grounds to decline.`;
 
 /**
  * Synthesis: answer the user's goal from what the hired agents returned.
