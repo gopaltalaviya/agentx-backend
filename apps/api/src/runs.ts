@@ -43,6 +43,24 @@ export interface RunResult {
   spent: string;
   steps: unknown[];
   delivered: boolean;
+  /** Set when no plan could be made; the run then hired nobody. */
+  planError?: string | null;
+}
+
+/**
+ * Why a run that delivered nothing failed, in one paragraph built from its own
+ * steps. Null when something was delivered: a partial answer is still a run
+ * that did its job, and its step list says what was missing.
+ */
+export function failureOf(result: RunResult): string | null {
+  if (result.delivered) return null;
+  if (result.planError) return `No plan: ${result.planError}`;
+  const steps = result.steps as {capability?: string; detail?: string; status?: string}[];
+  if (steps.length === 0) return 'No agent delivered: the plan had no steps.';
+  const why = steps.map(
+    (s) => `${s.capability ?? 'a step'}: ${(s.detail ?? s.status ?? 'did not deliver').replace(/\.$/, '')}.`,
+  );
+  return `No agent delivered. ${why.join(' ')}`;
 }
 
 /** What actually performs a run. Injected so the API can be tested without a model. */
@@ -135,6 +153,18 @@ export class RunService {
         .update(runs)
         .set({answer: result.answer, steps: result.steps, spent: result.spent})
         .where(eq(runs.id, args.runId));
+
+      // Nothing delivered is a failed run, whatever else happened along the
+      // way — it used to end `done` with no error and read as a success.
+      const failure = failureOf(result);
+      if (failure) {
+        await emit({kind: 'failed', detail: failure, spent: result.spent});
+        await this.deps.db
+          .update(runs)
+          .set({state: 'failed', error: failure, finishedAt: new Date()})
+          .where(eq(runs.id, args.runId));
+        return;
+      }
 
       await emit({kind: 'finished', delivered: result.delivered, spent: result.spent});
 

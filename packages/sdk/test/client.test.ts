@@ -321,6 +321,37 @@ describe('awaitResult', () => {
     const job = await client(f.impl).awaitResult('1', {timeoutMs: 5_000, acceptWithinMs: 0, pollMs: 2});
     expect(job.result).toEqual({ok: true});
   });
+
+  /**
+   * A worker that said no has answered. Waiting out the accept window for it
+   * cost every run 45 s and hid the reason behind "never accepted".
+   */
+  it('stops at once when the worker declined, and carries its reason', async () => {
+    const f = fakeFetch(() => ({
+      status: 200,
+      body: {jobId: '1', state: 'created', declined: {reason: 'needs a private API key', at: 'now'}},
+    }));
+    let error: unknown;
+    try {
+      await client(f.impl).awaitResult('1', {timeoutMs: 60_000, acceptWithinMs: 45_000, pollMs: 1});
+    } catch (err) {
+      error = err;
+    }
+    expect(error).toBeInstanceOf(NotAccepted);
+    expect((error as NotAccepted).declinedReason).toBe('needs a private API key');
+    expect((error as AgentxError).message).toMatch(/declined: needs a private API key/);
+    expect(f.calls.length).toBe(1);
+  });
+});
+
+describe('decline', () => {
+  it('posts the reason to the decline route', async () => {
+    const f = fakeFetch(() => ({status: 200, body: {jobId: '7', declined: {reason: 'no', at: 'now'}}}));
+    await client(f.impl).decline('7', 'outside my capability');
+    expect(f.calls[0]!.url).toMatch(/\/v1\/jobs\/7\/decline$/);
+    expect(f.calls[0]!.init!.method).toBe('POST');
+    expect(JSON.parse(String(f.calls[0]!.init!.body))).toEqual({reason: 'outside my capability'});
+  });
 });
 
 describe('query building', () => {

@@ -47,19 +47,22 @@ export class ClaudeBrain implements Brain {
     try {
       const jsonSchema = zodToJsonSchema(req.schema, {target: 'jsonSchema7'}) as Record<string, unknown>;
 
-      const response = await this.client.messages.create({
-        model: this.model,
-        max_tokens: req.maxTokens ?? 4_000,
-        system: req.system,
-        messages: [{role: 'user', content: req.prompt}],
-        // Adaptive is the only supported mode on Opus 5; budget_tokens is
-        // rejected with a 400 there.
-        thinking: {type: 'adaptive'},
-        output_config: {
-          format: {type: 'json_schema', schema: jsonSchema},
-          effort: req.effort ?? 'medium',
+      const response = await this.client.messages.create(
+        {
+          model: this.model,
+          max_tokens: req.maxTokens ?? 4_000,
+          system: req.system,
+          messages: [{role: 'user', content: req.prompt}],
+          // Adaptive is the only supported mode on Opus 5; budget_tokens is
+          // rejected with a 400 there.
+          thinking: {type: 'adaptive'},
+          output_config: {
+            format: {type: 'json_schema', schema: jsonSchema},
+            effort: req.effort ?? 'medium',
+          },
         },
-      });
+        req.timeoutMs !== undefined ? {timeout: req.timeoutMs} : undefined,
+      );
 
       // A safety refusal is a 200 with stop_reason 'refusal', not an
       // exception. Reading content without checking would yield undefined and
@@ -70,6 +73,13 @@ export class ClaudeBrain implements Brain {
           'outage',
           `declined the request (${response.stop_details?.category ?? 'unspecified'})`,
         );
+      }
+
+      // Cut off mid-answer is the provider failing to answer, as with Gemini:
+      // the next provider in the chain may well finish. Parsing the fragment
+      // threw a bare SyntaxError that the chain could not tell from a bug.
+      if (response.stop_reason === 'max_tokens') {
+        throw new BrainUnavailable('claude', 'outage', 'reply cut off at the output token limit');
       }
 
       const text = response.content

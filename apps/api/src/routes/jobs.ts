@@ -181,6 +181,7 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
         explorerUrl: e.txHash ? chain.explorerTx(e.txHash) : null,
         occurredAt: e.occurredAt,
       })),
+      declined: declinedOf(events),
     };
   });
 
@@ -257,6 +258,44 @@ export async function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps
       }
     }),
   );
+
+  /**
+   * The hired worker turns the job down, and says why.
+   *
+   * Off-chain: no transaction, nothing to pay. The job stays `created` on
+   * chain; the client, told at once instead of after its accept window,
+   * cancels for a refund and hires someone else. Before this a decline was
+   * silence, and a run waited 45 s to report "never accepted".
+   */
+  app.post('/v1/jobs/:id/decline', async (request) => {
+    const caller = await authenticate(db, request);
+    const {job} = await loadJob(request.params as {id: string});
+
+    if (job.chainId !== caller.chainId) {
+      throw new AgentxError(ErrorCode.CHAIN_MISMATCH, `job is on chain ${job.chainId}`);
+    }
+    if (job.workerAgentId !== caller.agentId) {
+      throw new AgentxError(ErrorCode.FORBIDDEN, 'only the assigned worker may decline');
+    }
+    const parsed = DeclineBody.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      throw new AgentxError(ErrorCode.SCHEMA_MISMATCH, parsed.error.issues.map((i) => i.message).join('; '));
+    }
+
+    // Answered once. A second call returns the first answer rather than a
+    // second event: a retried request must not read as two refusals.
+    const events = await db.select().from(jobEvents).where(eq(jobEvents.jobId, job.id));
+    const already = declinedOf(events);
+    if (already) return {jobId: job.publicId, declined: already};
+
+    if (job.state !== 'created') {
+      throw new AgentxError(ErrorCode.INVALID_STATE, `job is "${job.state}", a decline needs "created"`);
+    }
+
+    const declined = {reason: parsed.data.reason, at: new Date().toISOString()};
+    await recordEvent(db, bus, job.id, job.chainId, 'job.declined', declined);
+    return {jobId: job.publicId, declined};
+  });
 
   app.post('/v1/jobs/:id/cancel', async (request) =>
     transition(request, 'cancel', 'created', 'refunded', (job, caller) => {
@@ -656,6 +695,23 @@ function receipt(
     specHash: job.specHash,
     txHash,
     explorerUrl: chain.explorerTx(txHash),
+  };
+}
+
+const DeclineBody = z.object({
+  reason: z.string().trim().min(1, 'a decline needs a reason').max(500, 'a reason is at most 500 characters'),
+});
+
+/** The worker's off-chain "no", if it gave one. */
+function declinedOf(
+  events: {kind: string; payload: unknown; occurredAt: Date | string}[],
+): {reason: string; at: string} | null {
+  const e = events.find((x) => x.kind === 'job.declined');
+  if (!e) return null;
+  const p = e.payload as {reason?: unknown; at?: unknown};
+  return {
+    reason: typeof p.reason === 'string' ? p.reason : 'no reason given',
+    at: typeof p.at === 'string' ? p.at : new Date(e.occurredAt).toISOString(),
   };
 }
 

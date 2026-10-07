@@ -73,8 +73,22 @@ export type StepStatus =
   | 'unrecoverable'
   | 'no-candidate'
   | 'budget-exceeded'
+  /** The hired worker turned the job down, with a reason; it was cancelled and refunded. */
+  | 'declined'
   | 'timeout'
   | 'failed';
+
+/** How a step's ending reads in a sentence: "…step 1, which <phrase>". */
+const ENDED_AS: Record<StepStatus, string> = {
+  settled: 'settled',
+  disputed: 'was disputed',
+  unrecoverable: 'was judged bad',
+  'no-candidate': 'found no agent',
+  'budget-exceeded': 'ran out of budget',
+  declined: 'was declined',
+  timeout: 'timed out',
+  failed: 'failed',
+};
 
 export interface StepOutcome {
   capability: string;
@@ -211,7 +225,9 @@ export class Orchestrator {
         steps.push({
           capability: subtask.capability,
           status: 'failed',
-          detail: `needed the result of step ${dependsOn + 1}, which ${upstream?.status ?? 'did not run'}`,
+          detail: `not run: it needed the result of step ${dependsOn + 1}, which ${
+            upstream ? ENDED_AS[upstream.status] : 'did not run'
+          }`,
         });
         this.emit({
           kind: 'skipped',
@@ -444,6 +460,8 @@ export class Orchestrator {
         }
         return this.skip({...common, status: 'failed', detail: message(err)});
       }
+      // The worker said no, with a reason — or never answered at all.
+      const declinedReason = err.declinedReason;
       // Nobody started, so the client may cancel: an immediate on-chain
       // refund rather than one that waits out the accept window.
       try {
@@ -470,11 +488,18 @@ export class Orchestrator {
       }
       if (!job) {
         return {
-          retry: {
-            ...common,
-            status: 'timeout',
-            detail: `agent ${chosen.agentId} never accepted — cancelled and refunded`,
-          },
+          retry:
+            declinedReason !== undefined
+              ? {
+                  ...common,
+                  status: 'declined',
+                  detail: `agent ${chosen.agentId} declined: ${declinedReason} — cancelled and refunded`,
+                }
+              : {
+                  ...common,
+                  status: 'timeout',
+                  detail: `agent ${chosen.agentId} never accepted — cancelled and refunded`,
+                },
           locked: 0n,
         };
       }

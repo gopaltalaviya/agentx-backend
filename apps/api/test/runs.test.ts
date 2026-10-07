@@ -188,6 +188,93 @@ describe('a run always reaches a terminal state', () => {
     expect(run.error).toMatch(/rate limited/);
   });
 
+  /**
+   * A run that hired, waited and delivered nothing used to end `done`, with no
+   * error — so the page showed it green and "finished". It failed; say so, and
+   * say why, from the steps themselves.
+   */
+  it('ends as failed, with the reasons, when no agent delivered', async () => {
+    const {apiKey} = await register();
+    execute = async () => ({
+      answer: null,
+      spent: '0',
+      delivered: false,
+      steps: [
+        {
+          capability: 'market-research',
+          status: 'declined',
+          detail: 'agent 2 declined: needs a private wallet export — cancelled and refunded',
+        },
+        {
+          capability: 'trade-analysis',
+          status: 'failed',
+          detail: 'not run: it needed the result of step 1, which was declined',
+        },
+      ],
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/runs',
+      headers: auth(apiKey),
+      payload: {goal: 'a goal'},
+    });
+    const run = await settle(res.json().runId);
+
+    expect(run.state).toBe('failed');
+    expect(run.error).toBe(
+      'No agent delivered. market-research: agent 2 declined: needs a private wallet export — cancelled and refunded. ' +
+        'trade-analysis: not run: it needed the result of step 1, which was declined.',
+    );
+    // The steps are kept: they are the explanation.
+    expect(run.steps).toHaveLength(2);
+    const kinds = (run.events as {kind: string}[]).map((e) => e.kind);
+    expect(kinds.at(-1)).toBe('failed');
+    expect(kinds).not.toContain('finished');
+  });
+
+  it('ends as failed with "No plan" when planning failed', async () => {
+    const {apiKey} = await register();
+    execute = async () => ({
+      answer: null,
+      spent: '0',
+      delivered: false,
+      steps: [],
+      planError: 'the model could not be reached',
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/runs',
+      headers: auth(apiKey),
+      payload: {goal: 'a goal'},
+    });
+    const run = await settle(res.json().runId);
+    expect(run.state).toBe('failed');
+    expect(run.error).toBe('No plan: the model could not be reached');
+  });
+
+  it('stays done when at least one step settled', async () => {
+    const {apiKey} = await register();
+    execute = async () => ({
+      answer: 'partial answer',
+      spent: '20000',
+      delivered: true,
+      steps: [
+        {capability: 'market-research', status: 'settled', detail: 'ok'},
+        {capability: 'trade-analysis', status: 'declined', detail: 'agent 3 declined: no'},
+      ],
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/runs',
+      headers: auth(apiKey),
+      payload: {goal: 'a goal'},
+    });
+    const run = await settle(res.json().runId);
+    expect(run.state).toBe('done');
+    expect(run.error).toBeNull();
+  });
+
   it('emits a terminal event either way', async () => {
     const {apiKey} = await register();
     const res = await app.inject({

@@ -31,9 +31,11 @@ import {validateShape} from './judge.js';
  *      is not overridable.
  *   2. **By judgement** — the input is missing something the task needs.
  *
- * A declined job is simply not accepted. It expires at its on-chain accept
- * deadline and the client is refunded permissionlessly; there is no "decline"
- * transaction to pay for, and silence costs the worker nothing but the offer.
+ * A declined job is not accepted, and the worker says so — off-chain, with its
+ * reason, through the API. There is no "decline" transaction to pay for. The
+ * client learns at once instead of after its accept window, cancels for a
+ * refund and hires someone else; until 2026-10-07 a decline was silent, so a
+ * run waited 45 s and then reported only "never accepted".
  */
 
 /**
@@ -197,6 +199,7 @@ export class Worker<T> {
     if (!structural.ok) {
       this.declined.add(offer.jobId);
       this.emit({kind: 'declined', jobId: offer.jobId, reason: structural.reason, structural: true});
+      await this.tellClient(offer.jobId, structural.reason);
       return {status: 'declined', reason: structural.reason};
     }
 
@@ -206,11 +209,15 @@ export class Worker<T> {
     } catch (err) {
       this.declined.add(offer.jobId);
       this.emit({kind: 'failed', jobId: offer.jobId, stage: 'triage', reason: message(err)});
+      // Still a "no" to the client — it must not wait on a worker that cannot
+      // think — but worded as what it is: a fact about this worker.
+      await this.tellClient(offer.jobId, `could not reach its model: ${message(err)}`);
       return {status: 'failed', stage: 'triage', reason: message(err)};
     }
     if (!decision.accept) {
       this.declined.add(offer.jobId);
       this.emit({kind: 'declined', jobId: offer.jobId, reason: decision.reason, structural: false});
+      await this.tellClient(offer.jobId, decision.reason);
       return {status: 'declined', reason: decision.reason};
     }
 
@@ -322,6 +329,19 @@ export class Worker<T> {
   }
 
   /**
+   * Tell the client this worker will not take the job, and why. Best effort:
+   * if the API is unreachable the client still has its accept window, so a
+   * failure here is reported and the worker moves on.
+   */
+  private async tellClient(jobId: string, reason: string): Promise<void> {
+    try {
+      await this.opts.client.decline(jobId, reason.slice(0, 500));
+    } catch (err) {
+      this.emit({kind: 'failed', jobId, stage: 'decline', reason: message(err)});
+    }
+  }
+
+  /**
    * Can this worker produce every field the client requires?
    *
    * Structural, deterministic, and checked before any model is asked — a
@@ -373,6 +393,9 @@ export class Worker<T> {
         prompt,
         maxTokens: 400,
         effort: 'low',
+        // The client waits 45 s for an accept. A model that hangs must give
+        // way to the next one in the chain well inside that.
+        timeoutMs: TRIAGE_TIMEOUT_MS,
       });
       return value;
     } catch (err) {
@@ -443,5 +466,8 @@ function message(err: unknown): string {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Per model call while deciding on an offer; the client's accept window is 45 s. */
+const TRIAGE_TIMEOUT_MS = 15_000;
 
 export {ErrorCode};

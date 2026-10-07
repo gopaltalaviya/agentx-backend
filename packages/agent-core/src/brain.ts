@@ -37,6 +37,12 @@ export interface CompletionRequest<T> {
   maxTokens?: number;
   /** Hint only. Providers that cannot express it ignore it. */
   effort?: 'low' | 'medium' | 'high';
+  /**
+   * Give up on this call after this long. A caller with a protocol deadline
+   * (a worker has 45 s to accept) sets it so a hanging model falls through to
+   * the next in the chain in time. Providers default to 60 s.
+   */
+  timeoutMs?: number;
 }
 
 export interface CompletionResult<T> {

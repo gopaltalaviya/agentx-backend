@@ -50,11 +50,11 @@ export abstract class JsonHttpBrain implements Brain {
           method: 'POST',
           headers: {'content-type': 'application/json', ...headers},
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(60_000),
+          signal: AbortSignal.timeout(req.timeoutMs ?? 60_000),
         });
       } catch (err) {
         // A dropped connection is retried; a request that already waited out
-        // its 60 s timeout is not — four of those would stall a run 4 minutes.
+        // its timeout is not — four of those would stall a run for minutes.
         if ((err as Error).name !== 'TimeoutError' && attempt < RETRY_DELAYS_MS.length) {
           await this.sleep(this.retryDelay(attempt, null));
           continue;

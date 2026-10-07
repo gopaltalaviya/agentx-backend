@@ -38,6 +38,7 @@ const Output = z.object({
 class FakeBrain implements Brain {
   readonly name = 'fake';
   readonly prompts: string[] = [];
+  readonly timeouts: (number | undefined)[] = [];
 
   constructor(
     private readonly replies: {triage?: unknown; result?: unknown} = {},
@@ -46,6 +47,7 @@ class FakeBrain implements Brain {
 
   async complete<T>(req: CompletionRequest<T>): Promise<CompletionResult<T>> {
     this.prompts.push(req.prompt);
+    this.timeouts.push(req.timeoutMs);
     const which = req.schemaName === 'TriageDecision' ? 'triage' : 'result';
     if (this.failOn === which) throw new Error(`${which} unavailable`);
 
@@ -65,12 +67,14 @@ interface Calls {
   accepted: string[];
   submitted: {jobId: string; output: Record<string, unknown>}[];
   submitAttempts: number;
+  declined: {jobId: string; reason: string}[];
 }
 
 interface ClientFaults {
   acceptThrows?: unknown;
   acceptThrowsOnce?: unknown;
   submitThrowsOnce?: unknown;
+  declineThrows?: unknown;
 }
 
 function fakeClient(offers: JobSummary[], calls: Calls, over: ClientFaults = {}): AgentxClient {
@@ -78,6 +82,11 @@ function fakeClient(offers: JobSummary[], calls: Calls, over: ClientFaults = {})
   let submitThrown = false;
   return {
     listJobs: async () => offers,
+    decline: async (jobId: string, reason: string) => {
+      if (over.declineThrows) throw over.declineThrows;
+      calls.declined.push({jobId, reason});
+      return {jobId, declined: {reason, at: new Date().toISOString()}};
+    },
     accept: async (jobId: string) => {
       if (over.acceptThrows) throw over.acceptThrows;
       if (over.acceptThrowsOnce && !thrownOnce) {
@@ -128,7 +137,7 @@ function build(
   brain: Brain,
   over: ClientFaults = {},
 ): {worker: Worker<z.infer<typeof Output>>; calls: Calls; events: WorkerEvent[]} {
-  const calls: Calls = {accepted: [], submitted: [], submitAttempts: 0};
+  const calls: Calls = {accepted: [], submitted: [], submitAttempts: 0, declined: []};
   const events: WorkerEvent[] = [];
   const worker = new Worker({
     client: fakeClient(offers, calls, over),
@@ -551,5 +560,69 @@ describe('a delivery the chain did not take the first time', () => {
     expect(events.some((e) => e.kind === 'failed' && e.stage === 'submit')).toBe(true);
     expect(calls.submitAttempts).toBe(1);
     expect(calls.accepted).toEqual(['1']);
+  });
+});
+
+/**
+ * A decline used to be silent: the job sat in `created`, the client waited out
+ * its accept window (45 s) and the run said only "never accepted". The client
+ * deserves the reason, at once, so it can hire someone else.
+ */
+describe('telling the client', () => {
+  it('reports a judgement decline to the API, with its reason', async () => {
+    const brain = new FakeBrain({triage: {accept: false, reason: 'asks for a private wallet export'}});
+    const {worker, calls} = build([offer()], brain);
+
+    await worker.tick();
+    expect(calls.declined).toEqual([{jobId: '1', reason: 'asks for a private wallet export'}]);
+    expect(calls.accepted).toEqual([]);
+  });
+
+  it('reports a structural decline too', async () => {
+    const {worker, calls} = build(
+      [offer({outputSchema: {type: 'object', required: ['summary', 'chart']}})],
+      new FakeBrain(),
+    );
+    await worker.tick();
+    expect(calls.declined).toHaveLength(1);
+    expect(calls.declined[0]!.reason).toContain('chart');
+  });
+
+  it('declines with the cause when its own model cannot be reached', async () => {
+    const {worker, calls} = build([offer()], new FakeBrain({}, 'triage'));
+
+    const [outcome] = await worker.tick();
+    expect(outcome).toMatchObject({status: 'failed', stage: 'triage'});
+    expect(calls.declined).toEqual([
+      {jobId: '1', reason: expect.stringMatching(/could not reach its model/)},
+    ]);
+  });
+
+  it('keeps working when reporting the decline fails', async () => {
+    const brain = new FakeBrain({triage: {accept: false, reason: 'not workable'}});
+    const {worker, events} = build([offer()], brain, {declineThrows: new Error('api down')});
+
+    const [outcome] = await worker.tick();
+    expect(outcome).toMatchObject({status: 'declined', reason: 'not workable'});
+    expect(events.some((e) => e.kind === 'failed' && e.stage === 'decline')).toBe(true);
+  });
+
+  it('reports a decline once, not on every poll', async () => {
+    const brain = new FakeBrain({triage: {accept: false, reason: 'not workable'}});
+    const {worker, calls} = build([offer()], brain);
+    await worker.tick();
+    await worker.tick();
+    expect(calls.declined).toHaveLength(1);
+  });
+
+  /**
+   * The client waits 45 s for an accept. A model that hangs for its full 60 s
+   * outlasted that, so a worker with a working fallback model still timed out.
+   */
+  it('gives triage a short timeout, so a hanging model falls through in time', async () => {
+    const brain = new FakeBrain();
+    const {worker} = build([offer()], brain);
+    await worker.tick();
+    expect(brain.timeouts[0]).toBe(15_000);
   });
 });

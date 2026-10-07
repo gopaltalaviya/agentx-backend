@@ -59,6 +59,7 @@ export async function makeRunExecutor(opts: {
       spent: report.spent,
       steps: report.steps,
       delivered: report.delivered,
+      planError: report.planError ?? null,
     };
   };
 }

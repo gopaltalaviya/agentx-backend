@@ -509,6 +509,13 @@ describe('dependent subtasks', () => {
     expect(calls.hired).toBe(0);
   });
 
+  /** It read "needed the result of step 1, which timeout" — a status code pasted into a sentence. */
+  it('says why a dependent step did not run, in words', async () => {
+    const {orchestrator} = build({discover: async () => []}, {Plan: TWO_STEP});
+    const report = await orchestrator.run('goal');
+    expect(report.steps[1]!.detail).toBe('not run: it needed the result of step 1, which found no agent');
+  });
+
   it('passes an upstream result into the dependent step', async () => {
     const specs: unknown[] = [];
     const {orchestrator} = build(
@@ -689,7 +696,9 @@ describe('a worker that goes silent', () => {
 
   function scenario(opts: {
     candidates: (typeof CANDIDATE)[];
-    silent: (agentId: number) => 'never-accepts' | 'accepts-late' | 'accepts-then-silent' | 'delivers';
+    silent: (
+      agentId: number,
+    ) => 'never-accepts' | 'declines' | 'accepts-late' | 'accepts-then-silent' | 'delivers';
     cancelFails?: boolean;
   }) {
     const hires: {agentId: number; maxPrice: string}[] = [];
@@ -717,6 +726,7 @@ describe('a worker that goes silent', () => {
       awaitResult: async (jobId: string, o: {timeoutMs: number; acceptWithinMs?: number}) => {
         const behaviour = opts.silent(byJob.get(jobId)!);
         if (behaviour === 'never-accepts') throw new NotAccepted(jobId, o.acceptWithinMs ?? 0);
+        if (behaviour === 'declines') throw new NotAccepted(jobId, 10, 'needs a private wallet export');
         // Accepts just after the accept window: only a wait with an accept
         // limit sees it as unaccepted.
         if (behaviour === 'accepts-late' && o.acceptWithinMs !== undefined) {
@@ -761,6 +771,37 @@ describe('a worker that goes silent', () => {
     expect(report.steps[0]!.retriedAfter).toMatch(/never accepted/);
     expect(calls.approved).toEqual(['102']);
     expect(events.map((e) => e.kind)).toContain('retrying');
+  });
+
+  /**
+   * A worker that says no has answered: hire the next one at once, and keep
+   * its reason. It used to be indistinguishable from an offline worker.
+   */
+  it('hires someone else when a worker declines, and keeps its reason', async () => {
+    const {orchestrator, hires, cancelled, events} = scenario({
+      candidates: [CANDIDATE, OTHER],
+      silent: (id) => (id === 7 ? 'declines' : 'delivers'),
+    });
+
+    const report = await orchestrator.run('how deep is ETH/USDC?');
+
+    expect(hires.map((h) => h.agentId)).toEqual([7, 8]);
+    expect(cancelled).toEqual(['101']);
+    expect(report.steps[0]).toMatchObject({status: 'settled', agentId: 8});
+    expect(report.steps[0]!.retriedAfter).toBe(
+      'agent 7 declined: needs a private wallet export — cancelled and refunded',
+    );
+    const retrying = events.find((e) => e.kind === 'retrying') as {reason: string} | undefined;
+    expect(retrying?.reason).toMatch(/declined: needs a private wallet export/);
+  });
+
+  it('ends the step as declined, with the reason, when every worker declines', async () => {
+    const {orchestrator} = scenario({candidates: [CANDIDATE, OTHER], silent: () => 'declines'});
+    const report = await orchestrator.run('how deep is ETH/USDC?');
+    expect(report.steps[0]).toMatchObject({
+      status: 'declined',
+      detail: 'agent 8 declined: needs a private wallet export — cancelled and refunded',
+    });
   });
 
   it('hires someone else when a worker accepts and then goes silent, minus what is still locked', async () => {

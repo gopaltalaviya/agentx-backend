@@ -490,6 +490,64 @@ describe('job lifecycle', () => {
     expect(job.state).toBe('accepted');
   });
 
+  /**
+   * A worker that will not take a job says so, with its reason. Off-chain and
+   * free: the job stays `created`, and the client — told at once instead of
+   * after its accept window — cancels and hires someone else.
+   */
+  describe('a decline', () => {
+    it('is recorded with its reason and shown on the job', async () => {
+      const {worker, jobId} = await escrowJob();
+      const res = await post(`/v1/jobs/${jobId}/decline`, worker.apiKey, {reason: 'needs a private API key'});
+      expect(res.statusCode).toBe(200);
+      expect(res.json().declined.reason).toBe('needs a private API key');
+
+      const job = await app.inject({method: 'GET', url: `/v1/jobs/${jobId}`}).then((r) => r.json());
+      expect(job.state).toBe('created');
+      expect(job.declined).toMatchObject({reason: 'needs a private API key'});
+      expect(job.events.map((e: {kind: string}) => e.kind)).toContain('job.declined');
+    });
+
+    it('is shown as null on a job nobody declined', async () => {
+      const {jobId} = await escrowJob();
+      const job = await app.inject({method: 'GET', url: `/v1/jobs/${jobId}`}).then((r) => r.json());
+      expect(job.declined).toBeNull();
+    });
+
+    it('comes only from the hired worker', async () => {
+      const {client, jobId} = await escrowJob();
+      const stranger = await register({name: 'S', walletAddress: '0x' + 'a3'.repeat(20)});
+      expect((await post(`/v1/jobs/${jobId}/decline`, client.apiKey, {reason: 'x'})).statusCode).toBe(403);
+      expect((await post(`/v1/jobs/${jobId}/decline`, stranger.apiKey, {reason: 'x'})).statusCode).toBe(403);
+      const anonymous = await app.inject({
+        method: 'POST',
+        url: `/v1/jobs/${jobId}/decline`,
+        payload: {reason: 'x'},
+      });
+      expect(anonymous.statusCode).toBe(401);
+    });
+
+    it('is refused once the worker has accepted', async () => {
+      const {worker, jobId} = await escrowJob();
+      await post(`/v1/jobs/${jobId}/accept`, worker.apiKey);
+      const res = await post(`/v1/jobs/${jobId}/decline`, worker.apiKey, {reason: 'changed my mind'});
+      expect(res.statusCode).toBe(409);
+      expect(res.json().code).toBe('INVALID_STATE');
+    });
+
+    it('needs a reason, and keeps the first one', async () => {
+      const {worker, jobId} = await escrowJob();
+      expect((await post(`/v1/jobs/${jobId}/decline`, worker.apiKey, {})).statusCode).toBe(422);
+      await post(`/v1/jobs/${jobId}/decline`, worker.apiKey, {reason: 'first'});
+      const again = await post(`/v1/jobs/${jobId}/decline`, worker.apiKey, {reason: 'second'});
+      expect(again.statusCode).toBe(200);
+      expect(again.json().declined.reason).toBe('first');
+
+      const job = await app.inject({method: 'GET', url: `/v1/jobs/${jobId}`}).then((r) => r.json());
+      expect(job.events.filter((e: {kind: string}) => e.kind === 'job.declined')).toHaveLength(1);
+    });
+  });
+
   it('records an event for every transition', async () => {
     const {client, worker, jobId} = await escrowJob();
     await post(`/v1/jobs/${jobId}/accept`, worker.apiKey);

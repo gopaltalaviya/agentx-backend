@@ -1,6 +1,6 @@
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import {z} from 'zod';
-import {BrainUnavailable, GeminiBrain} from '../src/index.js';
+import {BrainUnavailable, ClaudeBrain, GeminiBrain} from '../src/index.js';
 
 /**
  * Gemini answers 503 "This model is currently experiencing high demand.
@@ -149,5 +149,41 @@ describe('a thinking model and a small token budget', () => {
       ),
     );
     await expect(new FastGemini('m', 'key').complete(req)).rejects.toBeInstanceOf(BrainUnavailable);
+  });
+});
+
+/**
+ * A worker has 45 s to accept an offer. One model that hung for its full 60 s
+ * outlasted that, although the next model in the chain answered in one: the
+ * job timed out while a working fallback sat unused. The caller sets the
+ * per-call limit; the default stays generous.
+ */
+describe('a caller-set timeout', () => {
+  it('gives up on a hanging model at the time the caller asked for', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal!.reason));
+        }),
+    );
+    const started = Date.now();
+    const err = await new FastGemini('m', 'key').complete({...req, timeoutMs: 50}).catch((e) => e);
+    expect(err).toBeInstanceOf(BrainUnavailable);
+    expect((err as BrainUnavailable).reason).toBe('timeout');
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+});
+
+describe('Claude cut off at its token limit', () => {
+  it('is the provider failing, not a bad answer, so the chain moves on', async () => {
+    const brain = new ClaudeBrain('claude-test', 'key');
+    (brain as unknown as {client: unknown}).client = {
+      messages: {
+        create: async () => ({stop_reason: 'max_tokens', content: [{type: 'text', text: '{"steps":["a'}]}),
+      },
+    };
+    const err = await brain.complete(req).catch((e) => e);
+    expect(err).toBeInstanceOf(BrainUnavailable);
+    expect((err as Error).message).toMatch(/token limit/);
   });
 });

@@ -74,6 +74,8 @@ export interface JobDetail extends Omit<JobReceipt, 'txHash' | 'explorerUrl'> {
   createdAt: string;
   settledAt: string | null;
   events: {kind: string; txHash: string | null; explorerUrl: string | null; occurredAt: string}[];
+  /** The hired worker said no, off-chain, and why. Null when it has not. */
+  declined?: {reason: string; at: string} | null;
 }
 
 export interface NetworkInfo {
@@ -165,8 +167,15 @@ export class NotAccepted extends AgentxError {
   constructor(
     readonly jobId: string,
     readonly waitedMs: number,
+    /** Set when the worker declined, rather than staying silent. */
+    readonly declinedReason?: string,
   ) {
-    super(ErrorCode.DEADLINE_PASSED, `job ${jobId} was not accepted within ${waitedMs}ms`);
+    super(
+      ErrorCode.DEADLINE_PASSED,
+      declinedReason !== undefined
+        ? `job ${jobId} was declined: ${declinedReason}`
+        : `job ${jobId} was not accepted within ${waitedMs}ms`,
+    );
     this.name = 'NotAccepted';
   }
 }
@@ -300,6 +309,17 @@ export class AgentxClient {
     return this.request<ActionReceipt>('POST', `/v1/jobs/${jobId}/cancel`, {});
   }
 
+  /**
+   * Turn down a job this agent was hired for, and say why.
+   *
+   * Off-chain and free: the job stays `created` on chain, and the client —
+   * told at once instead of after its accept window — cancels for a refund
+   * and hires someone else.
+   */
+  decline(jobId: string, reason: string): Promise<{jobId: string; declined: {reason: string; at: string}}> {
+    return this.request('POST', `/v1/jobs/${jobId}/decline`, {body: {reason}});
+  }
+
   // ── x402 ───────────────────────────────────────────────────────────────
 
   /**
@@ -396,6 +416,11 @@ export class AgentxClient {
       // coming, so waiting for one is waiting forever.
       if (job.result) return job;
       if (job.state === 'refunded' || job.state === 'disputed') return job;
+
+      // The worker answered "no". Nothing will change by waiting.
+      if (job.state === 'created' && job.declined) {
+        throw new NotAccepted(jobId, Date.now() - started, job.declined.reason);
+      }
 
       // An escrow job nobody has picked up. Waiting out the whole timeout for
       // a worker that is offline wastes the run; the client can still cancel
