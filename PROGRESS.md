@@ -53,8 +53,8 @@
    SSH: `root@64.177.41.175` with the `agentx_oracle` key, key-only. Hosted agents:
    orchestrator 229, workers 230–232 (`artifacts/hosted-agents.json`, gitignored;
    the judges' key is `env.orchestratorApiKeyForJudges` — submission form only).
-   Railway: an unused `agentx` project (Postgres + two empty services) remains —
-   delete it, or ask. The Oracle VM was terminated by the owner.
+   Railway: the unused `agentx` project was deleted on 2026-10-07 (Railway
+   removes it for good on 2026-10-09).
 5. **`EXPLORER_API_KEY`** in `agentx-contracts/.env` for verified source.
    Deployed source is untouched on purpose so verification still matches.
 6. **Gemini — tried, as asked; not used for the video.** The key works. The
@@ -710,9 +710,9 @@ Append-only. Never rewrite a decision — supersede it with a new row.
 
 ### Session 33 — 2026-10-07 (hosted live · every ending explained)
 
-- **Hosting.** Railway's trial had expired; Oracle's free VMs were out of ARM
-  capacity, and the 0.5 GB AMD one ran but its status page flapped "down"
-  (probes timing out under swap). Moved — database and all, `pg_dump` →
+- **Hosting.** Railway's trial had expired, and a free-tier VM with 0.5 GB ran
+  the stack but its status page flapped "down" (probes timing out under swap).
+  Moved — database and all, `pg_dump` →
   restore, indexer cursor kept — to a Vultr VPS (2 vCPU / 4 GB): Caddy with a
   Let's Encrypt certificate on `api.<ip>.sslip.io`, only 22/80/443 open, SSH
   key-only. Images are built here and loaded there. 16/16 deployment checks,
