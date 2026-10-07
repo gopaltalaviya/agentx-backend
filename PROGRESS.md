@@ -12,8 +12,8 @@
   chain, including a real dispute expired by the keeper after its 1 h
   timeout. Backend and interface have lint, formatting, coverage floors, CI,
   containers, metrics, graceful shutdown and a browser smoke test.
-- Overall: `██████████████████░░` 92% — **110 / 119 tasks** (4 cut, recorded in PLAN), **820 tests green**
-  (184 contracts · 555 backend · 81 interface) + 64 browser tests (14 smoke, 17 accessibility, 9 search, 2 guides, 22 edge) — also run in Firefox, WebKit, iPhone and Android (320 runs)
+- Overall: `██████████████████░░` 92% — **110 / 119 tasks** (4 cut, recorded in PLAN), **823 tests green**
+  (184 contracts · 558 backend · 81 interface) + 64 browser tests (14 smoke, 17 accessibility, 9 search, 2 guides, 22 edge) — also run in Firefox, WebKit, iPhone and Android (320 runs)
 
 ---
 
@@ -165,7 +165,7 @@ NEXT_PUBLIC_API_URL=http://127.0.0.1:18787 npx next build
 E2E_PORT=13200 MOCK_API_PORT=18787 npx playwright test --workers=2   # expect 63 passed
 ```
 
-Expected totals as of 2026-10-07: **184 contracts + 555 backend + 81 interface = 820** (Session 33), plus 64 Playwright tests (14 smoke, 17 axe accessibility, 9 search, 2 guides, 22 edge).
+Expected totals as of 2026-10-07: **184 contracts + 558 backend + 81 interface = 823** (Session 33), plus 64 Playwright tests (14 smoke, 17 axe accessibility, 9 search, 2 guides, 22 edge).
 If a number is lower, something regressed — find out what before building on
 it.
 
@@ -735,6 +735,25 @@ Append-only. Never rewrite a decision — supersede it with a new row.
   example goal settled 2/2 (88–91 s); a real declined run's record page reads
   correctly. Tests 789 → 820 (backend 528 → 555, interface 77 → 81 unit,
   63 → 64 browser; 318 of 320 browser runs pass across five engines, 2 skipped).
+- **Deep live test** (the hosted site and API, real browsers): API 57/57; site
+  features in Chromium, Firefox, WebKit and an iPhone, search included, axe
+  clean; on chain, every settled step's transaction succeeded through the
+  AgentAccount and all three workers carry settlement-backed reviews. It found
+  three more defects, each fixed with a test seen failing first: an empty plan
+  said only "no subtasks" (now the planner's reason); a worker judged the
+  whole goal instead of its own step and declined research because it cannot
+  execute; a decline arriving before the indexer linked the job made the
+  cancel fail ("not confirmed yet") and the step was lost (now retried). Also
+  "a negative answer is an answer" in triage. A 3-agent run then settled 3/3
+  in 41 s.
+- **Gemini is on the free tier: 20 requests per model per day.** A 3-agent
+  run makes ~12–15 calls, so the hosted demo manages only a handful of runs a
+  day before every model answers 429 — and judges would see "could not reach
+  its model". The chain now starts with the lite models
+  (`gemini-flash-lite-latest, gemini-3.5-flash-lite, gemini-3.6-flash, gemini`)
+  to spread the load. **The real fix is the owner's**: billing on the Gemini
+  key (pay-as-you-go, cents per run) or a second provider key (Groq).
+  `RUNS_PER_DAY` is 20.
 - **Found, not fixed:** `.agent-cache/` (the recorded model sessions) is
   gitignored, so `AGENT_MODE=cached` cannot work from a clone. The submission
   now tells judges to use the hosted site, or `AGENT_MODE=live` with a model.

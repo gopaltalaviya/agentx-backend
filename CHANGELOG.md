@@ -12,7 +12,10 @@ Notable changes. Dates are UTC. The full history, with evidence, is in
   three kinds may decline (in code). Steps end `declined` with the reason.
 - Runs that deliver nothing end `failed` with the reasons from their steps.
 - Claude at max_tokens is a provider failure.
-- Tests 528 → 555.
+- Deep live test: an empty plan says the planner's reason; triage judges
+  only the worker's own step, and a negative answer is an answer; a cancel
+  refused as "not confirmed yet" is retried.
+- Tests 528 → 558.
 
 ## 2026-10-06 — Session 32 (public, `master`, docs repo)
 - All four repos public; the production branch is `master` (CI triggers
