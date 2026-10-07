@@ -3,7 +3,7 @@
 > **START HERE every session.** This file is the memory that survives a closed
 > terminal. Read it top to bottom before doing anything else.
 
-- Last updated: **2026-10-06** (Session 32 — all four repos public on `master`; the docs moved, with their history, to the new `agentx-docs` repo)
+- Last updated: **2026-10-07** (Session 33 — hosted live on a VPS + Vercel; every run outcome handled fast and shown in words; 3/3 live runs from the site settled)
 - Deadline: **2026-10-13, 11:59 PM ET** (verified)
 - Target track: **4 — Trust, Identity & AI Infrastructure** ($30,000)
 - Current state: **v2 live on Monad testnet, end to end, re-verified.** The
@@ -12,8 +12,8 @@
   chain, including a real dispute expired by the keeper after its 1 h
   timeout. Backend and interface have lint, formatting, coverage floors, CI,
   containers, metrics, graceful shutdown and a browser smoke test.
-- Overall: `██████████████████░░` 92% — **110 / 119 tasks** (4 cut, recorded in PLAN), **789 tests green**
-  (184 contracts · 528 backend · 77 interface) + 63 browser tests (14 smoke, 17 accessibility, 9 search, 2 guides, 21 edge) — also run in Firefox, WebKit, iPhone and Android (315 runs)
+- Overall: `██████████████████░░` 92% — **110 / 119 tasks** (4 cut, recorded in PLAN), **820 tests green**
+  (184 contracts · 555 backend · 81 interface) + 64 browser tests (14 smoke, 17 accessibility, 9 search, 2 guides, 22 edge) — also run in Firefox, WebKit, iPhone and Android (320 runs)
 
 ---
 
@@ -46,19 +46,15 @@
    (~80 demo runs at ~0.5), FUNDER **15.01 MON** — the keeper and the agents'
    gas top-ups run from it again. If FUNDER ever drains, the demo now says so
    before sending anything.
-4. **Railway + Vercel** — ⛔ **blocked on you: Railway says the trial has
-   expired** ("please select a plan", 2026-10-05). The CLI is logged in as you;
-   nothing was created. Pick a plan, then say "deploy". Vercel needs one
-   `npx vercel login` from you. **Everything else is built and rehearsed**
-   (Session 31): hosted live runs worked end to end on this machine with the
-   production images, the three worker bots and your Gemini key — 2 hires,
-   2 settlements, answer shown, 151 s, 0.21 MON. The deploy is then:
-   core services ([docs/13 §1](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/13-deploy.md#1-railway)) →
-   `node scripts/seed-hosted.mjs https://<api>` (fresh keys, ~11.5 MON from
-   FUNDER) → signer/worker variables from the seed file's `env` →
-   [docs/13 §3b](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/13-deploy.md#3b-hosted-live-runs) → `check-deployment`.
-   The orchestrator's API key (`env.orchestratorApiKeyForJudges` in
-   `artifacts/hosted-agents.json`) goes in the submission form only.
+4. **Hosted — LIVE (2026-10-07).** Site: **https://agentx-interface-iota.vercel.app**
+   (Vercel, deploys from `master`); API: `https://api.64-177-41-175.sslip.io` on one
+   Vultr VPS (2 vCPU / 4 GB, $250 credit for 30 days — **destroy it after judging**
+   or it bills ~$24/month). Files: `deploy/vps/`; steps: [docs/13 §5](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/13-deploy.md#5-a-single-vps-the-live-deployment).
+   SSH: `root@64.177.41.175` with the `agentx_oracle` key, key-only. Hosted agents:
+   orchestrator 229, workers 230–232 (`artifacts/hosted-agents.json`, gitignored;
+   the judges' key is `env.orchestratorApiKeyForJudges` — submission form only).
+   Railway: an unused `agentx` project (Postgres + two empty services) remains —
+   delete it, or ask. The Oracle VM was terminated by the owner.
 5. **`EXPLORER_API_KEY`** in `agentx-contracts/.env` for verified source.
    Deployed source is untouched on purpose so verification still matches.
 6. **Gemini — tried, as asked; not used for the video.** The key works. The
@@ -92,12 +88,11 @@ after any change to the signer, API or indexer. Post-hackathon only:
 
 | # | Blocked | Blocked by | Since | Owner |
 |---|---|---|---|---|
-| B8 | Deploy + e2e against real hosting (M2-22/23, M5) | Railway + Vercel accounts | Sep 22 | 👤 |
 | B10 | Verified source on the explorer | `EXPLORER_API_KEY` empty | Sep 28 | 👤 |
 
 
 Cleared: ~~B1 scaffolding~~ · ~~B2 funded wallets~~ · ~~B3 schedule~~ ·
-~~B4 deploy target~~ · ~~B5 git push~~ · ~~B11 repos private~~ (public 2026-10-06) · ~~B9 docs and plan unbacked~~
+~~B4 deploy target~~ · ~~B5 git push~~ · ~~B8 hosting~~ (VPS + Vercel, 2026-10-07) · ~~B11 repos private~~ (public 2026-10-06) · ~~B9 docs and plan unbacked~~
 (moved into `agentx-backend` on Sep 25, which also fixed a README link that
 was broken on GitHub) · ~~B6 no model~~ (Sep 29 — local Ollama instead of a
 hosted key; the full path now runs and settles on testnet) · ~~B7 interface
@@ -170,7 +165,7 @@ NEXT_PUBLIC_API_URL=http://127.0.0.1:18787 npx next build
 E2E_PORT=13200 MOCK_API_PORT=18787 npx playwright test --workers=2   # expect 63 passed
 ```
 
-Expected totals as of 2026-10-05: **184 contracts + 528 backend + 77 interface = 789** (Session 31), plus 63 Playwright tests (14 smoke, 17 axe accessibility, 9 search, 2 guides, 21 edge).
+Expected totals as of 2026-10-07: **184 contracts + 555 backend + 81 interface = 820** (Session 33), plus 64 Playwright tests (14 smoke, 17 axe accessibility, 9 search, 2 guides, 22 edge).
 If a number is lower, something regressed — find out what before building on
 it.
 
@@ -712,6 +707,39 @@ Append-only. Never rewrite a decision — supersede it with a new row.
 ---
 
 ## 📓 Session log
+
+### Session 33 — 2026-10-07 (hosted live · every ending explained)
+
+- **Hosting.** Railway's trial had expired; Oracle's free VMs were out of ARM
+  capacity, and the 0.5 GB AMD one ran but its status page flapped "down"
+  (probes timing out under swap). Moved — database and all, `pg_dump` →
+  restore, indexer cursor kept — to a Vultr VPS (2 vCPU / 4 GB): Caddy with a
+  Let's Encrypt certificate on `api.<ip>.sslip.io`, only 22/80/443 open, SSH
+  key-only. Images are built here and loaded there. 16/16 deployment checks,
+  status operational throughout, clean crawl in three engines.
+- **Live runs failed 3 of 3 at first.** Causes, each fixed with a test seen
+  failing first: the research worker declined any research ("the input lacks
+  the data" — it has no live feed; then "Monad postdates my training"); a
+  decline was silent, so the run waited 45 s and said "never accepted";
+  `gemini-flash-latest` hung 60 s, longer than the accept window; a run that
+  delivered nothing ended `done` and the site showed it green "finished".
+- **Now:** `POST /v1/jobs/:id/decline` (off-chain, reason, idempotent);
+  `awaitResult` stops on it at once; the step ends `declined` with the reason
+  and the next agent is hired; triage has a 15 s per-call timeout and names its
+  `blocker` — only client-only data, an impossible action or work outside the
+  capability may decline (enforced in code); a run with no settled step ends
+  `failed` with "No agent delivered. <capability>: <why>."; the site labels
+  every status in words and says "The run did not deliver". Claude cut off at
+  max_tokens is a provider failure, not a SyntaxError.
+- **Verified live:** after the fixes, 3 of 3 runs from the hosted site with the
+  example goal settled 2/2 (88–91 s); a real declined run's record page reads
+  correctly. Tests 789 → 820 (backend 528 → 555, interface 77 → 81 unit,
+  63 → 64 browser; 318 of 320 browser runs pass across five engines, 2 skipped).
+- **Found, not fixed:** `.agent-cache/` (the recorded model sessions) is
+  gitignored, so `AGENT_MODE=cached` cannot work from a clone. The submission
+  now tells judges to use the hosted site, or `AGENT_MODE=live` with a model.
+  The local recordings were re-keyed for the new triage prompt (method proven:
+  every key reproduced under the old prompt first).
 
 ### Session 32 — 2026-10-06 (public · `master` · docs in their own repo)
 

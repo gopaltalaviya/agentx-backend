@@ -3,6 +3,17 @@
 Notable changes. Dates are UTC. The full history, with evidence, is in
 `PROGRESS.md` and the commit log.
 
+## 2026-10-07 — Session 33 (hosted live, every run outcome explained)
+- Hosted: the site on Vercel, the backend on one VPS behind Caddy
+  (`deploy/vps/`). Live runs from the site settle.
+- `POST /v1/jobs/:id/decline`: a worker's off-chain "no", with a reason;
+  `GET /v1/jobs/:id` shows `declined`; the SDK stops waiting on it at once.
+- Workers: a 15 s triage timeout; a `blocker` named by the model, and only
+  three kinds may decline (in code). Steps end `declined` with the reason.
+- Runs that deliver nothing end `failed` with the reasons from their steps.
+- Claude at max_tokens is a provider failure.
+- Tests 528 → 555.
+
 ## 2026-10-06 — Session 32 (public, `master`, docs repo)
 - All four repos public; the production branch is `master` (CI triggers
   follow).
