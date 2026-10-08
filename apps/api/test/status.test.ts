@@ -299,3 +299,95 @@ describe('docs/15-api.md', () => {
     await app.close();
   });
 });
+
+/**
+ * The AI model behind the hosted demo has a free daily quota. When it is used
+ * up, a judge pressing Run sees a failed run and could read the product as
+ * broken. The status says so plainly — from real run outcomes, never by
+ * calling the model (that would spend the quota) — and names the last run
+ * that delivered, as proof the protocol works.
+ */
+describe('GET /v1/status — the AI model', () => {
+  beforeEach(async () => {
+    await db.execute(sql`TRUNCATE agents, runs, run_events RESTART IDENTITY CASCADE`);
+  });
+
+  async function agent(app: Awaited<ReturnType<typeof build>>) {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/agents',
+      payload: {
+        name: 'StatusBot',
+        capabilities: ['market-research'],
+        pricePerTask: '20000',
+        walletAddress: '0x' + '31'.repeat(20),
+        ownerAddress: '0x' + '32'.repeat(20),
+      },
+    });
+    return Number(res.json().agentId);
+  }
+  const run = (agentId: number, state: 'done' | 'failed', minutesAgo: number, error: string | null = null) =>
+    db.execute(sql`INSERT INTO runs (chain_id, agent_id, goal, state, error, finished_at, started_at)
+      VALUES (31337, ${agentId}, 'g', ${state}, ${error},
+              now() - make_interval(mins => ${minutesAgo}), now() - make_interval(mins => ${minutesAgo + 1}))`);
+
+  it('is unknown before any run', async () => {
+    await cursorAt(1_000);
+    const app = await build();
+    const body = (await app.inject({url: '/v1/status'})).json();
+    expect(body.model).toEqual({state: 'unknown', since: null, detail: null, lastDelivered: null});
+  });
+
+  it('is limited when the latest run failed for the model, and names the last delivered run', async () => {
+    await cursorAt(1_000);
+    const app = await build();
+    const id = await agent(app);
+    await run(id, 'done', 30);
+    await run(id, 'failed', 5, 'No plan: AI model unavailable: its free request quota is used up for now');
+    const body = (await app.inject({url: '/v1/status'})).json();
+    expect(body.model.state).toBe('limited');
+    expect(body.model.detail).toBe('AI model unavailable: its free request quota is used up for now');
+    expect(body.model.since).toEqual(expect.any(String));
+    expect(body.model.lastDelivered).toEqual({
+      runId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      at: expect.any(String),
+    });
+    // The protocol is not down because a model is out of quota.
+    expect(body.status).toBe('operational');
+  });
+
+  it('is ok once a run reaches the model again', async () => {
+    await cursorAt(1_000);
+    const app = await build();
+    const id = await agent(app);
+    await run(id, 'failed', 30, 'No plan: AI model unavailable: its free request quota is used up for now');
+    await run(id, 'done', 2);
+    expect((await app.inject({url: '/v1/status'})).json().model.state).toBe('ok');
+  });
+
+  it('is ok when the latest run failed for a reason that is not the model', async () => {
+    await cursorAt(1_000);
+    const app = await build();
+    const id = await agent(app);
+    await run(
+      id,
+      'failed',
+      2,
+      'No agent delivered. market-research: agent 2 declined: needs a private statement',
+    );
+    expect((await app.inject({url: '/v1/status'})).json().model.state).toBe('ok');
+  });
+
+  it('forgets a limit after 12 hours: daily quotas reset', async () => {
+    await cursorAt(1_000);
+    const app = await build();
+    const id = await agent(app);
+    await run(
+      id,
+      'failed',
+      13 * 60,
+      'No plan: AI model unavailable: its free request quota is used up for now',
+    );
+    expect((await app.inject({url: '/v1/status'})).json().model.state).toBe('unknown');
+  });
+});

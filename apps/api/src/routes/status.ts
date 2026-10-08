@@ -1,6 +1,6 @@
 import type {FastifyInstance} from 'fastify';
-import {eq} from 'drizzle-orm';
-import {indexerCursor, type Db} from '@agentx/db';
+import {desc, eq, ne} from 'drizzle-orm';
+import {indexerCursor, runs, type Db} from '@agentx/db';
 import type {ChainConfig} from '@agentx/config';
 import {withTimeout, type BuildInfo} from '@agentx/service';
 
@@ -71,7 +71,29 @@ export interface StatusReport {
     indexer: ComponentStatus;
   };
   chains: ChainStatus[];
+  /**
+   * The AI model the hosted runs think with — reported apart from the
+   * components, because a model out of its free daily quota is not the
+   * protocol being down. Read from real run outcomes, never by calling the
+   * model, which would spend the quota it reports on.
+   */
+  model: ModelStatus;
 }
+
+export interface ModelStatus {
+  state: 'ok' | 'limited' | 'unknown';
+  /** When the latest model failure ended its run. */
+  since: string | null;
+  /** That failure, in one sentence. */
+  detail: string | null;
+  /** The newest run that delivered — the proof that the rest works. */
+  lastDelivered: {runId: string; at: string} | null;
+}
+
+/** How a model failure reads in a run's error or steps (older wording included). */
+const MODEL_FAILURE = /AI model unavailable[^."\]\n]*|could not reach its model/;
+/** Free quotas reset daily; an older failure says nothing about now. */
+const MODEL_LIMIT_MEMORY_MS = 12 * 3600 * 1000;
 
 const RANK: Record<ComponentStatus, number> = {up: 0, unknown: 1, degraded: 2, down: 3};
 const worst = (all: ComponentStatus[]): ComponentStatus =>
@@ -106,7 +128,7 @@ export function registerStatusRoutes(
   async function compute(): Promise<StatusReport> {
     const chainIds = Object.keys(deps.chains).map(Number);
 
-    const [cursors, signer, heads] = await Promise.all([
+    const [cursors, signer, heads, model] = await Promise.all([
       probe('database', () =>
         deps.db.select().from(indexerCursor).where(eq(indexerCursor.contract, 'TaskEscrow')),
       ),
@@ -116,6 +138,7 @@ export function registerStatusRoutes(
           opts.headBlock ? probe(`rpc-${id}`, () => opts.headBlock!(id)) : Promise.resolve(null),
         ),
       ),
+      probe('model', () => modelStatus(deps.db)),
     ]);
 
     const now = Date.now();
@@ -180,7 +203,14 @@ export function registerStatusRoutes(
           ? ('operational' as const)
           : ('degraded' as const);
 
-    return {status, checkedAt: new Date(now).toISOString(), build: deps.build ?? null, components, chains};
+    return {
+      status,
+      checkedAt: new Date(now).toISOString(),
+      build: deps.build ?? null,
+      components,
+      chains,
+      model: model.ok ? model.value : {state: 'unknown', since: null, detail: null, lastDelivered: null},
+    };
   }
 
   let cached: {at: number; report: Promise<StatusReport>} | null = null;
@@ -193,4 +223,37 @@ export function registerStatusRoutes(
     reply.header('cache-control', `public, max-age=${Math.floor(cacheMs / 1000)}`);
     return cached.report;
   });
+}
+
+async function modelStatus(db: Db): Promise<ModelStatus> {
+  const [latest] = await db
+    .select({state: runs.state, error: runs.error, steps: runs.steps, finishedAt: runs.finishedAt})
+    .from(runs)
+    .where(ne(runs.state, 'running'))
+    .orderBy(desc(runs.finishedAt))
+    .limit(1);
+  const [delivered] = await db
+    .select({publicId: runs.publicId, finishedAt: runs.finishedAt})
+    .from(runs)
+    .where(eq(runs.state, 'done'))
+    .orderBy(desc(runs.finishedAt))
+    .limit(1);
+  const lastDelivered = delivered?.finishedAt
+    ? {runId: delivered.publicId, at: new Date(delivered.finishedAt).toISOString()}
+    : null;
+
+  if (!latest?.finishedAt) return {state: 'unknown', since: null, detail: null, lastDelivered};
+  const finished = new Date(latest.finishedAt);
+  const failure =
+    latest.state === 'failed'
+      ? ((latest.error ?? '').match(MODEL_FAILURE)?.[0] ??
+        JSON.stringify(latest.steps ?? []).match(MODEL_FAILURE)?.[0])
+      : undefined;
+  if (failure) {
+    if (Date.now() - finished.getTime() > MODEL_LIMIT_MEMORY_MS) {
+      return {state: 'unknown', since: null, detail: null, lastDelivered};
+    }
+    return {state: 'limited', since: finished.toISOString(), detail: failure.trim(), lastDelivered};
+  }
+  return {state: 'ok', since: null, detail: null, lastDelivered};
 }

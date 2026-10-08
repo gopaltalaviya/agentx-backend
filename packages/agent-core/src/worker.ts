@@ -2,7 +2,7 @@ import {z} from 'zod';
 import {AgentxError, ErrorCode, isX402Spec, type JobSpec} from '@agentx/shared';
 import type {AgentxClient, JobSummary} from '@agentx/sdk';
 import type {Brain} from './brain.js';
-import {BrainInvalidOutput} from './brain.js';
+import {BrainInvalidOutput, MODEL_UNAVAILABLE, explainModelFailure} from './brain.js';
 import {TRIAGE_SYSTEM, WORKER_SYSTEM, wrapUntrusted} from './prompts.js';
 import {validateShape} from './judge.js';
 
@@ -234,7 +234,7 @@ export class Worker<T> {
       this.emit({kind: 'failed', jobId: offer.jobId, stage: 'triage', reason: message(err)});
       // Still a "no" to the client — it must not wait on a worker that cannot
       // think — but worded as what it is: a fact about this worker.
-      await this.tellClient(offer.jobId, `could not reach its model: ${message(err)}`);
+      await this.tellClient(offer.jobId, explainModelFailure(err) ?? `${MODEL_UNAVAILABLE}: ${message(err)}`);
       return {status: 'failed', stage: 'triage', reason: message(err)};
     }
     // A refusal the policy does not allow is overruled: the worker takes the

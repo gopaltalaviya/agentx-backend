@@ -3,6 +3,7 @@ import {z} from 'zod';
 import {AgentxError, ErrorCode, type JobSpec} from '@agentx/shared';
 import type {AgentxClient, JobSummary} from '@agentx/sdk';
 import {
+  BrainUnavailable,
   UNTRUSTED_OPEN,
   Worker,
   confidence,
@@ -593,9 +594,7 @@ describe('telling the client', () => {
 
     const [outcome] = await worker.tick();
     expect(outcome).toMatchObject({status: 'failed', stage: 'triage'});
-    expect(calls.declined).toEqual([
-      {jobId: '1', reason: expect.stringMatching(/could not reach its model/)},
-    ]);
+    expect(calls.declined).toEqual([{jobId: '1', reason: expect.stringMatching(/^AI model unavailable: /)}]);
   });
 
   it('keeps working when reporting the decline fails', async () => {
@@ -692,5 +691,23 @@ describe('judging only its own part of a goal', () => {
     await worker.tick();
     expect(system).toMatch(/whole\s+goal/i);
     expect(system).toMatch(/other\s+agents/i);
+  });
+});
+
+describe('a model out of quota', () => {
+  it('tells the client in one plain sentence, not the raw provider JSON', async () => {
+    const brain = new FakeBrain();
+    brain.complete = async () => {
+      throw new BrainUnavailable(
+        'fallback(gemini:a→gemini:b)',
+        'outage',
+        'every provider failed: gemini:a(rate_limit: {"error":{"code":429,"status":"RESOURCE_EXHAUSTED"}})',
+      );
+    };
+    const {worker, calls} = build([offer()], brain);
+    await worker.tick();
+    expect(calls.declined).toEqual([
+      {jobId: '1', reason: 'AI model unavailable: its free request quota is used up for now'},
+    ]);
   });
 });

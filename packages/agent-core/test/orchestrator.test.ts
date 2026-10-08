@@ -2,6 +2,7 @@ import {describe, expect, it} from 'vitest';
 import {AgentxError, ErrorCode} from '@agentx/shared';
 import {NotAccepted, type AgentxClient} from '@agentx/sdk';
 import {
+  BrainUnavailable,
   Orchestrator,
   UNTRUSTED_OPEN,
   type Brain,
@@ -43,6 +44,12 @@ class ScriptedBrain implements Brain {
     const name = req.schemaName ?? '';
     const reply = this.replies[name] ?? DEFAULTS[name];
     if (reply === 'throw') throw new Error(`${name} unavailable`);
+    if (reply === 'throw-quota')
+      throw new BrainUnavailable(
+        'fallback(a)',
+        'outage',
+        'every provider failed: a(rate_limit: rate limited)',
+      );
     return {value: req.schema.parse(reply), provider: 'scripted', model: 'scripted', cached: false};
   }
   async available() {
@@ -298,6 +305,12 @@ describe('the branches a live demo actually hits', () => {
       'nothing to hire for: the goal needs the account statement, which was not attached',
     );
     expect(calls.hired).toBe(0);
+  });
+
+  it('says plainly when planning failed because the AI model is out of quota', async () => {
+    const {orchestrator} = build({}, {Plan: 'throw-quota'});
+    const report = await orchestrator.run('goal');
+    expect(report.planError).toBe('AI model unavailable: its free request quota is used up for now');
   });
 
   it('returns a report rather than throwing when planning fails', async () => {

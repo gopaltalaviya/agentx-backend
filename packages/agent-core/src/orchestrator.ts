@@ -2,7 +2,7 @@ import {createHash, randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import {AgentxError, ErrorCode, type JobSpec} from '@agentx/shared';
 import {NotAccepted, type AgentSummary, type AgentxClient} from '@agentx/sdk';
-import type {Brain} from './brain.js';
+import {explainModelFailure, type Brain} from './brain.js';
 import {Judge, validateShape, type Verdict} from './judge.js';
 import {PLANNER_SYSTEM, SELECTOR_SYSTEM, SYNTHESIS_SYSTEM, wrapUntrusted} from './prompts.js';
 
@@ -181,7 +181,7 @@ export class Orchestrator {
     // that could have said which cost a second run to find out.
     let planError: string | undefined;
     const plan = await this.plan(goal, offered).catch((err: unknown) => {
-      planError = err instanceof Error ? err.message : String(err);
+      planError = explainModelFailure(err) ?? (err instanceof Error ? err.message : String(err));
       return null;
     });
     if (!plan || plan.subtasks.length === 0) {
@@ -378,7 +378,7 @@ export class Orchestrator {
         return this.skip({
           ...base,
           status: 'failed',
-          detail: `could not choose an agent: ${err instanceof Error ? err.message : String(err)}`,
+          detail: `could not choose an agent: ${explainModelFailure(err) ?? (err instanceof Error ? err.message : String(err))}`,
         });
       }
       if (!chosen) break;
