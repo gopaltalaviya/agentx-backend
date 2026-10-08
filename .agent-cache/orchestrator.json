@@ -50,7 +50,7 @@
     "promptPreview": "Subtask capability: market-research\n\nCandidates:\n[\n  {\n    \"agentId\": 2,\n    \"price\": \"20000\",\n    \"priceDisplay\": \"0.02",
     "fullPrompt": "Subtask capability: market-research\n\nCandidates:\n[\n  {\n    \"agentId\": 2,\n    \"price\": \"20000\",\n    \"priceDisplay\": \"0.02 MockUSDC\",\n    \"score\": 50,\n    \"completed\": 0,\n    \"failed\": 0,\n    \"capabilities\": [\n      \"market-research\"\n    ]\n  }\n]\n\nWhich one, if any?"
   },
-  "1714f8ae383faa1a0a1f7d9f2d02ce72": {
+  "cf8d9fa755b55f54fb3e8c5418afb300": {
     "value": {
       "accept": true,
       "reason": "The work is substantive and addresses the commissioned task, providing specific information about ETH/USDC liquidity on Monad. It is internally consistent and plausible, and even though it may not be overwhelmingly positive, it is a genuine attempt to answer the question. The rating: adequate.",
@@ -64,7 +64,7 @@
     "promptPreview": "Capability commissioned: market-research\n\nThe task that was commissioned:\n<untrusted-agent-output>\n{\n  \"goal\": \"Research",
     "fullPrompt": "Capability commissioned: market-research\n\nThe task that was commissioned:\n<untrusted-agent-output>\n{\n  \"goal\": \"Research ETH/USDC liquidity on Monad and tell me whether to open a position.\",\n  \"step\": \"1 of 4\"\n}\n</untrusted-agent-output>\n\nThe result the agent returned:\n<untrusted-agent-output>\n{\n  \"summary\": \"Monad's ETH/USDC liquidity is relatively low, making it less appealing for opening a position.\",\n  \"confidence\": 0.7,\n  \"keyFindings\": [\n    \"As of 2023-02-20, the average daily trading volume for ETH/USDC on Monad is $123,456, which is relatively low compared to other exchanges.\",\n    \"The liquidity pool size for ETH/USDC on Monad is $250,000, which is also below average.\",\n    \"The majority of trading activity on Monad is concentrated in the top 5 orders, indicating a lack of depth in the market.\",\n    \"The bid-ask spread for ETH/USDC on Monad is 0.45%, which is higher than the industry average.\"\n  ]\n}\n</untrusted-agent-output>\n\nHas this work earned its payment?"
   },
-  "ab9aff2a6d28589d78e665a3d42a74e1": {
+  "c4be68bbfdb037dde87c505628565561": {
     "value": {
       "accept": true,
       "reason": "The work addresses the actual question, providing specific findings on ETH/USDC liquidity on Monad. The summary is concise and provides a clear indication of whether to open a position. Although it does not provide a definitive answer, it presents a plausible analysis. The rating is: adequate",
@@ -90,7 +90,7 @@
     "promptPreview": "Subtask capability: trade-analysis\n\nCandidates:\n[\n  {\n    \"agentId\": 3,\n    \"price\": \"50000\",\n    \"priceDisplay\": \"0.05 ",
     "fullPrompt": "Subtask capability: trade-analysis\n\nCandidates:\n[\n  {\n    \"agentId\": 3,\n    \"price\": \"50000\",\n    \"priceDisplay\": \"0.05 MockUSDC\",\n    \"score\": 50,\n    \"completed\": 0,\n    \"failed\": 0,\n    \"capabilities\": [\n      \"trade-analysis\"\n    ]\n  }\n]\n\nWhich one, if any?"
   },
-  "8f69b2a0953c849505868f8097552cb8": {
+  "6deaa7ed61c39d7b6efb88d68ae3fe76": {
     "value": {
       "accept": true,
       "reason": "The result addresses the task and provides specific insights about the ETH/USDC liquidity on Monad, highlighting both opportunities and risks. The output is internally consistent, plausible, and substantive. It meets the commission's requirements, and I accept it as adequate.",
@@ -116,7 +116,7 @@
     "promptPreview": "Subtask capability: trade-execution\n\nCandidates:\n[\n  {\n    \"agentId\": 4,\n    \"price\": \"60000\",\n    \"priceDisplay\": \"0.06",
     "fullPrompt": "Subtask capability: trade-execution\n\nCandidates:\n[\n  {\n    \"agentId\": 4,\n    \"price\": \"60000\",\n    \"priceDisplay\": \"0.06 MockUSDC\",\n    \"score\": 50,\n    \"completed\": 0,\n    \"failed\": 0,\n    \"capabilities\": [\n      \"trade-execution\"\n    ]\n  }\n]\n\nWhich one, if any?"
   },
-  "af1da90e2fb484d98cc06e42ae18c0ab": {
+  "2058730db8f30d0325e7829ce8cfb7f2": {
     "value": {
       "accept": true,
       "reason": "The work provides a clear and detailed plan of actions to analyze the ETH/USDC liquidity on Monad. It meets the goal of the commission and is internally consistent and plausible. The rating for this work is: adequate",
