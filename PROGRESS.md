@@ -3,7 +3,7 @@
 > **START HERE every session.** This file is the memory that survives a closed
 > terminal. Read it top to bottom before doing anything else.
 
-- Last updated: **2026-10-07** (Session 33 — hosted live on a VPS + Vercel; every run outcome handled fast and shown in words; 3/3 live runs from the site settled)
+- Last updated: **2026-10-08** (Session 34 — reputation per skill; on-chain review shown on the run record; judges' cap 5/day; daily DB backup; CI on Node 24 actions)
 - Deadline: **2026-10-13, 11:59 PM ET** (verified)
 - Target track: **4 — Trust, Identity & AI Infrastructure** ($30,000)
 - Current state: **v2 live on Monad testnet, end to end, re-verified.** The
@@ -12,8 +12,8 @@
   chain, including a real dispute expired by the keeper after its 1 h
   timeout. Backend and interface have lint, formatting, coverage floors, CI,
   containers, metrics, graceful shutdown and a browser smoke test.
-- Overall: `██████████████████░░` 92% — **110 / 119 tasks** (4 cut, recorded in PLAN), **823 tests green**
-  (184 contracts · 558 backend · 81 interface) + 64 browser tests (14 smoke, 17 accessibility, 9 search, 2 guides, 22 edge) — also run in Firefox, WebKit, iPhone and Android (320 runs)
+- Overall: `██████████████████░░` 92% — **110 / 119 tasks** (4 cut, recorded in PLAN), **857 tests green**
+  (184 contracts · 586 backend · 87 interface) + 72 browser tests — also run in Firefox, WebKit, iPhone and Android (360 runs)
 
 ---
 
@@ -50,7 +50,7 @@
    (Vercel, deploys from `master`); API: `https://api.64-177-41-175.sslip.io` on one
    Vultr VPS (2 vCPU / 4 GB, $250 credit for 30 days — **destroy it after judging**
    or it bills ~$24/month). Files: `deploy/vps/`; steps: [docs/13 §5](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/13-deploy.md#5-a-single-vps-the-live-deployment).
-   SSH: `root@64.177.41.175` with the `agentx_oracle` key, key-only. Hosted agents:
+   SSH: `root@64.177.41.175`, key-only (the key stays on the owner's machine). Hosted agents:
    orchestrator 229, workers 230–232 (`artifacts/hosted-agents.json`, gitignored;
    the judges' key is `env.orchestratorApiKeyForJudges` — submission form only).
    Railway: the unused `agentx` project was deleted on 2026-10-07 (Railway
@@ -165,7 +165,7 @@ NEXT_PUBLIC_API_URL=http://127.0.0.1:18787 npx next build
 E2E_PORT=13200 MOCK_API_PORT=18787 npx playwright test --workers=2   # expect 63 passed
 ```
 
-Expected totals as of 2026-10-07: **184 contracts + 558 backend + 81 interface = 823** (Session 33), plus 64 Playwright tests (14 smoke, 17 axe accessibility, 9 search, 2 guides, 22 edge).
+Expected totals as of 2026-10-08: **184 contracts + 586 backend + 87 interface = 857** (Session 34), plus 72 Playwright tests.
 If a number is lower, something regressed — find out what before building on
 it.
 
@@ -707,6 +707,38 @@ Append-only. Never rewrite a decision — supersede it with a new row.
 ---
 
 ## 📓 Session log
+
+### Session 34 — 2026-10-08 (specialists, not generalists)
+
+- **Judges' caps raised on chain:** the hosted orchestrator's AgentAccount
+  policy is 0.1 MockUSDC per task, **5 per day** (`setPolicy`), its session
+  key budget renewed to 5, and the off-chain `spend_policies` mirror updated.
+  `GET /v1/budget` shows dailyCap 5.
+- **Daily database backup on the VPS:** `deploy/vps/backup.sh` from cron at
+  03:00 UTC, 7 days kept, every dump listed by `pg_restore`. Restore
+  rehearsed into a throwaway container: row counts matched live.
+- **Reputation per skill** (backend `793357d`, site `ec77cae`): one shared
+  score definition (`packages/db/src/reputation.ts`) used by the indexer and
+  by discovery. `GET /v1/agents?capability=X` ranks on the record in X and
+  returns `skill`; `GET /v1/agents/:id` returns `skills`; the orchestrator's
+  selector sees the skill record. Overall figures unchanged. Marketplace shows
+  "score in <skill>"; profiles have a "By skill" table. Live: per-skill equals
+  overall for the single-skill hosted agents, as expected.
+- **Run record proves each review** (site `8525ad4`): under a settled step,
+  "Review written on chain for <agent> — score now N", linked to the
+  settlement transaction; a refused review (FeedbackFailed) is said plainly.
+  Verified in a browser on a live run.
+- **CI:** runners pinned to `ubuntu-24.04`; actions on their Node 24 majors
+  (checkout 7, setup-node 7, pnpm 6, codeql 4, buildx 4, gitleaks 3,
+  upload-artifact 7). Green on all repos.
+- Every new test was seen failing on the old code first. Cached demo on
+  testnet passed (4/4 settled) after the selector change — recordings intact.
+  Note: the demo needs `set -a; . ../agentx-contracts/.env; set +a` first, or
+  it picks the Anvil key and stops before spending.
+- 5-engine e2e: WebKit a11y pages can time out under heavy machine load (a
+  demo running alongside); they pass with `--workers=2`.
+- Deployed: API + indexer images to the VPS (backup taken first); API
+  contract check holds against the live API.
 
 ### Session 33 — 2026-10-07 (hosted live · every ending explained)
 

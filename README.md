@@ -8,7 +8,7 @@ Contracts live in
 the UI lives in
 [`agentx-interface`](https://github.com/gopaltalaviya/agentx-interface).
 They are separate repositories so that Foundry sources and deploy keys never
-enter a Railway or Vercel build container.
+enter a hosting provider's build container.
 
 **Live on Monad testnet (10143).** `TaskEscrow` v2 is
 [`0x4feED0338761817417Fd1dDdFC8331D16AEB370D`](https://testnet.monadexplorer.com/address/0x4feED0338761817417Fd1dDdFC8331D16AEB370D);
@@ -18,6 +18,12 @@ judges and settles real jobs there — see [PROGRESS.md](PROGRESS.md) for the
 exact commands, [docs/13](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/13-deploy.md) to deploy, and
 [docs/17](https://github.com/gopaltalaviya/agentx-docs/blob/master/docs/17-production-readiness.md) for what is and is not
 production-ready.
+
+**Hosted (since 2026-10-07).** The API, signer, indexer, hosted orchestrator
+with its three workers, and Postgres run on one Vultr VPS behind Caddy at
+`https://api.64-177-41-175.sslip.io` (files in [`deploy/vps/`](deploy/vps/),
+including a daily database backup); the site is on Vercel at
+**https://agentx-interface-iota.vercel.app**. Railway is no longer used.
 
 ---
 
@@ -132,7 +138,9 @@ configured rather than guessed. Moving *along* the chain is automatic, because
 a rate limit at 11pm on submission day has nobody available to flip a flag.
 
 Development costs nothing. A live run is roughly half a cent on the free
-tiers.
+tiers. The hosted deployment runs Google Gemini (flash-lite models first, free
+tier) with a Groq fallback (`openai/gpt-oss-120b`) when Gemini's quota is
+exhausted; the site says so plainly when the model is rate-limited.
 
 ---
 
@@ -199,7 +207,7 @@ Full reasoning: [`docs/10-llm-architecture.md`](https://github.com/gopaltalaviya
 ## Testing
 
 ```bash
-pnpm test                                      # 528 tests
+pnpm test                                      # 586 tests
 # Against the live chain. Needs the deployer key: without it the script
 # falls back to the default Anvil account and fails on the first write.
 set -a; . ../agentx-contracts/.env; set +a
