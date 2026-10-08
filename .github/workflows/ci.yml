@@ -16,13 +16,13 @@ jobs:
   # Everything that needs nothing but this repo.
   static:
     name: types · lint · format · secrets · audit
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: {fetch-depth: 0}
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with: {version: 9.12.0}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with: {node-version-file: .nvmrc, cache: pnpm}
 
       - run: pnpm install --frozen-lockfile
@@ -36,7 +36,7 @@ jobs:
       # skipped with --no-verify — and gitleaks over the WHOLE history, which
       # the hook, looking at one commit, cannot see.
       - run: node scripts/check-no-secrets.mjs
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@v3
         env: {GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'}
 
       # Production dependencies only, high severity and above: a moderate
@@ -45,7 +45,7 @@ jobs:
 
   test:
     name: tests · coverage
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     # The suite needs a database, and its chain config comes from the contracts
     # repo — addresses and protocol parameters live there as the single source
@@ -63,7 +63,7 @@ jobs:
           --health-timeout 5s --health-retries 10
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: {path: agentx-backend}
 
       # Cross-repo checkout. `github.token` is enough once both repos are
@@ -72,20 +72,20 @@ jobs:
       # This FAILS if the checkout does. It used to `continue-on-error` and
       # skip the suite with a warning — so CI went green having run no tests,
       # which is worse than red: it says "tested" about code nobody tested.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: gopaltalaviya/agentx-contracts
           path: agentx-contracts
           token: ${{ secrets.CONTRACTS_TOKEN || github.token }}
       # docs/15-api.md lives there; a test checks it against the served routes.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: gopaltalaviya/agentx-docs
           path: agentx-docs
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with: {version: 9.12.0}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: agentx-backend/.nvmrc
           cache: pnpm
@@ -113,15 +113,15 @@ jobs:
 
   images:
     name: images
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: static
     strategy:
       matrix:
         service: ['@agentx/api', '@agentx/signer', '@agentx/indexer']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: {path: agentx-backend}
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       # From this repo alone, exactly as a hosted build (Railway) does it: the
       # chain facts come from chain/, which the tests job checks for drift.
       - name: build ${{ matrix.service }}
