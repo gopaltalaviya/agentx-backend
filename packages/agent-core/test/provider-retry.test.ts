@@ -1,6 +1,6 @@
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import {z} from 'zod';
-import {BrainUnavailable, ClaudeBrain, GeminiBrain} from '../src/index.js';
+import {BrainUnavailable, ClaudeBrain, GeminiBrain, GroqBrain} from '../src/index.js';
 
 /**
  * Gemini answers 503 "This model is currently experiencing high demand.
@@ -185,5 +185,38 @@ describe('Claude cut off at its token limit', () => {
     const err = await brain.complete(req).catch((e) => e);
     expect(err).toBeInstanceOf(BrainUnavailable);
     expect((err as Error).message).toMatch(/token limit/);
+  });
+});
+
+/**
+ * Groq's strict JSON mode refuses any schema with an optional field ("required
+ * is required to be supplied and to be an array including every key"), and the
+ * triage answer has one (`blocker`). Every Groq call failed with a 400, live,
+ * the first time Groq was tried (2026-10-08). Strict only when it can be;
+ * the answer is validated against the schema either way.
+ */
+describe('Groq and optional fields', () => {
+  const capture = () => {
+    const bodies: {response_format: {json_schema: {strict: boolean}}}[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_u, init) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({choices: [{message: {content: '{"steps":["a"]}'}}]}), {
+        status: 200,
+      });
+    });
+    return bodies;
+  };
+
+  it('asks for strict JSON when every field is required', async () => {
+    const bodies = capture();
+    await new GroqBrain('m', 'key').complete(req);
+    expect(bodies[0]!.response_format.json_schema.strict).toBe(true);
+  });
+
+  it('does not ask for strict JSON when a field is optional', async () => {
+    const bodies = capture();
+    const Opt = z.object({steps: z.array(z.string()), note: z.string().optional()});
+    await new GroqBrain('m', 'key').complete({...req, schema: Opt});
+    expect(bodies[0]!.response_format.json_schema.strict).toBe(false);
   });
 });

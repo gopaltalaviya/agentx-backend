@@ -38,7 +38,9 @@ export class GroqBrain extends JsonHttpBrain {
         ],
         response_format: {
           type: 'json_schema',
-          json_schema: {name: req.schemaName, schema: jsonSchema, strict: true},
+          // Strict mode refuses a schema with any optional field; the answer
+          // is validated against the schema either way.
+          json_schema: {name: req.schemaName, schema: jsonSchema, strict: allRequired(jsonSchema)},
         },
       },
     };
@@ -48,4 +50,22 @@ export class GroqBrain extends JsonHttpBrain {
     const p = payload as {choices?: {message?: {content?: string}}[]};
     return p.choices?.[0]?.message?.content ?? null;
   }
+}
+
+/** Does every object in the schema list all its properties as required? (Groq strict mode needs it.) */
+function allRequired(schema: unknown): boolean {
+  if (!schema || typeof schema !== 'object') return true;
+  const s = schema as {properties?: Record<string, unknown>; required?: string[]; items?: unknown};
+  if (s.properties) {
+    const keys = Object.keys(s.properties);
+    const req = new Set(s.required ?? []);
+    if (!keys.every((k) => req.has(k))) return false;
+    if (!keys.every((k) => allRequired(s.properties![k]))) return false;
+  }
+  if (s.items && !allRequired(s.items)) return false;
+  for (const k of ['anyOf', 'oneOf', 'allOf'] as const) {
+    const list = (schema as Record<string, unknown>)[k];
+    if (Array.isArray(list) && !list.every(allRequired)) return false;
+  }
+  return true;
 }
