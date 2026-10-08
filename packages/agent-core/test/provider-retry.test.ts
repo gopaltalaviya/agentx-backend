@@ -220,3 +220,37 @@ describe('Groq and optional fields', () => {
     expect(bodies[0]!.response_format.json_schema.strict).toBe(false);
   });
 });
+
+/**
+ * Groq's gpt-oss models reason before they answer, and the reasoning counts
+ * against max_tokens. A worker's 400-token triage came back EMPTY on the live
+ * server ("json_validate_failed", failed_generation: "") — the model spent the
+ * budget thinking. Same cure as Gemini's thinking models: headroom, and the
+ * caller's effort passed on so a short decision thinks briefly.
+ */
+describe('Groq reasoning models', () => {
+  const capture = () => {
+    const bodies: {max_tokens: number; reasoning_effort?: string}[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_u, init) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({choices: [{message: {content: '{"steps":["a"]}'}}]}), {
+        status: 200,
+      });
+    });
+    return bodies;
+  };
+
+  it('gives a reasoning model headroom above a small budget, and passes the effort', async () => {
+    const bodies = capture();
+    await new GroqBrain('openai/gpt-oss-120b', 'key').complete({...req, maxTokens: 400, effort: 'low'});
+    expect(bodies[0]!.max_tokens).toBeGreaterThanOrEqual(4_096);
+    expect(bodies[0]!.reasoning_effort).toBe('low');
+  });
+
+  it('leaves a non-reasoning model as asked', async () => {
+    const bodies = capture();
+    await new GroqBrain('llama-3.3-70b-versatile', 'key').complete({...req, maxTokens: 400});
+    expect(bodies[0]!.max_tokens).toBe(400);
+    expect(bodies[0]!.reasoning_effort).toBeUndefined();
+  });
+});

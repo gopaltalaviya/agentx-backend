@@ -31,7 +31,10 @@ export class GroqBrain extends JsonHttpBrain {
       headers: {authorization: `Bearer ${this.apiKey}`},
       body: {
         model: this.model,
-        max_tokens: req.maxTokens ?? 2_000,
+        // A reasoning model spends tokens thinking before it answers, and they
+        // count against max_tokens: a 400-token triage came back empty, live.
+        max_tokens: reasons(this.model) ? Math.max(req.maxTokens ?? 2_000, 4_096) : (req.maxTokens ?? 2_000),
+        ...(reasons(this.model) ? {reasoning_effort: req.effort ?? 'medium'} : {}),
         messages: [
           {role: 'system', content: req.system},
           {role: 'user', content: req.prompt},
@@ -68,4 +71,9 @@ function allRequired(schema: unknown): boolean {
     if (Array.isArray(list) && !list.every(allRequired)) return false;
   }
   return true;
+}
+
+/** Groq's reasoning models (gpt-oss, qwen3) think before they answer. */
+function reasons(model: string): boolean {
+  return /gpt-oss|qwen3/i.test(model);
 }
