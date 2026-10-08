@@ -475,8 +475,10 @@ describe('a daily run cap per orchestrator', () => {
       const a = await register();
       const start = (key: string) =>
         capped.inject({method: 'POST', url: '/v1/runs', headers: auth(key), payload: {goal: 'a goal'}});
-      expect((await start(a.apiKey)).statusCode).toBe(202);
-      expect((await start(a.apiKey)).statusCode).toBe(202);
+      const first = await start(a.apiKey);
+      const second = await start(a.apiKey);
+      expect(first.statusCode).toBe(202);
+      expect(second.statusCode).toBe(202);
       const third = await start(a.apiKey);
       expect(third.statusCode).toBe(429);
       expect(third.json()).toMatchObject({code: 'RATE_LIMITED'});
@@ -496,7 +498,12 @@ describe('a daily run cap per orchestrator', () => {
           },
         })
       ).json() as {apiKey: string};
-      expect((await start(other.apiKey)).statusCode).toBe(202);
+      const fourth = await start(other.apiKey);
+      expect(fourth.statusCode).toBe(202);
+      // Every run started here must END before the next test truncates the
+      // tables: a run still writing its events deadlocked that TRUNCATE (CI,
+      // 2026-10-08, "deadlock detected").
+      for (const r of [first, second, fourth]) await settle(r.json().runId);
     } finally {
       await capped.close();
     }
@@ -504,6 +511,7 @@ describe('a daily run cap per orchestrator', () => {
 
   it('is off by default', async () => {
     const {apiKey} = await register();
+    const started: string[] = [];
     for (let i = 0; i < 4; i++) {
       const res = await app.inject({
         method: 'POST',
@@ -512,6 +520,9 @@ describe('a daily run cap per orchestrator', () => {
         payload: {goal: 'a goal'},
       });
       expect(res.statusCode).toBe(202);
+      started.push(res.json().runId);
     }
+    // Let them finish, for the same reason as above.
+    for (const id of started) await settle(id);
   });
 });
