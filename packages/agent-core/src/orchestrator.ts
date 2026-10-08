@@ -51,6 +51,31 @@ export const Plan = z.object({
 });
 export type Plan = z.infer<typeof Plan>;
 
+/**
+ * A value the planner wrote to stand for an earlier step's result —
+ * `"<output of subtask 0>"`, `"{{result of step 1}}"` — rather than data.
+ * The whole string must be one bracketed reference to a result.
+ */
+const PLACEHOLDER = /^\s*(?:<[^<>]*>|\{\{[^{}]*\}\}|\[[^[\]]*\])\s*$/;
+const REFERS_TO_RESULT = /\b(?:output|result|subtask|step|previous)\b/i;
+/** `"{{0}}"`: template syntax for a step index (live, Groq). A bare `[3]` may be data, so it stays. */
+const STEP_INDEX = /^\s*\{\{\s*\d+\s*\}\}\s*$/;
+
+/**
+ * The input without placeholders, for a step that receives the real result
+ * as `previousResult`. Live (Groq, 2026-10-08): the planner wrote
+ * `liquidityData: "<output of subtask 0>"` beside the real result, and the
+ * worker declined for lack of data it had been given.
+ */
+function withoutPlaceholders(input: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(input).filter(
+      ([, v]) =>
+        !(typeof v === 'string' && ((PLACEHOLDER.test(v) && REFERS_TO_RESULT.test(v)) || STEP_INDEX.test(v))),
+    ),
+  );
+}
+
 export const Selection = z.object({
   agentId: z.number().int().nullable().describe('null if no candidate is worth hiring'),
   reason: z.string().min(1).max(300),
@@ -260,7 +285,7 @@ export class Orchestrator {
             // untrusted regardless.
             goal,
             step: `${index + 1} of ${plan.subtasks.length}`,
-            ...subtask.input,
+            ...(upstream?.result ? withoutPlaceholders(subtask.input) : subtask.input),
             // The upstream result travels as input. It is another agent's
             // output, so the worker will wrap it as untrusted in turn.
             ...(upstream?.result ? {previousResult: upstream.result} : {}),

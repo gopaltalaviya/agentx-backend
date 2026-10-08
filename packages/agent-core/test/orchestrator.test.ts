@@ -597,6 +597,92 @@ describe('dependent subtasks', () => {
     expect(specs).toHaveLength(2);
     expect((specs[1] as {input: Record<string, unknown>}).input['previousResult']).toBeDefined();
   });
+
+  /**
+   * Live, 2026-10-08 (Groq as the only model): the planner wrote
+   * `liquidityData: "<output of subtask 0>"` beside the real result. The
+   * worker read the placeholder, not `previousResult`, and declined for lack
+   * of data it had been given.
+   */
+  it('drops a placeholder the planner wrote for the result it is passing', async () => {
+    const specs: {input: Record<string, unknown>}[] = [];
+    const {orchestrator} = build(
+      {
+        hire: async (args: {spec: {input: Record<string, unknown>}}) => {
+          specs.push(args.spec);
+          return {
+            jobId: String(specs.length),
+            state: 'created',
+            path: 'escrow',
+            amount: '20000',
+            amountDisplay: '0.02 USDC',
+            txHash: '0x',
+            explorerUrl: 'u',
+          };
+        },
+      },
+      {
+        Plan: {
+          subtasks: [
+            {capability: 'market-research', input: {question: 'depth?'}},
+            {
+              capability: 'market-research',
+              input: {
+                liquidityData: '<output of subtask 0>',
+                research: '{{result of step 1}}',
+                // Live, the second Groq run: a bare step index.
+                researchResult: '{{0}}',
+                count: '[3]',
+                pair: 'ETH/USDC',
+                note: 'use <b>bold</b> sparingly',
+              },
+              dependsOn: 0,
+            },
+          ],
+          reasoning: 'the second needs the first',
+        },
+      },
+    );
+
+    await orchestrator.run('goal');
+    const input = specs[1]!.input;
+    expect(input['previousResult']).toBeDefined();
+    expect(input).not.toHaveProperty('liquidityData');
+    expect(input).not.toHaveProperty('research');
+    expect(input).not.toHaveProperty('researchResult');
+    // Real values stay, including ones that merely contain angle brackets.
+    expect(input['pair']).toBe('ETH/USDC');
+    expect(input['count']).toBe('[3]');
+    expect(input['note']).toBe('use <b>bold</b> sparingly');
+  });
+
+  it('keeps every input when there is no upstream result to replace it', async () => {
+    const specs: {input: Record<string, unknown>}[] = [];
+    const {orchestrator} = build(
+      {
+        hire: async (args: {spec: {input: Record<string, unknown>}}) => {
+          specs.push(args.spec);
+          return {
+            jobId: String(specs.length),
+            state: 'created',
+            path: 'escrow',
+            amount: '20000',
+            amountDisplay: '0.02 USDC',
+            txHash: '0x',
+            explorerUrl: 'u',
+          };
+        },
+      },
+      {
+        Plan: {
+          subtasks: [{capability: 'market-research', input: {template: '<output of subtask 0>'}}],
+          reasoning: 'one step',
+        },
+      },
+    );
+    await orchestrator.run('goal');
+    expect(specs[0]!.input['template']).toBe('<output of subtask 0>');
+  });
 });
 
 describe('what reaches a model', () => {
