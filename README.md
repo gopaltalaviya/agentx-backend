@@ -207,7 +207,7 @@ Full reasoning: [`docs/10-llm-architecture.md`](https://github.com/gopaltalaviya
 ## Testing
 
 ```bash
-pnpm test                                      # 586 tests
+pnpm test                                      # 588 tests
 # Against the live chain. Needs the deployer key: without it the script
 # falls back to the default Anvil account and fails on the first write.
 set -a; . ../agentx-contracts/.env; set +a

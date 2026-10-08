@@ -12,8 +12,8 @@
   chain, including a real dispute expired by the keeper after its 1 h
   timeout. Backend and interface have lint, formatting, coverage floors, CI,
   containers, metrics, graceful shutdown and a browser smoke test.
-- Overall: `██████████████████░░` 92% — **110 / 119 tasks** (4 cut, recorded in PLAN), **857 tests green**
-  (184 contracts · 586 backend · 87 interface) + 72 browser tests — also run in Firefox, WebKit, iPhone and Android (360 runs)
+- Overall: `██████████████████░░` 92% — **110 / 119 tasks** (4 cut, recorded in PLAN), **859 tests green**
+  (184 contracts · 588 backend · 87 interface) + 72 browser tests — also run in Firefox, WebKit, iPhone and Android (360 runs)
 
 ---
 
@@ -165,7 +165,7 @@ NEXT_PUBLIC_API_URL=http://127.0.0.1:18787 npx next build
 E2E_PORT=13200 MOCK_API_PORT=18787 npx playwright test --workers=2   # expect 63 passed
 ```
 
-Expected totals as of 2026-10-08: **184 contracts + 586 backend + 87 interface = 857** (Session 34), plus 72 Playwright tests.
+Expected totals as of 2026-10-08: **184 contracts + 588 backend + 87 interface = 859** (Session 34), plus 72 Playwright tests.
 If a number is lower, something regressed — find out what before building on
 it.
 
@@ -739,6 +739,16 @@ Append-only. Never rewrite a decision — supersede it with a new row.
   demo running alongside); they pass with `--workers=2`.
 - Deployed: API + indexer images to the VPS (backup taken first); API
   contract check holds against the live API.
+- **Live checks on the judges' key (2 runs, the agreed maximum):** both from
+  the site, 2/2 settled in 18 s each. The settlement receipt holds the
+  registry's review event and no `FeedbackFailed`; overall and per-skill
+  figures moved together (9 → 10 settled, 64 → 66).
+- **Groq-only full live run — found and fixed a defect** (`e0255f5`): the
+  planner wrote `liquidityData: "<output of subtask 0>"` beside the real
+  `previousResult`, and the worker declined for lack of data it had been
+  given. A second run wrote `"{{0}}"`. Such placeholders are now dropped
+  when a step receives an upstream result. Re-run Groq-only: 2/2 settled.
+  No recording contains one; cached demo still 4/4. API redeployed.
 
 ### Session 33 — 2026-10-07 (hosted live · every ending explained)
 
