@@ -761,6 +761,17 @@ Append-only. Never rewrite a decision — supersede it with a new row.
   AGENTX itself is working, with links to the last delivered run and the
   recorded video; a run stopped by the model is titled "not a protocol
   failure"; `/status` shows an AI model card apart from the components.
+- **Groq as a second provider** (2026-10-08, free key in `agentx-backend/.env`):
+  chain `gemini-flash-lite-latest → gemini-3.5-flash-lite → groq →
+  gemini-3.6-flash → gemini`. Wiring it found four defects, each fixed with a
+  test seen failing first: Groq strict JSON refuses optional fields (strict
+  only when all are required); gpt-oss reasons inside max_tokens and returned
+  empty triage (headroom + effort); "outside my capability" is never true for
+  an offer (offers are filtered by capability — overruled in code); the judge
+  marked a research step down for lacking the other agents' parts (judged
+  against its own step now; re-judged the disputed result: accepted 3/3).
+  Today's testing used the judges' key's 20 runs/day; slots free from
+  09:15 UTC, so further live tests wait.
 - **Fixed 2026-10-08:** the recorded model sessions in `.agent-cache/` are now
   committed, so the cached demo runs from a clone with no AI key (25/25 checks
   on testnet, 2026-10-08). The prompt edits had orphaned the triage
