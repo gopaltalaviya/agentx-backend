@@ -754,6 +754,13 @@ Append-only. Never rewrite a decision — supersede it with a new row.
   to spread the load. **The real fix is the owner's**: billing on the Gemini
   key (pay-as-you-go, cents per run) or a second provider key (Groq).
   `RUNS_PER_DAY` is 20.
+- **When the free AI quota runs out, the site says so** (2026-10-08): a model
+  failure reads "AI model unavailable: its free request quota is used up for
+  now" instead of provider JSON; `/v1/status` gains `model` (from run
+  outcomes); `/demo` warns before Run that the AI model is out of quota and
+  AGENTX itself is working, with links to the last delivered run and the
+  recorded video; a run stopped by the model is titled "not a protocol
+  failure"; `/status` shows an AI model card apart from the components.
 - **Found, not fixed:** `.agent-cache/` (the recorded model sessions) is
   gitignored, so `AGENT_MODE=cached` cannot work from a clone. The submission
   now tells judges to use the hosted site, or `AGENT_MODE=live` with a model.
