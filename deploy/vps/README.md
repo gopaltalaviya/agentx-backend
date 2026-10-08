@@ -17,3 +17,24 @@ docker compose -f docker-compose.full.yml -f docker-compose.vps.yml --profile ho
 The server's `.env` holds `SIGNER_TOKEN`, `API_HOST` (e.g. `api.1-2-3-4.sslip.io`),
 `CORS_ORIGINS` (the site's URL) and the hosted-run variables of §3b. It is
 never committed.
+
+## Backups
+
+`backup.sh` dumps the database (`pg_dump -Fc`) to `~/agentx/backups/`, checks the
+dump can be listed, and keeps 7 days. Installed with cron, daily at 03:00 UTC:
+
+```bash
+0 3 * * * /root/agentx/backup.sh >> /root/agentx/backups/backup.log 2>&1
+```
+
+Restore into a fresh database before the services start (the indexer keeps
+its cursor and catches up):
+
+```bash
+docker compose -f docker-compose.full.yml -f docker-compose.vps.yml up -d postgres
+docker exec -i agentx-full-postgres-1 pg_restore -U agentx -d agentx --no-owner < backups/agentx-YYYYMMDD-HHMM.dump
+docker compose -f docker-compose.full.yml -f docker-compose.vps.yml --profile hosted up -d --no-build
+```
+
+Rehearsed 2026-10-08: a dump restored into a throwaway container matched the
+live database row for row (agents, jobs, runs, API keys).
