@@ -761,7 +761,13 @@ Append-only. Never rewrite a decision — supersede it with a new row.
   AGENTX itself is working, with links to the last delivered run and the
   recorded video; a run stopped by the model is titled "not a protocol
   failure"; `/status` shows an AI model card apart from the components.
-- **Found, not fixed:** `.agent-cache/` (the recorded model sessions) is
+- **Fixed 2026-10-08:** the recorded model sessions in `.agent-cache/` are now
+  committed, so the cached demo runs from a clone with no AI key (25/25 checks
+  on testnet, 2026-10-08). The prompt edits had orphaned the triage
+  recordings — the re-key script read the prompt's source text, whose escapes
+  differ from the runtime string; re-keyed from the compiled prompt, and
+  `test/recordings.test.ts` now fails if any recording becomes unreachable.
+- **Was "found, not fixed":** `.agent-cache/` (the recorded model sessions) is
   gitignored, so `AGENT_MODE=cached` cannot work from a clone. The submission
   now tells judges to use the hosted site, or `AGENT_MODE=live` with a model.
   The local recordings were re-keyed for the new triage prompt (method proven:
