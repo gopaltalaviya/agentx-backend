@@ -5,6 +5,7 @@ import {agents, agentCapabilities, agentStats, apiKeys, spendPolicies, type Db} 
 import {AgentxError, BaseUnits, Capability, ErrorCode} from '@agentx/shared';
 import type {ChainConfig} from '@agentx/config';
 import {authenticate, generateApiKey, hashApiKey, resolveChainId} from '../auth.js';
+import {noHistory, skillStats, type SkillStat} from '../skills.js';
 import {rank, RANK_MODES} from '../ranking.js';
 import type {AgentRow} from '../types.js';
 import type {IdentityReader} from '../chain-reads.js';
@@ -110,13 +111,38 @@ export async function registerAgentRoutes(app: FastifyInstance, deps: RouteDeps)
 
     const filtered = q.capability ? rows.filter((r) => r.capabilities.includes(q.capability!)) : rows;
 
-    const ranked = rank(filtered, q.rank).slice(0, q.limit);
+    // Asked for one skill: rank on the record IN that skill, not the blend of
+    // everything the agent offers. The overall figures are returned unchanged.
+    let skill: Map<number, SkillStat> | null = null;
+    if (q.capability) {
+      const cap = q.capability;
+      const all = await skillStats(
+        db,
+        chainId,
+        filtered.map((r) => r.id),
+        floorOf(chain),
+      );
+      skill = new Map(
+        filtered.map((r) => [r.id, all.get(r.id)?.find((s) => s.capability === cap) ?? noHistory(cap)]),
+      );
+    }
+    const forRanking = skill
+      ? filtered.map((r) => {
+          const s = skill.get(r.id)!;
+          return {...r, score: s.score, completed: s.completed, failed: s.failed};
+        })
+      : filtered;
+    const byId = new Map(filtered.map((r) => [r.id, r]));
+    const ranked = rank(forRanking, q.rank).slice(0, q.limit);
 
     return {
       chainId,
       network: chain.name,
       rank: q.rank,
-      agents: ranked.map((a) => present(a, chain)),
+      agents: ranked.map((a) => ({
+        ...present(byId.get(a.id)!, chain),
+        ...(skill ? {skill: skill.get(a.id)!} : {}),
+      })),
     };
   });
 
@@ -161,7 +187,13 @@ export async function registerAgentRoutes(app: FastifyInstance, deps: RouteDeps)
     const chain = chains[agent.chainId];
     if (!chain) throw new AgentxError(ErrorCode.CHAIN_NOT_ENABLED, `chain ${agent.chainId} is not enabled`);
 
-    return present({...agent, capabilities: caps.map((c) => c.capability)}, chain);
+    // Every skill it offers, and any it has a record in, with that record.
+    const record = (await skillStats(db, agent.chainId, [agent.id], floorOf(chain))).get(agent.id) ?? [];
+    const names = [...new Set([...caps.map((c) => c.capability), ...record.map((s) => s.capability)])].sort();
+    return {
+      ...present({...agent, capabilities: caps.map((c) => c.capability)}, chain),
+      skills: names.map((n) => record.find((s) => s.capability === n) ?? noHistory(n)),
+    };
   });
 
   /**
@@ -287,6 +319,11 @@ export async function registerAgentRoutes(app: FastifyInstance, deps: RouteDeps)
   });
 
   app.get('/v1/rank-modes', async () => ({modes: RANK_MODES}));
+}
+
+/** The chain's confidence floor: how much evidence a score needs before it moves fully. */
+function floorOf(chain: ChainConfig): number {
+  return Number(chain.params['confidenceFloor'] ?? 25);
 }
 
 /** Every response states its chain, so a client never has to infer it. */

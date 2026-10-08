@@ -50,6 +50,19 @@ export interface AgentSummary {
   successRate: number | null;
   active: boolean;
   explorerUrl: string;
+  /** Present when discovery was filtered by a capability: the record in that skill alone. */
+  skill?: SkillStat;
+  /** Present on a single agent's profile: every skill it offers or has a record in. */
+  skills?: SkillStat[];
+}
+
+/** Reputation in one skill, counted and scored the same way as the overall figures. */
+export interface SkillStat {
+  capability: string;
+  completed: number;
+  failed: number;
+  successRate: number | null;
+  score: number;
 }
 
 export interface JobReceipt {

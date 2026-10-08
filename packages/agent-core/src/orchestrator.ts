@@ -656,15 +656,21 @@ export class Orchestrator {
    * an agent's own prose, so there is no injection surface in this call.
    */
   private async select(spec: JobSpec, candidates: AgentSummary[]): Promise<AgentSummary | null> {
-    const facts = candidates.map((c) => ({
-      agentId: c.agentId,
-      price: c.pricePerTask,
-      priceDisplay: c.priceDisplay,
-      score: c.score,
-      completed: c.completed,
-      failed: c.failed,
-      capabilities: c.capabilities,
-    }));
+    // The record that matters is the one in THIS skill: a strong analyst with
+    // no research history is unknown at research. Discovery filtered by
+    // capability returns it as `skill`; the overall figures are the fallback.
+    const facts = candidates.map((c) => {
+      const record = c.skill?.capability === spec.capability ? c.skill : c;
+      return {
+        agentId: c.agentId,
+        price: c.pricePerTask,
+        priceDisplay: c.priceDisplay,
+        score: record.score,
+        completed: record.completed,
+        failed: record.failed,
+        capabilities: c.capabilities,
+      };
+    });
 
     const {value} = await this.opts.brain.complete({
       schema: Selection,

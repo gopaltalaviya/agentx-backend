@@ -425,6 +425,34 @@ describe('spending discipline', () => {
   });
 });
 
+describe('hiring by skill', () => {
+  /** The selector must judge a candidate on its record in THIS skill, not its blended score. */
+  function candidatesSeen(brain: ScriptedBrain) {
+    const prompt = brain.seen.find((r) => r.schemaName === 'Selection')!.prompt;
+    return JSON.parse(prompt.slice(prompt.indexOf('['), prompt.lastIndexOf(']') + 1));
+  }
+
+  it('shows the selector the record in the requested skill', async () => {
+    const {orchestrator, brain} = build({
+      discover: async () => [
+        {
+          ...CANDIDATE,
+          capabilities: ['market-research', 'trade-analysis'],
+          skill: {capability: 'market-research', completed: 0, failed: 0, successRate: null, score: 50},
+        },
+      ],
+    });
+    await orchestrator.run('goal');
+    expect(candidatesSeen(brain)[0]).toMatchObject({score: 50, completed: 0, failed: 0});
+  });
+
+  it('falls back to the overall record when the API gives no skill figures', async () => {
+    const {orchestrator, brain} = build();
+    await orchestrator.run('goal');
+    expect(candidatesSeen(brain)[0]).toMatchObject({score: 72, completed: 14, failed: 1});
+  });
+});
+
 describe('what the worker is told', () => {
   /**
    * The defect the first live runs ended on. A planner reasonably emits an

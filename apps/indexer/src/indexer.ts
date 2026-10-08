@@ -1,9 +1,19 @@
 import {createPublicClient, hexToString, http, type Abi, type Log, type PublicClient} from 'viem';
 import {and, eq, gte, inArray, isNotNull, isNull, lte, sql} from 'drizzle-orm';
 import type {ChainConfig} from '@agentx/config';
-import {type Db, indexerCursor, jobEvents, jobs, agents, agentStats, payments} from '@agentx/db';
+import {
+  type Db,
+  OUTCOME_SUCCESS,
+  WORKER_FAULT,
+  indexerCursor,
+  jobEvents,
+  jobs,
+  agents,
+  agentStats,
+  payments,
+  reputationScoreSql,
+} from '@agentx/db';
 
-/** Refund reasons the contract records as the worker's failure (TaskEscrow `_refund` callers). */
 /**
  * A decoded event field as text. Fields arrive as `unknown`; `String()` on an
  * object writes "[object Object]" into a column instead of failing, so only
@@ -16,9 +26,6 @@ function text(v: unknown, fallback = ''): string {
 }
 
 /** `ITaskEscrow.Outcome.SUCCESS`. Only this outcome earns reputation. */
-const OUTCOME_SUCCESS = 0;
-
-const WORKER_FAULT = new Set(['undelivered', 'dispute']);
 
 /** `JobRefunded.reason` is a left-aligned bytes32 string. */
 function refundReason(raw: unknown): string {
@@ -541,12 +548,9 @@ export class Indexer {
     // The floor is per chain: more evidence is demanded where a reputation is
     // worth more to fake. This was a literal 25, so mainnet's 50 did nothing.
     const floor = Number(this.deps.chain.params['confidenceFloor'] ?? 25);
+    // The formula is shared with discovery's per-skill scores (@agentx/db).
     await db.execute(sql`
-      UPDATE agent_stats SET score = GREATEST(0, LEAST(100, (
-        50 + ((
-          (100 * (completed + 1) / (completed + failed + 2)) - 50
-        ) * LEAST(100, (completed + failed) * 100 / ${floor})) / 100
-      )::int))
+      UPDATE agent_stats SET score = ${reputationScoreSql(sql`completed`, sql`failed`, floor)}
       WHERE agent_id = ${agentId}
     `);
   }
