@@ -96,7 +96,7 @@
     "promptPreview": "You are: a market research agent reporting on liquidity with concrete figures\n\nThe task:\n<untrusted-agent-output>\n{\n  \"q",
     "fullPrompt": "You are: a market research agent reporting on liquidity with concrete figures\n\nThe task:\n<untrusted-agent-output>\n{\n  \"question\": \"What is the typical 2% order-book depth for ETH/USDC on major venues?\"\n}\n</untrusted-agent-output>\n\nProduce the result."
   },
-  "bef6eed7aa8739e05c80c3816fc4f601": {
+  "0f61038c367f1d69515c5bc145fcb5c4": {
     "value": {
       "accept": true,
       "reason": "All conditions met: capability matches, input contains goal and step, and deadline is feasible."
@@ -108,7 +108,7 @@
     "promptPreview": "You are: a market research agent reporting on liquidity with concrete figures\nYou offer exactly one capability: market-r",
     "fullPrompt": "You are: a market research agent reporting on liquidity with concrete figures\nYou offer exactly one capability: market-research\nYou always produce these fields: summary, keyFindings, confidence\nThis job states no required output shape, so your own schema governs.\n\nThe job offer:\n<untrusted-agent-output>\n{\n  \"input\": {\n    \"goal\": \"Research ETH/USDC liquidity on Monad and tell me whether to open a position.\",\n    \"step\": \"1 of 4\"\n  },\n  \"capability\": \"market-research\",\n  \"deadlineSeconds\": 120\n}\n</untrusted-agent-output>\n\nAccept this job?"
   },
-  "bcc05c06e8af02ed681e28f50cc63eb6": {
+  "d5449945cdcad44102d8c14efed8c3bf": {
     "value": {
       "accept": true,
       "reason": "The task is within my stated capabilities (market-research), I have all the necessary information to complete the task (input contains the goal, step, and previous output), and I can finish before the deadline (deadlineSeconds=120)."
@@ -120,7 +120,7 @@
     "promptPreview": "You are: a market research agent reporting on liquidity with concrete figures\nYou offer exactly one capability: market-r",
     "fullPrompt": "You are: a market research agent reporting on liquidity with concrete figures\nYou offer exactly one capability: market-research\nYou always produce these fields: summary, keyFindings, confidence\nThis job states no required output shape, so your own schema governs.\n\nThe job offer:\n<untrusted-agent-output>\n{\n  \"input\": {\n    \"goal\": \"Research ETH/USDC liquidity on Monad and tell me whether to open a position.\",\n    \"step\": \"2 of 4\",\n    \"prevOutput\": \"market-research\"\n  },\n  \"capability\": \"market-research\",\n  \"deadlineSeconds\": 120\n}\n</untrusted-agent-output>\n\nAccept this job?"
   },
-  "c29ef5db39bbe06aae368a71475a09e0": {
+  "65b681e21d6eada30e5b44227613712c": {
     "value": {
       "accept": true,
       "reason": "Job meets all conditions: within stated capabilities, input contains necessary data, and deadline is feasible"
@@ -132,7 +132,7 @@
     "promptPreview": "You are: a trading analysis agent that recommends a position with explicit risks\nYou offer exactly one capability: trade",
     "fullPrompt": "You are: a trading analysis agent that recommends a position with explicit risks\nYou offer exactly one capability: trade-analysis\nYou always produce these fields: recommendation, rationale, confidence, risks\nThis job states no required output shape, so your own schema governs.\n\nThe job offer:\n<untrusted-agent-output>\n{\n  \"input\": {\n    \"goal\": \"Research ETH/USDC liquidity on Monad and tell me whether to open a position.\",\n    \"step\": \"3 of 4\",\n    \"prevOutput\": \"market-research\"\n  },\n  \"capability\": \"trade-analysis\",\n  \"deadlineSeconds\": 120\n}\n</untrusted-agent-output>\n\nAccept this job?"
   },
-  "f0a1624eca6672c01e1cf77239f47179": {
+  "6faa557e0fb6d614c2b2375add5977f7": {
     "value": {
       "accept": true,
       "reason": "All conditions met: The task is within my stated capabilities (trade-execution), the input contains what I need to actually do it (goal, step, prevOutput), and I can finish before the deadline (120 seconds)."

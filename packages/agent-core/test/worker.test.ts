@@ -650,16 +650,33 @@ describe('the decline policy', () => {
     expect(calls.accepted).toEqual(['1']);
   });
 
-  it.each(['client_only_data', 'impossible_action', 'outside_capability'])(
-    'declines for a real blocker: %s',
-    async (blocker) => {
-      const brain = new FakeBrain({triage: {accept: false, reason: `because ${blocker}`, blocker}});
-      const {worker, calls} = build([offer()], brain);
-      const [outcome] = await worker.tick();
-      expect(outcome).toMatchObject({status: 'declined', reason: `because ${blocker}`});
-      expect(calls.declined).toHaveLength(1);
-    },
-  );
+  /**
+   * Offers are filtered to the worker's own capability before any model is
+   * asked, so a job it sees is never outside its capability — a model saying
+   * so has read the client's wider goal (live, Groq: "the request includes
+   * preparing an execution plan, beyond market-research").
+   */
+  it('accepts anyway when the model calls its own capability "outside" it', async () => {
+    const brain = new FakeBrain({
+      triage: {
+        accept: false,
+        reason: 'the goal also asks for an execution plan',
+        blocker: 'outside_capability',
+      },
+    });
+    const {worker, calls} = build([offer()], brain);
+    const [outcome] = await worker.tick();
+    expect(outcome).toMatchObject({status: 'delivered'});
+    expect(calls.declined).toEqual([]);
+  });
+
+  it.each(['client_only_data', 'impossible_action'])('declines for a real blocker: %s', async (blocker) => {
+    const brain = new FakeBrain({triage: {accept: false, reason: `because ${blocker}`, blocker}});
+    const {worker, calls} = build([offer()], brain);
+    const [outcome] = await worker.tick();
+    expect(outcome).toMatchObject({status: 'declined', reason: `because ${blocker}`});
+    expect(calls.declined).toHaveLength(1);
+  });
 
   it('still honours a decline recorded before blockers existed', async () => {
     const brain = new FakeBrain({triage: {accept: false, reason: 'no market named'}});

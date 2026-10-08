@@ -73,7 +73,10 @@ export const BLOCKERS = [
   'missing_knowledge',
   'other',
 ] as const;
-const DECLINABLE = new Set<string>(['client_only_data', 'impossible_action', 'outside_capability']);
+// Not `outside_capability`: offers are filtered to this worker's own
+// capability before any model is asked, so a job it sees never is — a model
+// saying so has read the client's wider goal (live, on Groq).
+const DECLINABLE = new Set<string>(['client_only_data', 'impossible_action']);
 
 export const TriageDecision = z.object({
   accept: z.boolean(),

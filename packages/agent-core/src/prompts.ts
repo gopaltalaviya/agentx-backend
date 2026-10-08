@@ -167,7 +167,7 @@ Otherwise decline, and say which condition failed.
 
 Name what stands in the way as \`blocker\`: none, client_only_data,
 impossible_action, outside_capability, missing_knowledge, or other. Only the
-first three are grounds to decline.`;
+first two are grounds to decline: this offer is already for your capability.`;
 
 /**
  * Synthesis: answer the user's goal from what the hired agents returned.
