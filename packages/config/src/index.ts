@@ -246,6 +246,12 @@ export function loadConfig(opts: LoadOptions = {}): AgentxConfig {
     const rpcUrl = env[`RPC_URL_${chainId}`] ?? net.data.rpcUrls[0]!;
     const explorer = net.data.blockExplorerUrls[0]?.replace(/\/$/, '') ?? '';
     const decimals = net.data.paymentToken.decimals;
+    // A token deployed with the protocol has no address in networks.json; the
+    // deploy wrote it to the deployment. Resolve it once, here, for every reader.
+    const paymentToken = Object.freeze({
+      ...net.data.paymentToken,
+      address: net.data.paymentToken.address ?? deployment.data.contracts['PaymentToken'] ?? null,
+    });
 
     chains[chainId] = Object.freeze({
       chainId,
@@ -254,7 +260,7 @@ export function loadConfig(opts: LoadOptions = {}): AgentxConfig {
       rpcUrl,
       confirmations: net.data.confirmations,
       maxLogRange: net.data.maxLogRange,
-      network: Object.freeze(net.data),
+      network: Object.freeze({...net.data, paymentToken}),
       params: Object.freeze({
         minStake: BigInt(params.data.minStake),
         fastPathMax: BigInt(params.data.fastPathMax),

@@ -3,7 +3,7 @@
 > **START HERE every session.** This file is the memory that survives a closed
 > terminal. Read it top to bottom before doing anything else.
 
-- Last updated: **2026-10-08** (Session 34 — reputation per skill; on-chain review shown on the run record; judges' cap 5/day; daily DB backup; CI on Node 24 actions)
+- Last updated: **2026-10-12** (Session 35 — final pre-submission verification; payment-token address fix redeployed; judges' orchestrator topped up)
 - Deadline: **2026-10-13, 11:59 PM ET** (verified)
 - Target track: **4 — Trust, Identity & AI Infrastructure** ($30,000)
 - Current state: **v2 live on Monad testnet, end to end, re-verified.** The
@@ -12,8 +12,8 @@
   chain, including a real dispute expired by the keeper after its 1 h
   timeout. Backend and interface have lint, formatting, coverage floors, CI,
   containers, metrics, graceful shutdown and a browser smoke test.
-- Overall: `██████████████████░░` 92% — **110 / 119 tasks** (4 cut, recorded in PLAN), **859 tests green**
-  (184 contracts · 588 backend · 87 interface) + 72 browser tests — also run in Firefox, WebKit, iPhone and Android (360 runs)
+- Overall: `██████████████████░░` 92% — **110 / 119 tasks** (4 cut, recorded in PLAN), **862 tests green**
+  (184 contracts · 591 backend · 87 interface) + 72 browser tests — also run in Firefox, WebKit, iPhone and Android (360 runs)
 
 ---
 
@@ -42,8 +42,8 @@
    key from `artifacts/demo-hold.json` into `/demo` and press **Run** — the
    trace streams live and settles 4/4 in ~76 s. It must be the first run on
    those agents (a second run's prompts differ, so the cached replay misses).
-3. **Testnet MON — done** (topped up 2026-10-05): DEPLOYER **40.68 MON**
-   (~80 demo runs at ~0.5), FUNDER **15.01 MON** — the keeper and the agents'
+3. **Testnet MON** (2026-10-12): DEPLOYER **71.7 MON**
+   (~140 demo runs at ~0.5), FUNDER **3.2 MON** — low; top it up from DEPLOYER before more local demos — the keeper and the agents'
    gas top-ups run from it again. If FUNDER ever drains, the demo now says so
    before sending anything.
 4. **Hosted — LIVE (2026-10-07).** Site: **https://agentx-interface-iota.vercel.app**
@@ -165,7 +165,7 @@ NEXT_PUBLIC_API_URL=http://127.0.0.1:18787 npx next build
 E2E_PORT=13200 MOCK_API_PORT=18787 npx playwright test --workers=2   # expect 63 passed
 ```
 
-Expected totals as of 2026-10-08: **184 contracts + 588 backend + 87 interface = 859** (Session 34), plus 72 Playwright tests.
+Expected totals as of 2026-10-12: **184 contracts + 591 backend + 87 interface = 862** (Session 35), plus 72 Playwright tests.
 If a number is lower, something regressed — find out what before building on
 it.
 
@@ -707,6 +707,37 @@ Append-only. Never rewrite a decision — supersede it with a new row.
 ---
 
 ## 📓 Session log
+
+### Session 35 — 2026-10-12 (final pre-submission verification)
+
+- **Everything re-run:** contracts 184, backend 591 (3 new), interface 87 unit
+  + lint + typecheck, 72 Playwright (Chromium); CI green on every code repo's
+  HEAD; `check-deployment.mjs` 16/16 against the hosted site and API;
+  `check:contract` with a real hosted run id; site pages, video links and the
+  docs repo all answer. Cached demo on testnet 4/4 settled, all checks, both
+  before and after the fix.
+- **Found and fixed:** `network.paymentToken.address` was `null` on every
+  chain (the token is deployed with the protocol, so its address is only in
+  `deployments/<chainId>.json`). The hosted `/v1/budget` showed the judges'
+  orchestrator holding 0 MockUSDC while it held 20.15; `/v1/network` named no
+  token; a hosted x402 worker would have refused to start. Config now resolves
+  it once (`packages/config/src/index.ts`). 3 tests, all seen failing first.
+  Hiring never read the field, so runs were unaffected.
+- **Judges' orchestrator topped up:** 50 MockUSDC from DEPLOYER (tx
+  `0xb7e201c7…df98b`) → 70.15,
+  enough for the 5/day cap for two weeks. Its gas (session key) holds ~13 MON.
+- **Redeployed** all seven images to the VPS after a fresh backup
+  (`agentx-20261012-0643.dump`); compose files on the server verified identical
+  to the repo. After: status operational, 16/16 checks, `/v1/budget` shows
+  70150000, `/v1/network` names MockUSDC, workers ready. No live AI run.
+- Portal doc: "Steps to try" renamed to the form's **"Judge access
+  instructions"**; a duplicate step number fixed. Figures 859 → 862 in the
+  docs, deck and workbook (rebuilt; deck geometry clean).
+- **Traps:** VPS SSH needs `-i ~/.ssh/agentx_oracle -o IdentitiesOnly=yes`.
+  `docker compose ... build` needs `SIGNER_TOKEN` set just to interpolate (any
+  32+ chars; not baked into images), and building all services at once crashed
+  Docker Desktop again, taking the dev Postgres down mid-demo — build one
+  service at a time.
 
 ### Session 34 — 2026-10-08 (specialists, not generalists)
 

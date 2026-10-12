@@ -88,6 +88,13 @@ describe('GET /v1/network', () => {
     expect(typeof body.testnet).toBe('boolean');
   });
 
+  /** Null here made a hosted x402 worker refuse to start: "no payment token". */
+  it('names the payment token the escrow is paid in', async () => {
+    const {paymentToken, contracts} = (await app.inject({method: 'GET', url: '/v1/network'})).json();
+    expect(paymentToken.address).toBeTruthy();
+    expect(paymentToken.address).toBe(contracts.PaymentToken);
+  });
+
   it('reports the windows an agent must plan against, in seconds', async () => {
     const {windows} = (await app.inject({method: 'GET', url: '/v1/network'})).json();
     expect(windows.accept).toBeGreaterThan(0);
